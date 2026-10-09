@@ -60,7 +60,7 @@ class PersistentGate:
         with self.lock:
             state = self.read()
             state.update(blocked_until=max(state.get('blocked_until', 0), time.time() + seconds),
-                         reason=str(error))
+                         reason=str(error), status_code=error.status_code)
             atomic_json(self.path, state)
 
 
@@ -83,6 +83,17 @@ class CachedTransport:
             if saved.get('status') == 404:
                 raise ProviderRequestError('Cached HTTP 404: ' + endpoint, endpoint=endpoint, status_code=404)
             return saved['payload']
+        # Reuse successful responses from the former Sofascore API host.
+        # Negative caches remain host-specific; cooldowns remain provider-wide.
+        if not self.refresh_cache:
+            for base_url in getattr(self, 'CACHE_BASE_URL_ALIASES', ()):
+                legacy_identity = json.dumps([base_url, endpoint, params, kind], sort_keys=True)
+                legacy_path = self.response_directory / (hashlib.sha256(legacy_identity.encode()).hexdigest() + '.json')
+                if not legacy_path.exists():continue
+                saved = json.loads(legacy_path.read_text())
+                if saved['identity'] != legacy_identity:
+                    raise ValueError('HTTP cache identity mismatch')
+                if saved.get('status') == 200:return saved['payload']
         if self.offline:
             raise ProviderRequestError('Offline cache miss: ' + endpoint, endpoint=endpoint)
         try:

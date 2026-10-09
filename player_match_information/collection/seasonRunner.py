@@ -19,7 +19,7 @@ from .runner import atomic_csv, now
 from .selection import (competition_by_name, resolve_sofascore_season, season_key,
                         season_label, months_between, is_qualification_event,
                         with_reviewed_schedule_results)
-from .heatmap import extract_heatmap
+from .coordinates import extract_heatmap, extract_average_position
 from .jsonFiles import clear_json_cache, read_json
 
 DATA_ERRORS=(ProviderError,ValueError,KeyError,TypeError)
@@ -430,13 +430,14 @@ class SeasonRunner:
                                fotmob_age_reported=profile.get('age'),fotmob_country=profile.get('countryName'),
                                fotmob_market_value=profile.get('marketValue'))
                     for name,action in p.stats.actions.items():row[name+'_completion_rate']=action.rate
-                    rows.append({**row,**extract_heatmap(match,p,self.directory)})
+                    rows.append({**row,**extract_average_position(match,p,self.directory),
+                                 **extract_heatmap(match,p,self.directory)})
                     for provider,entry in p.stats.raw.get('_providers',{}).items():
                         identities.append({**context,'provider':provider,'provider_player_id':entry['id'],
                                            'provider_player_name':entry['name'],
                                            'provider_match_id':match.metadata['provider_match_ids'][provider],
                                            'identity_method':entry['identity_method']})
-        atomic_csv(pd.DataFrame(rows) if rows else pd.DataFrame(columns=context_columns+['appeared','touch_count','heatmap_xy']),
+        atomic_csv(pd.DataFrame(rows) if rows else pd.DataFrame(columns=context_columns+['appeared','average_x','average_y','touch_count','heatmap_xy']),
                    self.directory/'player_match_stats.csv')
         atomic_csv(pd.DataFrame(identities,columns=context_columns+['provider','provider_player_id',
                    'provider_player_name','provider_match_id','identity_method']),self.directory/'identities.csv')

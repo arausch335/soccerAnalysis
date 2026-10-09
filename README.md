@@ -33,10 +33,19 @@ pacing. FotMob enrichment remains part of player statistics. The separate
 FotMob-only backup collection path has been removed. Visualization, event-layer,
 role analysis, and derived spatial/pass/dribble processing have been removed.
 
-`player_match_stats.csv` retains conventional match statistics and contains
-`touch_count` plus `heatmap_xy`, a JSON array of original `{x,y}` touch coordinates.
-Missing heatmaps remain blank. The current `fast` capture setting does not fetch
-player heatmaps; use the existing `all` setting when you want to collect them.
+`player_match_stats.csv` retains conventional match statistics. The `fast` mode
+collects and exports `average_x` and `average_y` from the match's average-position
+endpoint, with no heatmap, action-map or shot-map requests. The existing `all`
+mode additionally caches those endpoints and exports `touch_count` plus
+`heatmap_xy`, a JSON array of original `{x,y}` touch coordinates. Missing values
+remain blank.
+
+`build_fixtures.py` starts with Sofascore and switches the whole fixture output
+to FotMob after a Sofascore HTTP 403. Its metadata records the actual provider
+so IDs remain correctly identified. The player project's Sofascore client uses
+`www.sofascore.com/api/v1` and reuses successful caches from its former API host.
+The [ID reference](player_match_information/docs/ID_REFERENCE.md) documents the
+ScraperFC reference and how competition, season, match and player IDs are resolved.
 
 Edit the Python settings in `main.py`, `build_csvs.py`, and `build_fixtures.py`
 before running them. In particular, `build_csvs.py` currently has

@@ -273,8 +273,9 @@ def standardize_fixture_team_names(fixtures_path,team_ids_path):
     atomic_csv(fixtures,fixtures_path)
     metadata=fixtures_path.with_suffix('.metadata.json')
     if metadata.exists():
-        atomic_json(metadata,{'provider':provider,
-                    'sha256':hashlib.sha256(fixtures_path.read_bytes()).hexdigest()})
+        saved=json.loads(metadata.read_text())
+        saved.update(provider=provider,sha256=hashlib.sha256(fixtures_path.read_bytes()).hexdigest())
+        atomic_json(metadata,saved)
 
 
 def _validate_provider_links(frame, label):

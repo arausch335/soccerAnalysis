@@ -45,7 +45,9 @@ combined concordances.
 
 The existing capture modes are unchanged:
 
-- `fast`: cache average positions only. **It does not fetch player heatmaps.**
+- `fast`: cache average positions only and export `average_x` / `average_y`.
+  It makes one average-position request per match when uncached, with no
+  heatmap, action-map or shot-map requests.
 - `all`: cache heatmaps, rating breakdowns, average positions and shot maps.
 - `--no-spatial`: omit optional spatial acquisition.
 
@@ -82,11 +84,14 @@ The only spatial columns are:
 
 | Column | Meaning |
 | --- | --- |
+| `average_x`, `average_y` | Provider-reported `averageX` / `averageY` for that player and match; available in `fast` and `all` |
 | `touch_count` | Number of points in the cached Sofascore player heatmap |
 | `heatmap_xy` | JSON array of original touch coordinates, e.g. `[{"x":10,"y":20}]` |
 
-Coordinates retain the provider's values, order and repeated points. No centroid,
-average position, zones, pass geometry or movement trajectory is derived. A
+Average positions are copied directly from the provider's average-position
+response, not calculated from heatmaps. Missing players or coordinates stay
+blank. Touch coordinates retain the provider's values, order and repeated points.
+No centroid, zones, pass geometry or movement trajectory is derived. A
 missing/unavailable heatmap has blank values. An observed empty heatmap has
 `touch_count=0` and `heatmap_xy=[]`. Invalid coordinates or a cache identity
 mismatch stop export rather than silently changing the data.
@@ -132,9 +137,19 @@ files. It does not modify the collection's raw data or match checkpoints.
 
 ## Fixtures
 
-Run `python build_fixtures.py` after editing its Python settings. It retains the
-existing FotMob default and supports `PROVIDER='sofascore'` as before. This
-fixture builder is separate from the removed FotMob-only player backup.
+Run `python build_fixtures.py` after editing its Python settings. Its default is
+`PROVIDER='sofascore'` with `FALLBACK_ON_403=True`. A Sofascore HTTP 403 stops
+Sofascore requests and switches the entire selected fixture build to FotMob,
+reusing available checkpoints. Completed Sofascore checkpoints are retained,
+but the published combined CSV uses only FotMob IDs after fallback. Other errors
+do not trigger this switch. FotMob failures stop the build and leave the prior
+output intact. Explicit `PROVIDER='fotmob'` remains available.
+
+The saved 403/cooldown state causes subsequent runs to continue on FotMob during
+the pause, including any longer `Retry-After`. After the pause expires, the next
+run tries Sofascore again. Request pacing stays global across both providers.
+This fixture fallback is separate from the removed FotMob-only player backup;
+the player match collector still uses Sofascore as its baseline.
 
 Its scope is the top two divisions of England, Spain, Germany, Italy and France,
 plus the Champions League, Europa League and Conference League. It starts with
@@ -142,11 +157,25 @@ plus the Champions League, Europa League and Conference League. It starts with
 upcoming fixtures and qualifying feeds retain their existing settings.
 
 The output is `dataset/fixtures.csv`. `dataset/fixtures.metadata.json` records
-the provider namespace and the CSV checksum, allowing concordance builders to
+the actual provider, requested provider, fallback reason and CSV checksum,
+allowing concordance builders to
 interpret its match/team IDs correctly. Keep these files together. A mismatch
 stops the reference build and asks for a fixture rebuild. Historical combined
 fixture CSVs without metadata are interpreted as FotMob, matching the existing
 default; rebuild an older Sofascore fixture CSV to attach its correct namespace.
+
+## Provider IDs and API host
+
+ScraperFC is the chosen ID/endpoint reference. The shared competition IDs are in
+`api/sofascore_ids.py`, with a pinned reference revision. See
+[ID_REFERENCE.md](docs/ID_REFERENCE.md) for the competition list and rules for
+finding season, fixture, team and player IDs. No extra scraping package needs
+to be installed; the existing clients retain their pacing and checkpoint logic.
+
+The Sofascore client uses `https://www.sofascore.com/api/v1`. Successful HTTP
+responses cached under the previous `api.sofascore.com` host remain reusable,
+including offline. Negative HTTP caches are specific to their host; provider
+cooldowns remain shared and are not cleared by this host change.
 
 ## ID concordances
 

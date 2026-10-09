@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from collection.heatmap import extract_heatmap
+from collection.coordinates import extract_heatmap
 from collection.jsonFiles import clear_json_cache
 import test_providers
 
