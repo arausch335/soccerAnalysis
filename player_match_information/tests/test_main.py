@@ -98,7 +98,7 @@ class MainTests(unittest.TestCase):
     def test_build_csvs_uses_shared_export_entry_point(self):
         with tempfile.TemporaryDirectory() as folder,patch('build_csvs.collect',return_value=0) as collect, \
                 patch.multiple(build_csvs,DATA_ROOT=Path(folder),DATASET_ROOT=Path(folder)/'dataset',
-                    COLLECTION_NAMES=('bundesliga-2024-25',),COMPILE_EVENTS=True,
+                    COLLECTION_NAMES=('bundesliga-2024-25',),
                     REPLACE_DATASET=False,REFERENCE_CSVS_ONLY=False,
                     BUILD_PLAYER_IDS_CSV=False,BUILD_TEAM_IDS_CSV=False,
                     BUILD_MATCH_IDS_CSV=False):
@@ -106,12 +106,12 @@ class MainTests(unittest.TestCase):
             (directory/'job.json').write_text('{}')
             self.assertEqual(build_csvs.main(),0)
         collect.assert_called_once_with(['export','--data-root',str(Path(folder).resolve()),
-            '--name','bundesliga-2024-25','--compile-events'])
+            '--name','bundesliga-2024-25'])
 
     def test_build_csvs_exports_every_saved_season_by_default(self):
         with tempfile.TemporaryDirectory() as folder,patch('build_csvs.collect',return_value=0) as collect, \
                 patch.multiple(build_csvs,DATA_ROOT=Path(folder),DATASET_ROOT=Path(folder)/'dataset',
-                    COLLECTION_NAMES=(),COMPILE_EVENTS=True,REPLACE_DATASET=False,
+                    COLLECTION_NAMES=(),REPLACE_DATASET=False,
                     REFERENCE_CSVS_ONLY=False,
                     BUILD_PLAYER_IDS_CSV=False,BUILD_TEAM_IDS_CSV=False,
                     BUILD_MATCH_IDS_CSV=False):
@@ -120,21 +120,20 @@ class MainTests(unittest.TestCase):
                 (directory/'job.json').write_text('{}')
             self.assertEqual(build_csvs.main(),0)
         self.assertEqual(collect.call_args_list,[
-            call(['export','--data-root',str(Path(folder).resolve()),'--name','bundesliga-2024-25','--compile-events']),
-            call(['export','--data-root',str(Path(folder).resolve()),'--name','premier-league-2025-26','--compile-events'])])
+            call(['export','--data-root',str(Path(folder).resolve()),'--name','bundesliga-2024-25']),
+            call(['export','--data-root',str(Path(folder).resolve()),'--name','premier-league-2025-26'])])
 
-    def test_build_csvs_settings_control_events_and_id_tables(self):
+    def test_build_csvs_settings_control_id_tables(self):
         with tempfile.TemporaryDirectory() as folder,patch('build_csvs.collect',return_value=0) as collect, \
                 patch('build_csvs.build_id_tables',return_value={}) as build_ids, \
                 patch.multiple(build_csvs,DATA_ROOT=Path(folder),DATASET_ROOT=Path(folder)/'dataset',
-                    COLLECTION_NAMES=('bundesliga-2024-25',),COMPILE_EVENTS=False,
+                    COLLECTION_NAMES=('bundesliga-2024-25',),
                     REPLACE_DATASET=False,REFERENCE_CSVS_ONLY=False,
                     BUILD_PLAYER_IDS_CSV=True,BUILD_TEAM_IDS_CSV=False,
                     BUILD_MATCH_IDS_CSV=False):
             directory=collection_directory(folder,'bundesliga-2024-25');directory.mkdir(parents=True)
             (directory/'job.json').write_text('{}')
             self.assertEqual(build_csvs.main(),0)
-        self.assertIn('--no-compile-events',collect.call_args.args[0])
         build_ids.assert_called_once_with(Path(folder).resolve(),(Path(folder)/'dataset').resolve(),
             build_player_ids=True,build_team_ids=False,build_match_ids=False)
 
@@ -144,7 +143,7 @@ class MainTests(unittest.TestCase):
                     'player IDs':Path(folder)/'dataset'/'player_ids.csv',
                     'match IDs':Path(folder)/'dataset'/'match_ids.csv'}) as build_ids, \
                 patch.multiple(build_csvs,DATA_ROOT=Path(folder),DATASET_ROOT=Path(folder)/'dataset',
-                    COLLECTION_NAMES=('does-not-need-to-exist',),COMPILE_EVENTS=False,
+                    COLLECTION_NAMES=('does-not-need-to-exist',),
                     REPLACE_DATASET=False,REFERENCE_CSVS_ONLY=True,
                     BUILD_PLAYER_IDS_CSV=True,BUILD_TEAM_IDS_CSV=False,
                     BUILD_MATCH_IDS_CSV=True):
@@ -168,7 +167,7 @@ class MainTests(unittest.TestCase):
                                             (Path(folder)/'dataset'/'team_ids.csv').resolve())
 
     def test_explicit_command_remains_single_collection(self):
-        with patch('main.collect',return_value=0) as collect:
+        with patch('main.collect',return_value=0) as collect,patch('main.SEASONS',['2024/25']):
             main.main(['status'])
         collect.assert_called_once_with(['status','--name','premier-league-2024-25'])
 

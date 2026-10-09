@@ -1,57 +1,61 @@
-# Transfer both scrapers through a private GitHub repository
+# Transfer using the private GitHub repository
 
-First run `tools/include_player_project.py` as described in the README. Check
-that `player_match_information/` contains your player script and its supporting
-modules. This package starts without that code because it is stored on your
-computer.
+The repository already includes both scrapers. On another computer, sign in to
+GitHub with the account that has access to `arausch335/sofascore-scrapers`.
 
 ## GitHub Desktop
 
-1. Install GitHub Desktop and sign in to your account.
-2. Choose **File → New repository**. Name it `sofascore-scrapers` and choose a
-   new local location for the repository. Leave the README, license, and Git
-   ignore templates unset; this package supplies its own files.
-3. Copy the contents of the extracted package, including the newly added
-   `player_match_information/` folder, into that repository folder. Include
-   `.gitignore` and `.github` too; on macOS, press Command+Shift+Period in Finder
-   to show files beginning with a dot. Check Changes and commit with a message
-   such as `Add fixture and player match scrapers`.
-4. Click **Publish repository**. Keep **Keep this code private** checked, then
-   publish to your account.
-5. On the other computer, install GitHub Desktop, sign in to the same account,
-   and choose **File → Clone repository**. Select `sofascore-scrapers`.
-6. Open the cloned folder and follow the README's run instructions.
+1. Install GitHub Desktop and sign in.
+2. Choose **File → Clone repository**, select `sofascore-scrapers`, and choose
+   a new local folder.
+3. Open the cloned folder in PyCharm or a terminal and follow the
+   [README](../README.md) to create a Python environment and install dependencies.
+4. After code changes are merged, use **Fetch origin**, then **Pull origin**.
 
-## Terminal alternative
+## Terminal
 
-Create a new repository at https://github.com/new. Name it `sofascore-scrapers`,
-select **Private**, and leave the README, `.gitignore`, and license options blank.
-
-In the extracted package folder, run:
-
-```bash
-git init -b main
-git add .
-git commit -m "Add fixture and player match scrapers"
-git remote add origin https://github.com/arausch335/sofascore-scrapers.git
-git push -u origin main
-```
-
-Replace the account/repository in the remote URL if you selected a different
-destination. Authenticate with your usual GitHub Desktop, Git credential
-manager, or GitHub CLI login.
-
-On the other computer:
-
-```bash
+```sh
 git clone https://github.com/arausch335/sofascore-scrapers.git
 cd sofascore-scrapers
 ```
 
-Sign in to the account with access to the private repository, then follow the
-README. Generated scrape outputs stay local because `.gitignore` excludes them.
+Authenticate using GitHub CLI, GitHub Desktop or your credential manager. The
+repository must remain private in **Settings → General**.
 
-After later code changes, commit and push on the original computer; run
-`git pull` on the other computer to receive them.
+To review a proposed change on its branch before it is merged:
 
-GitHub's reference: [Add a local repository to GitHub Desktop](https://docs.github.com/en/desktop/adding-and-cloning-repositories/adding-a-repository-from-your-local-computer-to-github-desktop).
+```sh
+git fetch origin
+git switch --track origin/simplify-scraper-outputs
+```
+
+After the change is merged, switch to `main` and pull:
+
+```sh
+git switch main
+git pull --ff-only
+```
+
+Generated data and virtual environments are excluded from Git. Recreate the
+Python environment on each computer. To continue existing player collections,
+use [transfer.py](../player_match_information/transfer.py) to transfer caches,
+checkpoints and cooldown state separately. Stop collection on the first device
+before continuing on the second.
+
+## Creating another private repository
+
+At https://github.com/new, choose **Private** and leave the README, license and
+`.gitignore` options blank. In a fresh folder containing this project's source:
+
+```sh
+git init -b main
+git add .
+git commit -m "Add fixture and player statistics scrapers"
+git remote add origin https://github.com/YOUR_ACCOUNT/YOUR_PRIVATE_REPOSITORY.git
+git push -u origin main
+```
+
+Replace the URL with your new repository. If authentication rejects a workflow
+file because the token lacks workflow permission, use an appropriately
+permissioned credential or omit that workflow. This project does not require
+GitHub Actions to run either scraper.

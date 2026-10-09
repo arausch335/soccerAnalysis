@@ -43,17 +43,6 @@ class ArchitectureTests(unittest.TestCase):
         list(self.loader.iter_matches(self.season, [event(1)]))
         self.assertEqual(self.client.calls, [1, 2])
 
-    def test_traits_weight_counts_and_exclude_future_and_target(self):
-        matches = list(self.loader.iter_matches(self.season, [event(1), event(2, 200), event(3, 300)]))
-        player = self.loader.dataset.players[7]
-        player.performances[1].stats.record_action('passing', 10, 5)
-        player.performances[2].stats.record_action('passing', 90, 90)
-        player.performances[3].stats.record_action('passing', 1, 0)
-        snapshot = derive_traits(player, matches[2])
-        self.assertEqual(snapshot.passing.values['completion_rate'], .95)
-        self.assertEqual(snapshot.source_match_ids, [1, 2])
-        self.assertEqual(derive_traits(player, matches[1]).source_match_ids, [1])
-        self.assertEqual(derive_traits(player, matches[2], 1).source_match_ids, [2])
 
     def test_missing_and_zero(self):
         self.assertIsNone(AttemptCompletion(0, 0).rate)

@@ -1,4 +1,4 @@
-"""Package season exports as dataset/<league>/<season>/{four analysis CSVs}.
+"""Package player statistics and fixtures as dataset/<league>/<season>/.
 
 This is an offline packaging step. It never scrapes, changes checkpoints, or
 modifies files under data/. Run build_csvs.py first when source CSVs are stale.
@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import csv
+import hashlib
 from datetime import datetime, timezone
 import json
 import os
@@ -25,14 +26,12 @@ from collection.jsonFiles import read_json
 from api.events import fotmob_fixture, whoscored_fixture
 from api.identity import (IdentityError, REJECTED_PLAYER_ID_LINKS,
                           REVIEWED_PROVIDER_PLAYER_ID_ALIASES, REVIEWED_TEAM_IDS,
-                          canonical_player_name, match_fixture, name_key)
+                          canonical_player_name, match_fixture, name_key, team_key)
 from api.team_crosswalk import VERIFIED_TEAM_ID_OVERRIDES
-from storage.pandasStore import PandasStore
+from storage.pandasStore import PandasStore, atomic_json
 
 
-SOURCE_FILES = ('events.csv', 'player_match_stats.csv',
-                'fotmob_team_statistics.csv',
-                'schedule.json', 'config.json')
+SOURCE_FILES = ('player_match_stats.csv', 'schedule.json', 'config.json')
 PLAYER_ID_COLUMNS = ('competition','season','team_name','player_name',
                      'sofascore_id','fotmob_id','whoscored_id')
 TEAM_ID_COLUMNS = ('team_name','sofascore_id','fotmob_id','whoscored_id')
@@ -62,18 +61,19 @@ def _identifier(value):
     if value is None or value is pd.NA:return ''
     if isinstance(value,float):
         if pd.isna(value):return ''
-        if value.is_integer():return str(int(value))
     text=str(value).strip()
-    return '' if text.casefold() in ('','nan','none','<na>') else text
+    if text.casefold() in ('','na','n/a','null','nan','none','<na>'):return ''
+    if re.fullmatch(r'\d+\.0+',text):text=text.split('.')[0]
+    if not text.isdigit() or int(text)<=0:raise ValueError(f'Invalid provider ID: {text!r}')
+    return str(int(text))
 
 
 def _chosen(values):
-    """Choose the most frequently observed nonblank ID, breaking ties by recency."""
-    values=[_identifier(value) for value in values]
-    values=[value for value in values if value]
-    if not values:return ''
-    counts=Counter(values);last={value:index for index,value in enumerate(values)}
-    return max(counts,key=lambda value:(counts[value],last[value]))
+    """Keep unknown IDs blank and reject contradictory observed IDs."""
+    values={_identifier(value) for value in values} - {''}
+    if len(values)>1:
+        raise ValueError('Conflicting provider IDs: '+', '.join(sorted(values)))
+    return next(iter(values)) if values else ''
 
 
 def _reviewed_provider_player_id(provider,baseline_id,provider_id):
@@ -128,8 +128,39 @@ def _finalize_id_rows(rows,columns,sort_columns):
     return frame
 
 
+def _fixture_provider(path):
+    """Read the published fixture namespace; legacy fixture builds used FotMob."""
+    path=Path(path);metadata=path.with_suffix('.metadata.json')
+    if not metadata.exists():return 'fotmob'
+    saved=json.loads(metadata.read_text(encoding='utf-8'))
+    provider=saved.get('provider')
+    if provider not in ('fotmob','sofascore'):raise ValueError('Unknown fixture ID namespace')
+    if saved.get('sha256') != hashlib.sha256(path.read_bytes()).hexdigest():
+        raise ValueError('Fixture CSV differs from its provider metadata; rebuild fixtures first')
+    return provider
+
+
+def _sofascore_team_reference(source_teams,fixtures_path):
+    names=_fixture_team_names(fixtures_path);records={}
+    for row in source_teams.to_dict('records'):
+        sid=_identifier(row.get('sofascore_id'));fid=_identifier(row.get('fotmob_id'))
+        key=('sofascore',sid) if sid else ('fotmob',fid)
+        if not key[1]:continue
+        entry=records.setdefault(key,{'team_name':row['team_name'],**{c:set() for c in PLAYER_PROVIDER_ID_COLUMNS}})
+        for column in PLAYER_PROVIDER_ID_COLUMNS:
+            identifier=_identifier(row.get(column))
+            if identifier:entry[column].add(identifier)
+    for sid,name in names.items():
+        records.setdefault(('sofascore',sid),{'team_name':name,**{c:set() for c in PLAYER_PROVIDER_ID_COLUMNS}})['sofascore_id'].add(sid)
+    result=[]
+    for key,row in records.items():
+        result.append({'team_name':names.get(key[1],row['team_name']) if key[0]=='sofascore' else row['team_name'],
+                       **{column:(_chosen(values) or pd.NA) for column,values in row.items() if column!='team_name'}})
+    return pd.DataFrame(result,columns=TEAM_ID_COLUMNS)
+
+
 def _fixture_team_names(path):
-    """Index fixture names by FotMob ID, never by potentially shared name."""
+    """Index fixture names by provider ID, never by potentially shared name."""
     names={}
     with Path(path).open(newline='',encoding='utf-8') as stream:
         reader=csv.DictReader(stream)
@@ -155,10 +186,10 @@ def _team_crosswalk(path=TEAM_CROSSWALK):
 
 
 def _team_reference(source_teams,fixtures_path,*,crosswalk_path=TEAM_CROSSWALK):
-    """Make a FotMob-keyed reference, retaining unknown provider IDs as NA."""
-    if not fixtures_path.exists():
-        raise ValueError(f'{fixtures_path} is required before building team_ids.csv')
-    names=_fixture_team_names(fixtures_path)
+    """Make a provider-keyed reference, retaining unknown provider IDs as NA."""
+    if fixtures_path.exists() and _fixture_provider(fixtures_path)=='sofascore':
+        return _sofascore_team_reference(source_teams,fixtures_path)
+    names=_fixture_team_names(fixtures_path) if fixtures_path.exists() else {}
     crosswalk=_team_crosswalk(crosswalk_path)
     source={}
     for row in source_teams.to_dict('records'):
@@ -197,6 +228,19 @@ def _team_reference(source_teams,fixtures_path,*,crosswalk_path=TEAM_CROSSWALK):
             problems.append(f'{team_name or "unnamed team"} ({fotmob}) lacks '
                             +', '.join(missing))
         records.append(record)
+    for row in source_teams.to_dict('records'):
+        if not _identifier(row.get('fotmob_id')):
+            identifier=_identifier(row.get('sofascore_id'))
+            if not identifier:continue
+            linked=[record for record in records if _identifier(record.get('sofascore_id'))==identifier]
+            if linked:
+                for record in linked:
+                    for column in PLAYER_PROVIDER_ID_COLUMNS:
+                        record[column]=_chosen([record.get(column),row.get(column)]) or pd.NA
+            else:
+                records.append({column:(_identifier(row.get(column)) or pd.NA)
+                                if column in PLAYER_PROVIDER_ID_COLUMNS else row.get(column)
+                                for column in TEAM_ID_COLUMNS})
     if problems:
         preview='\n- '.join(problems)
         raise ValueError('Team identity audit failed; team_ids.csv was not replaced. '
@@ -206,73 +250,68 @@ def _team_reference(source_teams,fixtures_path,*,crosswalk_path=TEAM_CROSSWALK):
 
 
 def standardize_fixture_team_names(fixtures_path,team_ids_path):
-    """Replace fixture display names using the FotMob-keyed reference."""
+    """Replace fixture display names using the provider-keyed reference."""
     fixtures_path=Path(fixtures_path);team_ids_path=Path(team_ids_path)
     teams=pd.read_csv(team_ids_path,dtype=str,keep_default_na=False)
     if not set(TEAM_ID_COLUMNS).issubset(teams.columns):
         raise ValueError(f'{team_ids_path} is missing team reference columns')
-    if teams.fotmob_id.duplicated().any():
-        raise ValueError(f'{team_ids_path} has duplicate FotMob IDs')
-    if teams[['team_name','fotmob_id']].apply(
-            lambda column: column.str.strip().str.casefold().isin(
-                ('','na','nan','none','<na>'))).any().any():
-        raise ValueError(f'{team_ids_path} has blank team names or FotMob IDs')
-    names=dict(zip(teams.fotmob_id,teams.team_name))
+    provider=_fixture_provider(fixtures_path);column=provider+'_id'
+    teams=teams[teams[column].map(_identifier)!=''].copy()
+    teams[column]=teams[column].map(_identifier)
+    if teams[column].duplicated().any():raise ValueError(f'{team_ids_path} has duplicate {provider} IDs')
+    if teams.team_name.str.strip().eq('').any():raise ValueError('Blank team reference name')
+    names=dict(zip(teams[column],teams.team_name))
     fixtures=pd.read_csv(fixtures_path,dtype=str,keep_default_na=False)
     if not set(FIXTURE_COLUMNS).issubset(fixtures.columns):
         raise ValueError(f'{fixtures_path} is missing fixture columns')
     for side in ('home','away'):
         missing=set(fixtures[side+'_team_id'])-names.keys()
         if missing:
-            raise ValueError(f'{team_ids_path} lacks {len(missing)} fixture FotMob '
+            raise ValueError(f'{team_ids_path} lacks {len(missing)} fixture '+provider+' '
                              f'IDs, including {", ".join(sorted(missing)[:10])}')
         fixtures[side+'_team']=fixtures[side+'_team_id'].map(names)
     atomic_csv(fixtures,fixtures_path)
+    metadata=fixtures_path.with_suffix('.metadata.json')
+    if metadata.exists():
+        atomic_json(metadata,{'provider':provider,
+                    'sha256':hashlib.sha256(fixtures_path.read_bytes()).hexdigest()})
+
+
+def _validate_provider_links(frame, label):
+    """Audit every known pair, including rows with missing provider IDs."""
+    columns=[column for column in PLAYER_PROVIDER_ID_COLUMNS if column in frame]
+    problems=[]
+    for left in columns:
+        for right in columns:
+            if left==right:continue
+            pairs={}
+            for record in frame.to_dict('records'):
+                a,b=_identifier(record.get(left)),_identifier(record.get(right))
+                if a and b:pairs.setdefault(a,set()).add(b)
+            for identifier,targets in pairs.items():
+                if len(targets)>1:
+                    problems.append(f'{left} {identifier} has conflicting ID sets for {right}: '+', '.join(sorted(targets)))
+    if problems:
+        raise ValueError(f'{label} identity audit failed; existing concordances were not replaced:\n- '+'\n- '.join(problems[:20]))
 
 
 def _validate_player_identities(frame):
-    """Reject high-confidence name/ID contradictions before replacing the CSV.
-
-    Fully disjoint triplets with the same name are allowed because football has
-    many genuine namesakes.  Two differing triplets are contradictory when
-    they share at least one provider ID: that shared ID says they are the same
-    player while another provider ID says they are not.
-    """
+    """Reject conflicting provider links and names, even for partial concordances."""
     if frame.empty:return
-    complete=frame.loc[(frame[list(PLAYER_PROVIDER_ID_COLUMNS)]!='').all(axis=1)].copy()
-    if complete.empty:return
-    complete['_name_key']=complete['player_name'].map(name_key)
-    conflicts=[]
-
-    for ids,group in complete.groupby(list(PLAYER_PROVIDER_ID_COLUMNS),sort=True):
-        names=sorted(set(group['player_name']))
-        if group['_name_key'].nunique()>1:
-            conflicts.append(
-                f'IDs {tuple(ids)} are assigned to different names: {", ".join(names)}')
-
-    for normalized,group in complete.groupby('_name_key',sort=True):
-        signatures=sorted(set(group[list(PLAYER_PROVIDER_ID_COLUMNS)]
-                              .itertuples(index=False,name=None)))
-        contradictory=[]
-        for index,left in enumerate(signatures):
-            for right in signatures[index+1:]:
-                if any(a==b for a,b in zip(left,right)):
-                    contradictory.extend((left,right))
-        if contradictory:
-            names=sorted(set(group['player_name']))
-            distinct=sorted(set(contradictory))
-            conflicts.append(
-                f'name {", ".join(names)} has conflicting ID sets: '
-                +'; '.join(str(ids) for ids in distinct))
-
-    if conflicts:
-        shown=conflicts[:20]
-        preview='\n- '.join(shown)
-        remainder=len(conflicts)-len(shown)
-        suffix=f'\n- ... and {remainder} more conflict(s)' if remainder else ''
-        raise ValueError(
-            'Player identity audit failed. Review the source identity mapping; '
-            'player_ids.csv was not replaced:\n- '+preview+suffix)
+    _validate_provider_links(frame,'Player')
+    for column in PLAYER_PROVIDER_ID_COLUMNS:
+        if column not in frame:continue
+        groups={}
+        for record in frame.to_dict('records'):
+            identifier=_identifier(record.get(column))
+            if identifier:
+                name=str(record.get('player_name') or '').strip()
+                if not name:raise ValueError('Player identity audit failed: blank player name')
+                groups.setdefault(identifier,{}).setdefault(name_key(name),set()).add(name)
+        for identifier,names in groups.items():
+            if len(names)>1:
+                display=sorted(name for variants in names.values() for name in variants)
+                raise ValueError(f'Player identity audit failed: {column} {identifier} assigned to different names: '+', '.join(display))
 
 
 def _provider_team_id(source,metadata,provider,side):
@@ -335,6 +374,10 @@ def _source_id_rows(source,player_rows,team_rows,match_rows):
             row=_id_row(player_rows,key,{'competition':competition,'season':season,
                 'team_name':team,
                 'player_name':canonical_player_name(record['player_name'])})
+            current_name=canonical_player_name(record['player_name'])
+            if name_key(row['player_name'])!=name_key(current_name):
+                raise ValueError(f'Player identity audit failed: {baseline_column} {player_id} '
+                                 f'assigned to different names: {row["player_name"]}, {current_name}')
             row['_ids'][baseline_column].append(player_id)
 
     if (source/'identities.csv').exists():
@@ -424,14 +467,56 @@ def _source_id_rows(source,player_rows,team_rows,match_rows):
                     _provider_team_id(source,metadata,provider,side))
 
 
+def _include_fixture_match_ids(fixtures_path,match_rows):
+    if not fixtures_path.exists():return
+    provider=_fixture_provider(fixtures_path);column=provider+'_id'
+    known={}
+    for key,row in match_rows.items():
+        for value in row['_ids'][column]:
+            if _identifier(value):known[_identifier(value)]=key
+    frame=pd.read_csv(fixtures_path,dtype=str,keep_default_na=False)
+    # Minimal historical team-only fixtures are also accepted by the team builder.
+    required={'match_id','competition','season','date','home_team','away_team'}
+    if not required.issubset(frame.columns):return
+    for record in frame.to_dict('records'):
+        if record['competition'].endswith(' Qualification'):continue
+        identifier=_identifier(record['match_id'])
+        if not identifier:raise ValueError('Fixture row has no match ID')
+        key=known.get(identifier,(record['competition'],record['season'],provider,identifier))
+        if key in match_rows:
+            previous=match_rows[key]
+            for field,fixture_field,normalize in (
+                    ('date','date',str),('home_team_name','home_team',team_key),
+                    ('away_team_name','away_team',team_key)):
+                if previous[field] and record[fixture_field] and normalize(previous[field])!=normalize(record[fixture_field]):
+                    raise ValueError(f'Match identity audit failed: {column} {identifier} has conflicting fixtures')
+        row=_id_row(match_rows,key,{'competition':record['competition'],'season':record['season'],
+                    'date':record['date'],'home_team_name':record['home_team'],'away_team_name':record['away_team']})
+        row['_ids'][column].append(identifier)
+
+
+def _validate_match_identities(frame):
+    _validate_provider_links(frame,'Match')
+    for column in PLAYER_PROVIDER_ID_COLUMNS:
+        groups={}
+        for record in frame.to_dict('records'):
+            identifier=_identifier(record.get(column))
+            signature=(record['date'],team_key(record['home_team_name']),team_key(record['away_team_name']))
+            if identifier and all(signature):groups.setdefault(identifier,set()).add(signature)
+        for identifier,signatures in groups.items():
+            if len(signatures)>1:raise ValueError(f'Match identity audit failed: {column} {identifier} has conflicting fixtures')
+
+
 def build_id_tables(data_root,output_root,*,build_player_ids=True,build_team_ids=True,
                     build_match_ids=True):
     """Write combined provider ID tables at the top level of ``output_root``."""
     if not build_player_ids and not build_team_ids and not build_match_ids:return {}
     sources=discover_collections(Path(data_root),'config.json')
-    if not sources:raise ValueError(f'No saved collections found under {Path(data_root)}')
+    if not sources and not (Path(output_root)/'fixtures.csv').exists():
+        raise ValueError(f'No saved collections or fixtures found under {Path(data_root)}')
     player_rows={};team_rows={};match_rows={}
     for source in sources:_source_id_rows(source,player_rows,team_rows,match_rows)
+    if build_match_ids:_include_fixture_match_ids(Path(output_root)/'fixtures.csv',match_rows)
     _backfill_unambiguous_ids(player_rows);_backfill_unambiguous_ids(team_rows)
     output=Path(output_root);pending={}
     if build_player_ids:
@@ -442,22 +527,26 @@ def build_id_tables(data_root,output_root,*,build_player_ids=True,build_team_ids
     if build_team_ids:
         source_teams=_finalize_id_rows(team_rows,SOURCE_TEAM_ID_COLUMNS,
             ['competition','season','team_name'])
+        _validate_provider_links(source_teams,'Team')
         teams=_team_reference(source_teams,output/'fixtures.csv')
+        _validate_provider_links(pd.concat([source_teams,teams],ignore_index=True),'Team')
         pending['team IDs']=(teams,output/'team_ids.csv')
     if build_match_ids:
         matches=_finalize_id_rows(match_rows,MATCH_ID_COLUMNS,
             ['competition','season','date','home_team_name','away_team_name'])
+        _validate_match_identities(matches)
         pending['match IDs']=(matches,output/'match_ids.csv')
     output.mkdir(parents=True,exist_ok=True);written={}
     for label,(frame,path) in pending.items():
         atomic_csv(frame,path);written[label]=path
         if label=='team IDs':
-            missing=frame[['sofascore_id','whoscored_id']].isna()
+            missing=frame[list(PLAYER_PROVIDER_ID_COLUMNS)].isna() | frame[list(PLAYER_PROVIDER_ID_COLUMNS)].eq('')
             incomplete=int(missing.any(axis=1).sum())
-            print(f'Team IDs: {len(frame)} FotMob teams; '
+            print(f'Team IDs: {len(frame)} teams; '
                   f'{len(frame)-incomplete} have all three IDs; '
                   f'{incomplete} have missing provider IDs '
                   f'(SofaScore: {int(missing.sofascore_id.sum())}, '
+                  f'FotMob: {int(missing.fotmob_id.sum())}, '
                   f'WhoScored: {int(missing.whoscored_id.sum())}).',flush=True)
     return written
 
@@ -546,11 +635,7 @@ def package_collection(source,output_root,*,replace=False):
         staging.mkdir()
         target=staging
     try:
-        _atomic_copy(source/'events.csv',target/'events.csv',season)
         _atomic_copy(source/'player_match_stats.csv',target/'player_match_stats.csv',season)
-        # Preserve FotMob's native long-form team-stat stream. R can decide how
-        # to filter periods/groups or pivot it; no aggregation happens here.
-        _atomic_copy(source/'fotmob_team_statistics.csv',target/'team_match_stats.csv',season)
         atomic_csv(_fixtures(source,config),target/'fixtures.csv')
         if replace:
             backup=destination.with_name(destination.name+'.'+uuid4().hex+'.backup')

@@ -33,8 +33,6 @@ def main(argv=None):
     spatial_group.add_argument('--no-spatial', action='store_true')
     parser.add_argument('--build-csvs', action=argparse.BooleanOptionalAction, default=True,
                         help='Build combined CSV exports after collection (default: enabled)')
-    parser.add_argument('--compile-events', action=argparse.BooleanOptionalAction, default=True,
-                        help='Compile the WhoScored event stream CSV during export (default: enabled)')
     parser.add_argument('--offline', action='store_true')
     args = parser.parse_args(argv)
     if not args.name or Path(args.name).name != args.name or args.name in ('.','..'):
@@ -103,13 +101,12 @@ def main(argv=None):
             runner = SeasonRunner(clients,directory,providers=settings['providers'],spatial=settings['spatial'])
             if args.command == 'export':
                 events = json.loads((directory/'schedule.json').read_text())['events']
-                runner._export(events,compile_events=args.compile_events)
+                runner._export(events)
                 print('Rebuilt available CSVs from checkpoints without network requests.')
                 return 0
             try:
                 result = runner.run(settings['competition'],settings['season'],limit=args.limit,
-                                    build_csvs=args.build_csvs,
-                                    compile_events=args.compile_events)
+                                    build_csvs=args.build_csvs)
             except KeyboardInterrupt:
                 print('Interrupted. Responses already cached are safe; use resume to continue.')
                 return 130

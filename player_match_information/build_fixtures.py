@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import hashlib
 from pathlib import Path
 import re
 
@@ -258,6 +259,8 @@ def build(*, provider=PROVIDER, client=None, data_root=DATA_ROOT, output_csv=OUT
         combined=combined.sort_values(['date','kickoff_utc','match_id'],
                                       kind='stable').reset_index(drop=True)
         atomic_csv(combined.loc[:,FIXTURE_COLUMNS],output_csv)
+        atomic_json(output_csv.with_suffix('.metadata.json'),{'provider':provider,
+            'sha256':hashlib.sha256(output_csv.read_bytes()).hexdigest()})
     print(f'Wrote {len(combined)} fixtures to {output_csv}',flush=True)
     return output_csv
 
