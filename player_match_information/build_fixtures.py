@@ -9,16 +9,21 @@ feeds do not contain venue or city, so those columns are blank in FotMob runs.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import ExitStack
 from datetime import datetime, timezone
 import json
+import hashlib
 from pathlib import Path
 import re
+import time
 
 from filelock import FileLock
 import pandas as pd
 
 from api.events import fotmob_fixture
+from api.httpClient import ProviderRequestError
 from api.safeClient import SafeFotMobClient, SafeSofaScoreClient
+from api.sofascore_ids import SOFASCORE_COMPETITION_IDS as SOFA_IDS
 from collection.runner import atomic_csv
 from collection.selection import resolve_sofascore_season
 from dataset_manager import FIXTURE_COLUMNS, fixtures_from_events
@@ -27,7 +32,8 @@ from storage.pandasStore import atomic_json
 
 # Python settings for an IDE run. END_SEASON=None includes the season underway
 # (or most recently started) in the current calendar year.
-PROVIDER = 'fotmob'  # 'sofascore' or 'fotmob'; IDs belong to that provider.
+PROVIDER = 'sofascore'  # 'sofascore' or 'fotmob'; IDs belong to that provider.
+FALLBACK_ON_403 = True  # Switch the entire fixture build to FotMob after a Sofascore 403.
 START_SEASON = 2010
 END_SEASON = None
 INCLUDE_UPCOMING = True
@@ -46,24 +52,25 @@ class FixtureCompetition:
     fotmob_qualification_id: int | None = None
 
 
-# SofaScore unique-tournament IDs. Qualifying rounds of the UEFA tournaments
+# Sofascore IDs checked against ScraperFC; see api/sofascore_ids.py.
+# Qualifying rounds of the UEFA tournaments
 # are included in the same season endpoint and identified per event.
 COMPETITIONS = (
-    FixtureCompetition('Premier League', 17, fotmob_id=47),
-    FixtureCompetition('Championship', 18, fotmob_id=48),
-    FixtureCompetition('La Liga', 8, fotmob_id=87),
-    FixtureCompetition('La Liga 2', 54, fotmob_id=140),
-    FixtureCompetition('Bundesliga', 35, fotmob_id=54),
-    FixtureCompetition('2. Bundesliga', 44, fotmob_id=146),
-    FixtureCompetition('Serie A', 23, fotmob_id=55),
-    FixtureCompetition('Serie B', 53, fotmob_id=86),
-    FixtureCompetition('Ligue 1', 34, fotmob_id=53),
-    FixtureCompetition('Ligue 2', 182, fotmob_id=110),
-    FixtureCompetition('Champions League', 7, fotmob_id=42,
+    FixtureCompetition('Premier League', SOFA_IDS['Premier League'], fotmob_id=47),
+    FixtureCompetition('Championship', SOFA_IDS['Championship'], fotmob_id=48),
+    FixtureCompetition('La Liga', SOFA_IDS['La Liga'], fotmob_id=87),
+    FixtureCompetition('La Liga 2', SOFA_IDS['La Liga 2'], fotmob_id=140),
+    FixtureCompetition('Bundesliga', SOFA_IDS['Bundesliga'], fotmob_id=54),
+    FixtureCompetition('2. Bundesliga', SOFA_IDS['2. Bundesliga'], fotmob_id=146),
+    FixtureCompetition('Serie A', SOFA_IDS['Serie A'], fotmob_id=55),
+    FixtureCompetition('Serie B', SOFA_IDS['Serie B'], fotmob_id=86),
+    FixtureCompetition('Ligue 1', SOFA_IDS['Ligue 1'], fotmob_id=53),
+    FixtureCompetition('Ligue 2', SOFA_IDS['Ligue 2'], fotmob_id=110),
+    FixtureCompetition('Champions League', SOFA_IDS['Champions League'], fotmob_id=42,
                        fotmob_qualification_id=10611),
-    FixtureCompetition('Europa League', 679, fotmob_id=73,
+    FixtureCompetition('Europa League', SOFA_IDS['Europa League'], fotmob_id=73,
                        fotmob_qualification_id=10613),
-    FixtureCompetition('Conference League', 17015, 2021, 10216, 10615),
+    FixtureCompetition('Conference League', SOFA_IDS['Conference League'], 2021, 10216, 10615),
 )
 EUROPEAN_COMPETITIONS = {'Champions League', 'Europa League', 'Conference League'}
 
@@ -82,7 +89,7 @@ def _slug(name):
 
 
 def _events_from_checkpoint(path, provider, competition_id, season_id):
-    saved=json.loads(path.read_text())
+    saved=json.loads(path.read_text(encoding='utf-8'))
     if (saved.get('provider') != provider or
             saved.get('competition_id') != competition_id or
             saved.get('season_id') != season_id):
@@ -156,7 +163,7 @@ def _schedule_events(client, competition, start, season_id, *, provider,
         # statistics, these contain both main-tournament and qualifying events.
         saved=data_root/_slug(competition.name)/label/'schedule.json'
         if provider=='sofascore' and saved.exists() and not refresh:
-            events=json.loads(saved.read_text())['events']
+            events=json.loads(saved.read_text(encoding='utf-8'))['events']
         else:
             client.refresh_cache=refresh
             try:
@@ -193,14 +200,60 @@ def _schedule_events(client, competition, start, season_id, *, provider,
     return events
 
 
-def build(*, provider=PROVIDER, client=None, data_root=DATA_ROOT, output_csv=OUTPUT_CSV,
+def _collect_frames(client, provider, competitions, start_season, end, *,
+                    current_start, data_root, include_upcoming, refresh_current):
+    frames=[]
+    for competition in competitions:
+        first=max(start_season,competition.first_season)
+        if first > end:continue
+        for start in range(first,end+1):
+            label=season_label(start)
+            # Missing expected historical seasons are errors, not silent gaps.
+            if provider=='sofascore':
+                try:
+                    season=resolve_sofascore_season(client,competition,label)
+                except ValueError:
+                    if start != current_start or not refresh_current:raise
+                    client.refresh_cache=True
+                    try:
+                        season=resolve_sofascore_season(client,competition,label)
+                    finally:
+                        client.refresh_cache=False
+                season_id=season['id']
+            else:
+                season_id=start
+            events=_schedule_events(client,competition,start,season_id,
+                provider=provider,current_start=current_start,data_root=data_root,
+                include_upcoming=include_upcoming,refresh_current=refresh_current)
+            frame=fixtures_from_events(events,competition.name,label,
+                include_qualifying=competition.name in EUROPEAN_COMPETITIONS)
+            if frame.empty:raise ValueError(f'{competition.name} {label}: no fixture rows')
+            frames.append(frame)
+            print(f'{competition.name} {label}: {len(frame)} fixtures',flush=True)
+    if not frames:raise ValueError('No seasons selected')
+    return frames
+
+
+def _sofascore_403_pause(data_root):
+    """Resume on FotMob while a previously observed Sofascore 403 is paused."""
+    for path in (data_root/'fixture_schedules'/'fallback.json',
+                 data_root/'safety'/'sofascore.json'):
+        if not path.exists():continue
+        state=json.loads(path.read_text(encoding='utf-8'))
+        is_403=state.get('status_code')==403 or 'HTTP 403' in state.get('reason','')
+        if is_403 and state.get('blocked_until',0)>time.time():return state['reason']
+    return None
+
+
+def build(*, provider=PROVIDER, client=None, fallback_client=None,
+          fallback_on_403=FALLBACK_ON_403, data_root=DATA_ROOT, output_csv=OUTPUT_CSV,
           competitions=COMPETITIONS, start_season=START_SEASON,
           end_season=END_SEASON, include_upcoming=INCLUDE_UPCOMING,
           refresh_current=REFRESH_CURRENT_SEASON, offline=OFFLINE, now=None):
-    """Backfill all selected seasons and atomically replace one combined CSV."""
+    """Build one provider's fixtures; switch the whole build after a Sofascore 403."""
     data_root=Path(data_root);output_csv=Path(output_csv)
-    provider=provider.strip().casefold()
-    if provider not in ('sofascore','fotmob'):
+    requested_provider=provider.strip().casefold()
+    if requested_provider not in ('sofascore','fotmob'):
         raise ValueError("PROVIDER must be 'sofascore' or 'fotmob'")
     current_start=current_season_start(now)
     end=current_start if end_season is None else end_season
@@ -208,45 +261,43 @@ def build(*, provider=PROVIDER, client=None, data_root=DATA_ROOT, output_csv=OUT
         raise ValueError('Select seasons from 2010 through the current season')
     if offline and refresh_current:
         raise ValueError('OFFLINE=True requires REFRESH_CURRENT_SEASON=False')
+    competitions=tuple(competitions)
     data_root.mkdir(parents=True,exist_ok=True)
-    client=client or (SafeSofaScoreClient(data_root,'sofascore',offline=offline)
-                      if provider=='sofascore' else
-                      SafeFotMobClient(data_root,'fotmob',offline=offline))
-    print(f'Fixture provider: {provider}; match and team IDs use its namespace.',
-          flush=True)
-    frames=[]
-    with FileLock(str(data_root/'.collector.lock'),timeout=0):
-        for competition in competitions:
-            first=max(start_season,competition.first_season)
-            if first > end:continue
-            for start in range(first,end+1):
-                label=season_label(start)
-                # Missing expected historical seasons are errors, not silent gaps.
-                if provider=='sofascore':
-                    try:
-                        season=resolve_sofascore_season(client,competition,label)
-                    except ValueError:
-                        # A cached seasons index may predate a newly started year.
-                        if start != current_start or not refresh_current:
-                            raise
-                        client.refresh_cache=True
-                        try:
-                            season=resolve_sofascore_season(client,competition,label)
-                        finally:
-                            client.refresh_cache=False
-                    season_id=season['id']
-                else:
-                    season_id=start
-                events=_schedule_events(client,competition,start,season_id,
-                    provider=provider,current_start=current_start,data_root=data_root,
-                    include_upcoming=include_upcoming,refresh_current=refresh_current)
-                frame=fixtures_from_events(events,competition.name,label,
-                    include_qualifying=competition.name in EUROPEAN_COMPETITIONS)
-                if frame.empty:
-                    raise ValueError(f'{competition.name} {label}: no fixture rows')
-                frames.append(frame)
-                print(f'{competition.name} {label}: {len(frame)} fixtures',flush=True)
-        if not frames:raise ValueError('No seasons selected')
+    options=dict(current_start=current_start,data_root=data_root,
+                 include_upcoming=include_upcoming,refresh_current=refresh_current)
+    provider=requested_provider;fallback_reason=None
+    with FileLock(str(data_root/'.collector.lock'),timeout=0), ExitStack() as stack:
+        # Mark a new fixture-only root so collect.py can share its pacing/cache state.
+        marker=data_root/'.soccer-scraper.json'
+        if not marker.exists() and all(path.name in (
+                '.collector.lock','fixture_schedules','safety','http_cache')
+                for path in data_root.iterdir()):
+            atomic_json(marker,{'format':1})
+        if provider=='sofascore' and fallback_on_403:
+            fallback_reason=_sofascore_403_pause(data_root)
+            if fallback_reason:provider='fotmob'
+        classes={'sofascore':SafeSofaScoreClient,'fotmob':SafeFotMobClient}
+
+        def use_client(selected):
+            supplied=(client if selected==requested_provider else fallback_client)
+            return supplied if supplied is not None else stack.enter_context(
+                classes[selected](data_root,selected,offline=offline))
+
+        print(f'Fixture provider: {provider}; match and team IDs use its namespace.',flush=True)
+        if fallback_reason:
+            print('Sofascore remains paused after HTTP 403; resuming fixtures on FotMob.',flush=True)
+        try:
+            frames=_collect_frames(use_client(provider),provider,competitions,start_season,end,**options)
+        except ProviderRequestError as exc:
+            if provider!='sofascore' or not fallback_on_403 or exc.status_code!=403:raise
+            fallback_reason=str(exc)
+            seconds=max(86400,getattr(exc,'retry_after',0))
+            atomic_json(data_root/'fixture_schedules'/'fallback.json',{
+                'status_code':403,'reason':fallback_reason,'blocked_until':time.time()+seconds})
+            provider='fotmob'
+            print('Sofascore HTTP 403: stopping Sofascore and rebuilding all selected '
+                  'fixtures on FotMob. Saved checkpoints are retained.',flush=True)
+            frames=_collect_frames(use_client(provider),provider,competitions,start_season,end,**options)
         combined=pd.concat(frames,ignore_index=True)
         duplicated=combined[combined.duplicated('match_id',keep=False)]
         if not duplicated.empty:
@@ -255,9 +306,12 @@ def build(*, provider=PROVIDER, client=None, data_root=DATA_ROOT, output_csv=OUT
         for column in ('match_id','matchweek','home_team_id','away_team_id','home_score',
                        'away_score','winner_code'):
             combined[column]=pd.to_numeric(combined[column],errors='raise').astype('Int64')
-        combined=combined.sort_values(['date','kickoff_utc','match_id'],
-                                      kind='stable').reset_index(drop=True)
+        combined=combined.sort_values(['date','kickoff_utc','match_id'],kind='stable').reset_index(drop=True)
         atomic_csv(combined.loc[:,FIXTURE_COLUMNS],output_csv)
+        atomic_json(output_csv.with_suffix('.metadata.json'),{
+            'provider':provider,'requested_provider':requested_provider,
+            'fallback_reason':fallback_reason,
+            'sha256':hashlib.sha256(output_csv.read_bytes()).hexdigest()})
     print(f'Wrote {len(combined)} fixtures to {output_csv}',flush=True)
     return output_csv
 

@@ -17,7 +17,7 @@ class ResponseCache:
     def fetch(self, provider, key, request, *, refresh=False):
         path = self.path(provider, key)
         if path.exists() and not refresh:
-            saved = json.loads(path.read_text())
+            saved = json.loads(path.read_text(encoding='utf-8'))
             if saved['key'] != key or saved['provider'] != provider:
                 raise ValueError('Cache identity mismatch')
             return saved['payload']

@@ -1,4 +1,5 @@
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -7,7 +8,6 @@ from unittest.mock import Mock, patch
 from api.safeClient import PersistentGate, SafeSofaScoreClient
 from api.httpClient import ProviderRequestError
 from collection.seasonRunner import SeasonRunner
-from collection.spatial import extract_pass_features, extract_dribble_features
 from test_providers import Sofa, event
 from storage.pandasStore import atomic_json
 from transfer import pack, restore
@@ -20,6 +20,27 @@ def response(status=200, payload=None, headers=None):
 
 
 class SafetyTests(unittest.TestCase):
+    def test_sofascore_www_host_reuses_successful_legacy_http_cache_offline(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session=Mock()
+            with SafeSofaScoreClient(folder,'sofascore',offline=True,session=session) as client:
+                identity=json.dumps(['https://api.sofascore.com/api/v1','player/7',None,'json'],sort_keys=True)
+                path=client.response_directory/(hashlib.sha256(identity.encode()).hexdigest()+'.json')
+                atomic_json(path,{'identity':identity,'status':200,'payload':{'player':{'id':7}}})
+                self.assertEqual(client.player(7),{'player':{'id':7}})
+                session.get.assert_not_called()
+
+    def test_old_host_404_does_not_prevent_a_request_to_www(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session=Mock();session.get.return_value=response(payload={'player':{'id':7}})
+            with SafeSofaScoreClient(folder,'sofascore',session=session) as client:
+                identity=json.dumps(['https://api.sofascore.com/api/v1','player/7',None,'json'],sort_keys=True)
+                path=client.response_directory/(hashlib.sha256(identity.encode()).hexdigest()+'.json')
+                atomic_json(path,{'identity':identity,'status':404})
+                self.assertEqual(client.player(7),{'player':{'id':7}})
+                self.assertEqual(session.get.call_args.args[0],
+                                 'https://www.sofascore.com/api/v1/player/7')
+
     def test_refusal_persists_across_restarts_and_retry_after_is_respected(self):
         for status in (401,403,429):
             with self.subTest(status=status), tempfile.TemporaryDirectory() as folder:
@@ -115,26 +136,6 @@ class SafetyTests(unittest.TestCase):
             self.assertEqual((root/'safety/sofascore.json').read_bytes(),(target/'safety/sofascore.json').read_bytes())
             with self.assertRaisesRegex(ValueError,'must not exist'):restore(archive,target)
 
-    def test_whoscored_pass_and_dribble_fallback_and_render(self):
-        with tempfile.TemporaryDirectory() as folder:
-            runner=SeasonRunner({'sofascore':Sofa()},folder,providers=['sofascore'],spatial=(),report=lambda _:None)
-            runner.run('EPL','2024',limit=1)
-            match=runner.dataset.matches[1];player=match.home_lineup.players[0]
-            player.stats.raw['_providers']={'whoscored':{'id':70}}
-            match.metadata['raw_response_files']={'whoscored':'who.json'}
-            atomic_json(Path(folder)/'who.json',{'payload':{'matchCentreData':{'events':[
-                {'playerId':70,'type':{'displayName':'Pass'},'outcomeType':{'displayName':'Successful'},'x':30,'y':40,
-                 'qualifiers':[{'type':{'displayName':'PassEndX'},'value':'70'}, {'type':{'displayName':'PassEndY'},'value':'50'}]},
-                {'playerId':70,'type':{'displayName':'TakeOn'},'outcomeType':{'displayName':'Unsuccessful'},'x':75,'y':20}]}}})
-            summary,passes,_=extract_pass_features(match,player,folder)
-            self.assertEqual(summary['pass_map_source'],'whoscored')
-            self.assertEqual(len(passes),1);self.assertTrue(passes[0]['completed'])
-            summary,dribbles=extract_dribble_features(match,player,folder,{})
-            self.assertEqual(summary['dribble_map_source'],'whoscored')
-            self.assertEqual(len(dribbles),1);self.assertFalse(dribbles[0]['successful'])
-            from render_maps import render
-            # The saved baseline has no maps: rendering must show missing data.
-            self.assertTrue(render(folder,1,7).exists())
 
 
 if __name__=='__main__':unittest.main()

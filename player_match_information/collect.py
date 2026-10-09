@@ -33,8 +33,6 @@ def main(argv=None):
     spatial_group.add_argument('--no-spatial', action='store_true')
     parser.add_argument('--build-csvs', action=argparse.BooleanOptionalAction, default=True,
                         help='Build combined CSV exports after collection (default: enabled)')
-    parser.add_argument('--compile-events', action=argparse.BooleanOptionalAction, default=True,
-                        help='Compile the WhoScored event stream CSV during export (default: enabled)')
     parser.add_argument('--offline', action='store_true')
     args = parser.parse_args(argv)
     if not args.name or Path(args.name).name != args.name or args.name in ('.','..'):
@@ -77,7 +75,7 @@ def main(argv=None):
             elif not settings_path.exists():
                 parser.error('No saved collection with that name')
             else:
-                settings = json.loads(settings_path.read_text())
+                settings = json.loads(settings_path.read_text(encoding='utf-8'))
                 if args.command == 'resume' and (args.no_spatial or args.sofascore_spatial_capture):
                     capture = 'none' if args.no_spatial else args.sofascore_spatial_capture
                     spatial = [] if capture == 'none' else list(SPATIAL_CAPTURE_MODES[capture])
@@ -89,9 +87,9 @@ def main(argv=None):
             if args.command == 'status':
                 for name in ('job.json','run_summary.json','capabilities.json'):
                     path = directory / name
-                    if path.exists(): print(name + '\n' + path.read_text())
+                    if path.exists(): print(name + '\n' + path.read_text(encoding='utf-8'))
                 for path in (root / 'safety').glob('*.json'):
-                    print(path.name + '\n' + path.read_text())
+                    print(path.name + '\n' + path.read_text(encoding='utf-8'))
                 return 0
             classes = dict(sofascore=SafeSofaScoreClient, fotmob=SafeFotMobClient, whoscored=SafeWhoScoredClient)
             clients = {
@@ -102,14 +100,13 @@ def main(argv=None):
             }
             runner = SeasonRunner(clients,directory,providers=settings['providers'],spatial=settings['spatial'])
             if args.command == 'export':
-                events = json.loads((directory/'schedule.json').read_text())['events']
-                runner._export(events,compile_events=args.compile_events)
+                events = json.loads((directory/'schedule.json').read_text(encoding='utf-8'))['events']
+                runner._export(events)
                 print('Rebuilt available CSVs from checkpoints without network requests.')
                 return 0
             try:
                 result = runner.run(settings['competition'],settings['season'],limit=args.limit,
-                                    build_csvs=args.build_csvs,
-                                    compile_events=args.compile_events)
+                                    build_csvs=args.build_csvs)
             except KeyboardInterrupt:
                 print('Interrupted. Responses already cached are safe; use resume to continue.')
                 return 130

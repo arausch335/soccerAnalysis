@@ -14,10 +14,6 @@ from collection.selection import (season_key, season_label, competition_by_name,
                                   with_reviewed_schedule_results,
                                   is_qualification_event)
 from collection.seasonRunner import SeasonRunner
-from collection.spatial import (_channel, extract_dribble_features, extract_pass_features,
-                                extract_spatial_features)
-from pitch_zones import (LEFT_HALF_SPACE_MIN, LEFT_WING_MIN, RIGHT_HALF_SPACE_MAX,
-                         RIGHT_WING_MAX, zone_number)
 from storage import PandasStore
 
 
@@ -355,15 +351,6 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result['metrics']['keeper_sweeper_actions_attempted'],4)
         self.assertEqual(result['metrics']['keeper_sweeper_actions_completed'],3)
 
-    def test_box_aligned_channels_and_numbered_zones(self):
-        self.assertEqual(_channel(RIGHT_WING_MAX-.001),'right_wing')
-        self.assertEqual(_channel(RIGHT_WING_MAX),'right_half_space')
-        self.assertEqual(_channel(RIGHT_HALF_SPACE_MAX),'central')
-        self.assertEqual(_channel(LEFT_HALF_SPACE_MIN),'left_half_space')
-        self.assertEqual(_channel(LEFT_WING_MIN),'left_wing')
-        self.assertEqual(zone_number(0,0),1)
-        self.assertEqual(zone_number(100,100),30)
-        self.assertEqual(zone_number(84,50),28)
 
     def test_enrichment_is_atomic_and_preserves_sofa_baseline(self):
         match=self.baseline();bad=fot_payload()
@@ -554,7 +541,7 @@ class ProviderTests(unittest.TestCase):
             self.assertFalse(json.loads(Path(folder,'run_summary.json').read_text())['csvs_built'])
             self.assertTrue(Path(folder,'match_checkpoints','1').exists())
 
-    def test_awarded_match_is_in_result_csv_without_invented_team_statistics(self):
+    def test_awarded_match_stays_in_snapshot_without_invented_player_statistics(self):
         class AwardedSofa(Sofa):
             def iter_season_events(self,*args):
                 normal=event(1);normal['roundInfo']={'round':13}
@@ -576,35 +563,17 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual((matches[2].home_score,matches[2].away_score),(0,2))
             self.assertEqual(matches[2].round_number,14)
             self.assertIsNone(matches[2].home_lineup)
-            rows=pd.read_csv(Path(folder,'team_match_results.csv'))
-            awarded=rows[rows.match_id.eq(2)].sort_values('venue')
-            self.assertEqual(len(awarded),2)
-            self.assertEqual(set(awarded.result),{'W','L'})
-            self.assertEqual(set(awarded.points),{0,3})
-            self.assertEqual(set(awarded.played_goals_for),{1})
-            self.assertTrue(awarded.awarded.all())
-            self.assertFalse(awarded.fotmob_team_statistics_available.any())
-            self.assertEqual(set(awarded.data_status),{'awarded_result_only'})
-            detailed=pd.read_csv(Path(folder,'fotmob_team_statistics.csv'))
-            self.assertNotIn(2,set(detailed.match_id))
+            players=pd.read_csv(Path(folder,'player_match_stats.csv'))
+            self.assertNotIn(2,set(players.match_id))
+            self.assertFalse(Path(folder,'team_match_results.csv').exists())
+            self.assertFalse(Path(folder,'fotmob_team_statistics.csv').exists())
 
-    def test_fotmob_baseline_collects_without_a_sofascore_client(self):
+    def test_fotmob_only_backup_is_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
-            fot=Fot();reports=[]
-            runner=SeasonRunner({'fotmob':fot},folder,providers=['fotmob'],
-                baseline_provider='fotmob',spatial=(),report=reports.append)
-            result=runner.run('Premier League','2024/25')
-            self.assertTrue(result.status.eq('complete').all())
-            self.assertEqual(result.attrs['baseline_provider'],'fotmob')
-            self.assertEqual(fot.calls,[101,102,103])
-            self.assertEqual(set(runner.dataset.matches),{101,102,103})
-            match=runner.dataset.matches[101]
-            self.assertEqual(match.season.competition.id,47)
-            self.assertEqual(match.season.id,2024)
-            self.assertEqual(match.metadata['id_namespace'],'fotmob')
-            self.assertEqual(match.metadata['provider_status'],{'fotmob':'complete'})
-            summary=json.loads(Path(folder,'run_summary.json').read_text())
-            self.assertEqual(summary['baseline_provider'],'fotmob')
+            fot=Fot()
+            with self.assertRaisesRegex(ValueError,'FotMob-only backup'):
+                SeasonRunner({'fotmob':fot},folder,providers=['fotmob'],baseline_provider='fotmob')
+            self.assertEqual(fot.calls,[])
 
     def test_provider_block_preserves_baseline_and_retries_only_missing_data(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -653,29 +622,26 @@ class ProviderTests(unittest.TestCase):
             self.assertIn('shotmap/1',keys)
             self.assertEqual(sum(key.startswith('heatmap/1/') for key in keys),2)
             self.assertEqual(sum(key.startswith('rating_breakdown/1/') for key in keys),2)
-            for name in ('player_match_stats.csv','spatial_maps.csv','passes.csv','dribbles.csv'):
+            for name in ('player_match_stats.csv','identities.csv','identity_mismatches.csv','lineup_differences.csv'):
                 self.assertTrue(Path(folder,name).exists())
-            self.assertTrue(Path(folder,'events.csv').exists())
+            self.assertFalse(Path(folder,'events.csv').exists())
             self.assertFalse(Path(folder,'whoscored_events.csv').exists())
             master=pd.read_csv(Path(folder,'player_match_stats.csv'))
             for column in ('sofascore_rating','sofascore_keeper_save_value','sofascore_total_progression',
                            'sofascore_best_ball_carry_progression','penalties_faced','crosses_not_claimed',
                            'keeper_sweeper_actions_attempted','keeper_sweeper_actions_completed',
-                           'touch_count','average_x','average_y'):
+                           'touch_count','heatmap_xy'):
                 self.assertIn(column,master.columns)
             for column in ('average_signed_width','spatial_entropy','dominant_zone_number',
                            'average_pass_length_m','dribble_location_variability','fotmob_shot_xg_sum'):
                 self.assertNotIn(column,master.columns)
             for name in ('spatial_features.csv','pass_features.csv','dribble_features.csv',
                          'pass_zone_transitions.csv','shot_features.csv','player_match_features.csv',
-                         'player_stats.csv'):
+                         'player_stats.csv','spatial_maps.csv','passes.csv','dribbles.csv',
+                         'average_positions.csv','fotmob_player_stats.csv','fotmob_team_statistics.csv'):
                 self.assertFalse(Path(folder,name).exists())
-            maps=pd.read_csv(Path(folder,'spatial_maps.csv'))
-            self.assertEqual(set(maps.columns),set([
-                'match_id','date','season','competition','team','opponent','player_id','player_name',
-                'provider','provider_player_id','map_type','json_file','json_path','status']))
-            self.assertIn('heatmap',set(maps.map_type))
-            self.assertIn('pass_map',set(maps.map_type))
+            self.assertEqual(master.touch_count.tolist(),[1,1])
+            self.assertEqual(json.loads(master.heatmap_xy.iloc[0]),[{'x':10,'y':20}])
             self.assertFalse(Path(folder,'touches.csv').exists())
             self.assertEqual(len(master),2)
             self.assertEqual(len(master.columns),len(set(master.columns)))
@@ -740,82 +706,8 @@ class ProviderTests(unittest.TestCase):
             self.assertTrue(all(statuses[str(p.player.id)]['rating_breakdown']=='unavailable'
                                 for lineup_ in match.lineups for p in lineup_.players))
 
-    def test_heatmap_v1_features_and_important_actions(self):
-        with tempfile.TemporaryDirectory() as folder:
-            match=self.baseline();appearance=match.home_lineup.players[0]
-            raw=Path(folder,'raw','sofascore');raw.mkdir(parents=True)
-            payloads={
-                'heat.json':{'heatmap':[{'x':25,'y':10},{'x':75,'y':10},{'x':75,'y':90},{'x':75,'y':90}]},
-                'average.json':{'home':[{'player':{'id':7},'averageX':62.5,'averageY':70,'pointsCount':4}],'away':[]},
-                'rating.json':{'passes':[{'keypass':True,'playerCoordinates':{'x':80,'y':20}}]},
-                'shots.json':{'shotmap':[{'player':{'id':7},'playerCoordinates':{'x':90,'y':50}}]},
-            }
-            for name,payload in payloads.items():
-                Path(raw,name).write_text(json.dumps({'payload':payload}))
-            match.metadata['sofascore_spatial_status']={'shotmap':'complete','7':{'heatmap':'complete','rating_breakdown':'complete'}}
-            match.metadata['sofascore_spatial_files']={
-                'average_positions':'raw/sofascore/average.json','shotmap':'raw/sofascore/shots.json',
-                '7':{'heatmap':'raw/sofascore/heat.json','rating_breakdown':'raw/sofascore/rating.json'},
-            }
-            features=extract_spatial_features(match,appearance,folder)
-            self.assertEqual(features['touch_count'],4)
-            self.assertEqual(features['average_forwardness'],.25)
-            self.assertEqual(features['average_signed_width'],-.4)
-            self.assertEqual(features['important_action_count'],2)
-            self.assertAlmostEqual(features['important_action_weight_total'],7)
-            self.assertEqual(features['dominant_zone'],'final_left_wing')
 
-    def test_passmap_v1_summary_records_and_transitions(self):
-        with tempfile.TemporaryDirectory() as folder:
-            match=self.baseline();appearance=match.home_lineup.players[0]
-            raw=Path(folder,'raw','sofascore');raw.mkdir(parents=True)
-            payload={'passes':[
-                {'playerCoordinates':{'x':20,'y':10},'passEndCoordinates':{'x':60,'y':90},
-                 'outcome':True,'keypass':False,'isLongBall':True,'eventActionType':'pass'},
-                {'playerCoordinates':{'x':60,'y':50},'passEndCoordinates':{'x':90,'y':50},
-                 'outcome':False,'keypass':True,'eventActionType':'pass'},
-                {'playerCoordinates':{'x':80,'y':50},'passEndCoordinates':{'x':79,'y':52},
-                 'outcome':True,'keypass':False,'eventActionType':'pass'},
-            ]}
-            Path(raw,'rating.json').write_text(json.dumps({'payload':payload}))
-            match.metadata['sofascore_spatial_status']={'7':{'rating_breakdown':'complete'}}
-            match.metadata['sofascore_spatial_files']={'7':{'rating_breakdown':'raw/sofascore/rating.json'}}
-            summary,passes,transitions=extract_pass_features(match,appearance,folder)
-            self.assertEqual(summary['pass_attempt_count'],3)
-            self.assertEqual(summary['pass_completion_count'],2)
-            self.assertAlmostEqual(summary['pass_completion_rate'],2/3)
-            self.assertEqual(summary['pass_map_key_passes'],1)
-            self.assertEqual(summary['final_third_entry_attempts'],1)
-            self.assertEqual(summary['box_entry_attempts'],1)
-            self.assertEqual(sum(row['attempts'] for row in transitions),3)
-            self.assertTrue(passes[0]['progressive'])
-            self.assertTrue(passes[0]['switch'])
-            self.assertEqual(passes[0]['origin_zone_number'],6)
-            self.assertEqual(passes[0]['destination_zone_number'],20)
 
-    def test_dribblemap_v1_reconciles_and_relates_to_heatmap(self):
-        with tempfile.TemporaryDirectory() as folder:
-            match=self.baseline();appearance=match.home_lineup.players[0]
-            appearance.stats.record_action('dribbles',3,2)
-            raw=Path(folder,'raw','sofascore');raw.mkdir(parents=True)
-            payload={'dribbles':[
-                {'playerCoordinates':{'x':70,'y':10},'outcome':True,'eventActionType':'dribble'},
-                {'playerCoordinates':{'x':90,'y':50},'outcome':True,'eventActionType':'dribble'},
-                {'playerCoordinates':{'x':40,'y':90},'eventActionType':'dribble'},
-            ]}
-            Path(raw,'rating.json').write_text(json.dumps({'payload':payload}))
-            match.metadata['sofascore_spatial_status']={'7':{'rating_breakdown':'complete'}}
-            match.metadata['sofascore_spatial_files']={'7':{'rating_breakdown':'raw/sofascore/rating.json'}}
-            heat={'touch_count':30,'average_forwardness':.2,'average_signed_width':0,
-                  'average_absolute_width':.3}
-            summary,dribbles=extract_dribble_features(match,appearance,folder,heat)
-            self.assertEqual(summary['dribble_reconciliation_status'],'matched')
-            self.assertEqual(summary['dribble_attempts'],3)
-            self.assertEqual(summary['mapped_dribbles_completed'],2)
-            self.assertAlmostEqual(summary['dribble_attempts_per_100_touches'],10)
-            self.assertEqual(summary['box_attempt_share'],1/3)
-            self.assertFalse(dribbles[2]['successful'])
-            self.assertIsNotNone(summary['dribble_centroid_distance_from_touch_centroid'])
 
 
 if __name__=='__main__':unittest.main()

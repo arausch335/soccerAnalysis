@@ -26,7 +26,7 @@ class PersistentGate:
         self.lock = FileLock(str(self.traffic_path) + '.lock')
 
     def read(self):
-        return json.loads(self.path.read_text()) if self.path.exists() else {}
+        return json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else {}
 
     @property
     def is_blocked(self):
@@ -41,7 +41,7 @@ class PersistentGate:
                     raise ProviderRequestError(
                         f"Provider paused until {state['blocked_until']} UTC epoch: {state.get('reason')}",
                         endpoint=endpoint, status_code=429)
-                traffic = json.loads(self.traffic_path.read_text()) if self.traffic_path.exists() else {}
+                traffic = json.loads(self.traffic_path.read_text(encoding='utf-8')) if self.traffic_path.exists() else {}
                 # Global pacing also spaces requests when switching providers.
                 delay = traffic.get('next_request', 0) - now
                 if delay <= 0:
@@ -60,7 +60,7 @@ class PersistentGate:
         with self.lock:
             state = self.read()
             state.update(blocked_until=max(state.get('blocked_until', 0), time.time() + seconds),
-                         reason=str(error))
+                         reason=str(error), status_code=error.status_code)
             atomic_json(self.path, state)
 
 
@@ -77,12 +77,23 @@ class CachedTransport:
         identity = json.dumps([self.BASE_URL, endpoint, params, kind], sort_keys=True)
         path = self.response_directory / (hashlib.sha256(identity.encode()).hexdigest() + '.json')
         if path.exists() and not self.refresh_cache:
-            saved = json.loads(path.read_text())
+            saved = json.loads(path.read_text(encoding='utf-8'))
             if saved['identity'] != identity:
                 raise ValueError('HTTP cache identity mismatch')
             if saved.get('status') == 404:
                 raise ProviderRequestError('Cached HTTP 404: ' + endpoint, endpoint=endpoint, status_code=404)
             return saved['payload']
+        # Reuse successful responses from the former Sofascore API host.
+        # Negative caches remain host-specific; cooldowns remain provider-wide.
+        if not self.refresh_cache:
+            for base_url in getattr(self, 'CACHE_BASE_URL_ALIASES', ()):
+                legacy_identity = json.dumps([base_url, endpoint, params, kind], sort_keys=True)
+                legacy_path = self.response_directory / (hashlib.sha256(legacy_identity.encode()).hexdigest() + '.json')
+                if not legacy_path.exists():continue
+                saved = json.loads(legacy_path.read_text(encoding='utf-8'))
+                if saved['identity'] != legacy_identity:
+                    raise ValueError('HTTP cache identity mismatch')
+                if saved.get('status') == 200:return saved['payload']
         if self.offline:
             raise ProviderRequestError('Offline cache miss: ' + endpoint, endpoint=endpoint)
         try:

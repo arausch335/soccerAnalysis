@@ -1,225 +1,233 @@
-# Resumable football scraper
+# Player match statistics scraper
 
-Local, resumable collection and export tooling for Sofascore (primary), FotMob,
-and WhoScored. Python 3.12 is recommended.
+Resumable Sofascore collection with FotMob and WhoScored enrichment. The main
+provider requests, parsers, identity matching and pacing are preserved. The
+FotMob-only backup season runner has been removed. This project exports player
+match statistics and ID audit tables; it no longer produces visualizations,
+event-stream CSVs, role reports, or derived spatial/pass/dribble tables.
 
 ## Setup
 
+Use 64-bit Python 3.12 on Windows or macOS (Intel or Apple Silicon). See the
+[Mac and Windows setup guide](../docs/MAC_WINDOWS.md) for installation,
+PyCharm and data transfer. From this directory on macOS:
+
 ```sh
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-On Windows use `py -3.12 -m venv .venv`, then `.venv\Scripts\Activate.ps1`. Run the remaining commands with `python`.
+On Windows, use `py -3.12 -m venv .venv`, then
+`.venv\Scripts\python.exe -m pip install -r requirements.txt`. Run scripts
+with `.venv\Scripts\python.exe` or optionally activate the environment first.
 
-## Run from main on this device
+## Collect and resume
 
-Run `python main.py` in this repository, or press Run on the PyCharm project's
-`main.py`. Set `ACTION`, `COMPETITIONS` and `SEASONS` near the top of that file; no
-command line is required. `ACTION = 'auto'` resumes an existing collection or
-starts it when it does not exist. Set `ACTION = 'resume'` to require continuation.
-Collection uses Sofascore primary, FotMob and WhoScored secondary, with spatial
-collection enabled. Set `SOFASCORE_SPATIAL_CAPTURE = 'fast'` to collect only
-average positions, or `'all'` to collect heatmaps, rating breakdowns, average
-positions, and shot maps. Changing an existing season to `'all'` and resuming
-backfills missing spatial responses while reusing everything already cached.
-The default lists cover Premier League, Bundesliga, and La Liga for 2024/25 and
-2025/26. The batch checks every competition/season combination first, skips clean
-completed collections, resumes existing incomplete collections, and then starts
-new folders using names such as `bundesliga-2024-25` and `la-liga-2025-26`.
-Set `BUILD_CSVS = False` in `main.py` to save checkpoints without rebuilding all
-combined CSVs after every collection pass. Set it to `True` when desired, or set
-`ACTION = 'export'` to rebuild existing CSVs later without making network requests.
-The 2024/2025 collection is:
+Edit `ACTION`, `COMPETITIONS`, `SEASONS`, `SOFASCORE_SPATIAL_CAPTURE`, and
+`BUILD_CSVS` in `main.py`, then run `python main.py` or press Run in PyCharm.
+`ACTION='auto'` resumes incomplete collections, skips complete ones, and starts
+missing seasons. Your existing competition and season selections are retained.
+`BUILD_CSVS=False` saves match checkpoints for a later offline rebuild.
 
-`data/premier-league/2024-2025`
-
-Historical datasets and retired workflow files are kept outside the live data
-root in `outputs/old_data`.
-
-```sh
-python main.py
-python main.py --limit 1
-python main.py status
-```
-
-## Collect and continue
+For a single collection:
 
 ```sh
 python collect.py start --competition "Premier League" --season 2024/25 --name premier-league-2024-25 --limit 1
 python collect.py status --name premier-league-2024-25
-python collect.py resume --name premier-league-2024-25 --limit 1
-```
-
-`resume` is the continuation function. It reads saved job settings, checkpoints, availability decisions and HTTP caches. Remove `--limit 1` to process the season. `--limit` selects the first N finished fixtures; it is not a per-run match allowance. There is no fixed request-count cap or scheduled batch rest. Failed secondary providers leave usable primary rows and a partial status.
-
-```sh
 python collect.py resume --name premier-league-2024-25
 python collect.py export --name premier-league-2024-25
-python collect.py resume --name premier-league-2024-25 --offline
 ```
 
-`export` rebuilds CSVs from completed checkpoints with zero HTTP. Offline resume can recover additional work from cached responses; uncached responses stay missing. Ctrl+C preserves previously saved responses and match checkpoints. An interrupted match is reconstructed from its cache on resume. This is a snapshot collector: schedule pages and successful responses are reused indefinitely. It does not automatically poll for new fixtures, corrections, or previously missing endpoints. For a different season use a different `--name` in the **same** data root.
+`--limit N` selects the first N finished fixtures, rather than N additional
+matches per run. Sofascore remains primary; FotMob and WhoScored supply
+supplementary player statistics. Failed secondary requests leave primary data
+available and the match marked partial for continuation. Qualification fixtures
+stay in cached schedules/checkpoints but are excluded from player exports and
+combined concordances.
 
-For a direct post-scrape rebuild of every saved season, run `python build_csvs.py`. It is equivalent to
-the default collection's `export` command: it makes no network requests, re-decodes
-the saved FotMob and WhoScored responses with the current mappings, and regenerates
-all analysis CSVs. Pass normal selection arguments for another collection, for
-example `python build_csvs.py --name bundesliga-2024-25 --data-root path/to/data`.
-Repeat `--name` to rebuild a selected subset.
+The existing capture modes are unchanged:
 
-`build_csvs.py` compiles `events.csv` by default. Use `--no-compile-events` when
-you only want the other tables and plan to process the cached JSON directly in
-R. Use `--replace-dataset` to atomically replace the corresponding packaged
-`dataset/<competition>/<season>/` directory after a successful rebuild; this
-mode requires event compilation. `--dataset-root` selects another package root.
-Qualification fixtures remain in `schedule.json` and the collection checkpoints,
-but are excluded from the relational snapshot and all rebuilt analysis CSVs.
+- `fast`: cache average positions only and export `average_x` / `average_y`.
+  It makes one average-position request per match when uncached, with no
+  heatmap, action-map or shot-map requests.
+- `all`: cache heatmaps, rating breakdowns, average positions and shot maps.
+- `--no-spatial`: omit optional spatial acquisition.
 
-The Python settings at the top of `build_csvs.py` independently control the
-top-level `dataset/player_ids.csv`, `dataset/team_ids.csv`, and
-`dataset/match_ids.csv` concordances. Set `BUILD_PLAYER_IDS_CSV`,
-`BUILD_TEAM_IDS_CSV`, or `BUILD_MATCH_IDS_CSV` to select each table. With
-`REFERENCE_CSVS_ONLY = True`, only the selected concordances are rebuilt and all
-saved-season export/package steps are skipped.
-
-`--no-spatial` on `start` skips the expensive per-player map calls. `--providers sofascore fotmob` on `start` omits WhoScored. All providers and spatial endpoints are enabled by default, with Sofascore always primary. `probe` tests Sofascore with at most one request (or zero if cached).
-
-## Outputs
-
-The principal flattened CSV is:
-
-`data/premier-league/2024-2025/player_match_stats.csv`
-
-It has one row per player/match, including lineup members who did not play,
-conventional statistics, and only three spatial fields: `touch_count`,
-`average_x`, and `average_y`. `appeared` distinguishes unused
-substitutes. Missing values are not filled with invented zeros. Scalar priority is
-Sofascore → FotMob → WhoScored. Attempt/completion pairs are selected together
-from one provider, preferring a complete pair to prevent mixing incompatible
-denominators.
-
-Supporting files include `spatial_maps.csv`, `passes.csv`, `dribbles.csv`, `shots.csv`,
-`events.csv`, `provenance.csv`, `source_differences.csv`, `identities.csv`,
-`identity_mismatches.csv`, `data_quality.csv`, `collection.csv`, and
-`run_summary.json`. `spatial_maps.csv` is a long-form inventory of available
-cached JSON payloads, including heatmaps, average positions, pass maps, dribble
-maps, shot maps, and provider event maps. Its `json_file` and `json_path` columns
-point to the raw data; unavailable maps are not fabricated. Pass and dribble
-exports retain raw coordinates and source outcomes but omit Python-derived
-geometry such as signed width, zones, entropy, progression, and danger scores.
-Provider identities are matched explicitly. A unique exact-name, reviewed alias,
-or provider-ID match is accepted even when shirt numbers disagree. A genuinely
-ambiguous or unmatched player is omitted and recorded in
-`identity_mismatches.csv`; valid players from the same game remain available.
-`fotmob_team_statistics.csv` includes canonical `competition` and
-Sofascore-derived `matchweek` values for each home/away team statistic row.
-`team_match_results.csv` has one row per team and match for result/form work.
-Awarded fixtures use the official score and remain present even when lineup and
-detailed-stat endpoints are unavailable; `played_goals_for`, `awarded`, and
-`data_status` preserve that distinction. Missing detailed statistics stay missing
-rather than being filled with zeroes.
-
-`events.csv` is the WhoScored event stream: one row per event and many rows per
-match. It includes clock/period fields, players and teams, action and outcome,
-coordinates, related events, shot geometry, cards, common classifications, full
-qualifiers, and decoded satisfied-event flags. Raw match responses remain the
-authoritative source; newly introduced event fields are retained in
-`extra_event_json` until promoted to named columns.
-
-FotMob remains enabled for fixtures, player statistics, team statistics, and
-shots. Its incident timeline is deliberately discarded before new match responses
-are cached and is not used to infer participation; WhoScored is the event stream.
-
-### What each provider contributes
-
-- **Sofascore (baseline):** season schedule, fixture IDs, dates, rounds, teams,
-  scores/statuses, lineups, formations, player identities and baseline player
-  statistics. Optional endpoints add average positions, heatmaps, rating
-  breakdown pass/dribble records, and shot maps.
-- **FotMob:** a second fixture index, player lineup/profile fields, detailed
-  player-match statistics, long-form team statistics by period/group, and shots
-  including expected-goal fields and locations when supplied. Its incident feed
-  is intentionally not retained.
-- **WhoScored:** lineups and player totals derived from its flags, plus the raw
-  event stream used for `events.csv`: clocks/periods, action type/outcome,
-  players/teams, start/end coordinates, related events, cards, shot fields,
-  qualifiers, and satisfied-event classifications.
-
-The normalized player table records the selected provider for every metric in
-`provenance.csv`; raw cached JSON remains authoritative for fields not promoted
-to a CSV column.
-
-### Customizing the CSVs after scraping
-
-- Edit `api/statistics.py` to add or rename normalized Sofascore/FotMob player
-  statistics. `SCALARS` and `PAIRS` document the provider keys.
-- Edit `api/whoScoredLoader.py` to add player-match totals derived from WhoScored
-  event flags.
-- Edit the `row` construction in `collection/seasonRunner.py` for profile or
-  context columns that are not statistics.
-- Edit `collection/whoScoredExports.py` to promote more event details into named
-  event-stream columns.
-
-After any of these changes, run `python build_csvs.py`; scraping does not need to
-be repeated.
-
-Raw response caches and per-match checkpoints are kept alongside exports. Some public endpoints may be unavailable or may have changed schema. A successful connection to the season directory does not establish that every match/map endpoint works.
-
-Pitch channels are aligned to regulation markings rather than split into equal
-fifths: the center spans the width of the six-yard box, each half-space runs
-from the six-yard-box edge to the penalty-area edge, and each wing runs from
-the penalty-area edge to the touchline. Detailed spatial, pass and dribble
-exports also carry 1-30 zone numbers across six lengthwise slices and five
-box-aligned lateral channels. Numbers advance from the defensive goal toward
-the attacking goal, and from provider y=0 to y=100 within each slice.
-
-## Heat, pass and dribble maps
+To backfill heatmaps on an existing collection while reusing cached data:
 
 ```sh
-python render_maps.py data/premier-league/2024-2025 MATCH_ID PLAYER_ID
+python collect.py resume --name premier-league-2024-25 --sofascore-spatial-capture all
 ```
 
-Use IDs from the flattened CSV. This writes a three-panel PNG under that season's `maps/`, without network activity. It plots actual Sofascore touch coordinates and actual pass/dribble coordinates. WhoScored's identified Pass and TakeOn events supplement missing Sofascore action categories when their coordinates and outcomes are present. FotMob supplements conventional statistics and shots; shot positions are not treated as touch/pass/dribble maps. Blank maps are labeled. Coordinates remain in the provider's frame; no movement trajectories or playing direction are inferred. Derived spatial geometry is not included in the CSV exports.
+Cached rating/action maps and shot maps are retained as raw provider data but
+are not processed into separate event, pass, dribble, shot or spatial exports.
+WhoScored's existing conventional counters derived from provider flags remain
+part of the player statistics scraper.
 
-## Request safeguards
+`export` uses checkpoints and cached responses without making HTTP requests.
+`resume --offline` can use cached responses too; uncached responses remain
+missing. Successful match responses and season schedules are reused on resume,
+so this collector does not automatically poll for newly finished fixtures or
+provider corrections. Each competition/season uses its own collection name.
 
-- Original `curl_cffi` direct-session method; one sequential request at a time. The previous browser fallback was removed.
-- 8–15 seconds between request starts globally across providers; no parallel map workers. There is no fixed request-count cap or scheduled batch rest. This timing reduces load, not detection guarantees.
-- HTTP 401/403/429 stops requests to that provider for at least 24 hours. A longer `Retry-After` wins. Server failures, invalid JSON and network failures pause for at least one hour. No automatic retries in the CLI.
-- Cooldowns and request timestamps survive restarts and transfers. One process lock spans all seasons in a data root. Use one data root and only one active device; independent copies cannot coordinate pacing or cooldowns.
-- Successful responses, schedule pages and HTTP 404s are cached. Known missing match endpoints are not retried on resume.
-- Player heat-map availability flags are respected. Rating maps probe representative starters first. After missing responses across three distinct matches with no observed supported schema, further calls for that map category are **deferred** for the season. This is a conservative sampling heuristic, not proof that all matches lack data. See `capabilities.json`; partial coverage may be missed. These decisions are intentionally retained on resume.
-- There is no proxy rotation, browser challenge fallback or automatic cooldown clearing. Moving devices is for portability, not circumventing a refusal.
+## Player CSV
 
-Sofascore's terms prohibit burdening its servers with automated requests. These conservative defaults cannot guarantee permission, access, or freedom from bans. Provider references: [Sofascore terms](https://www.sofascore.com/sr/terms-and-conditions), [FotMob terms](https://www.fotmob.com/term-of-service). Follow provider access requirements.
+The principal output is
+`data/<competition>/<YYYY-YYYY>/player_match_stats.csv`. It has one row per
+player/match, including unused lineup members. `appeared` distinguishes players
+who took part. Conventional player statistics, lineup/profile fields, FotMob
+fields and completion rates remain available.
 
-The supported collection entry points are `main.py`, `collect.py`, and
-`python -m collection`. Low-level client classes remain available for tests and
-library integrations; those callers must use the safe clients to get persistent
-limits.
+Metric priority remains Sofascore → FotMob → WhoScored. Attempt/completion pairs
+come from one provider together, preferring a complete pair. Missing values stay
+blank; they are not replaced with invented zeros.
 
-## Project layout
+The only spatial columns are:
 
-- `main.py` resumes the default collection from PyCharm or the terminal.
-- `collect.py` provides start, resume, export, status, and probe commands.
-- `build_csvs.py` rebuilds every CSV from saved data without making requests.
-- `eda.py` creates the offline analysis report and analysis tables.
-- `render_maps.py` renders cached player maps.
-- `transfer.py` safely packages or restores collection state when needed.
-- `migrate_data_layout.py` moves legacy flat season folders into the canonical
-  competition/season layout; use `--dry-run` to preview changes.
-- `api/`, `collection/`, `models/`, and `storage/` contain the implementation.
-- `data/<competition>/<YYYY-YYYY>/` contains each live season collection.
-- `outputs/old_data/` is the archive for historical data and retired files.
+| Column | Meaning |
+| --- | --- |
+| `average_x`, `average_y` | Provider-reported `averageX` / `averageY` for that player and match; available in `fast` and `all` |
+| `touch_count` | Number of points in the cached Sofascore player heatmap |
+| `heatmap_xy` | JSON array of original touch coordinates, e.g. `[{"x":10,"y":20}]` |
 
-## Tests
+Average positions are copied directly from the provider's average-position
+response, not calculated from heatmaps. Missing players or coordinates stay
+blank. Touch coordinates retain the provider's values, order and repeated points.
+No centroid, zones, pass geometry or movement trajectory is derived. A
+missing/unavailable heatmap has blank values. An observed empty heatmap has
+`touch_count=0` and `heatmap_xy=[]`. Invalid coordinates or a cache identity
+mismatch stop export rather than silently changing the data.
+
+Supporting files are `identities.csv`, `identity_mismatches.csv`,
+`lineup_differences.csv`, `collection.csv` and `run_summary.json`. Raw responses,
+match checkpoints, and the relational season snapshot remain available for
+resume and ID mapping. Legacy checkpoint snapshot types are still readable.
+Older extra export files already on your computer are left on disk; new builds
+no longer read or create them.
+
+## CSV and dataset builders
+
+`build_csvs.py` uses Python settings at the top of the file; it has no CLI flags.
+The existing settings are retained:
+
+- `REFERENCE_CSVS_ONLY=True` rebuilds only the selected combined concordances.
+  Set it to `False` to rebuild saved-season player CSVs.
+- `COLLECTION_NAMES=()` selects all saved seasons; a tuple of collection names
+  selects a subset.
+- `REPLACE_DATASET=True` also replaces each packaged season directory after a
+  successful player export. Its default remains `False`.
+- `BUILD_PLAYER_IDS_CSV`, `BUILD_TEAM_IDS_CSV`, and `BUILD_MATCH_IDS_CSV` select
+  concordances independently.
+- `REFRESH_PUBLISHED_TEAM_IDS=True` optionally downloads the published team
+  register using FotMob fixtures. It remains `False`, so normal rebuilds are
+  offline. Leave it disabled for Sofascore fixture builds.
+- `STANDARDIZE_FIXTURE_TEAM_NAMES=True` updates combined fixture display names
+  using the rebuilt team reference and the recorded fixture provider IDs.
+
+Run `python build_csvs.py` after configuring those settings. An independent
+packaging command is also available:
+
+```sh
+python dataset_manager.py --replace
+```
+
+Each `dataset/<competition>/<YYYY-YYYY>/` package contains only
+`player_match_stats.csv` and `fixtures.csv`. Packaging requires the player CSV,
+`config.json` and `schedule.json`; it does not require event or team-statistic
+CSVs. `--replace` atomically replaces a season directory after preparing both
+files. It does not modify the collection's raw data or match checkpoints.
+
+## Fixtures
+
+Run `python build_fixtures.py` after editing its Python settings. Its default is
+`PROVIDER='sofascore'` with `FALLBACK_ON_403=True`. A Sofascore HTTP 403 stops
+Sofascore requests and switches the entire selected fixture build to FotMob,
+reusing available checkpoints. Completed Sofascore checkpoints are retained,
+but the published combined CSV uses only FotMob IDs after fallback. Other errors
+do not trigger this switch. FotMob failures stop the build and leave the prior
+output intact. Explicit `PROVIDER='fotmob'` remains available.
+
+The saved 403/cooldown state causes subsequent runs to continue on FotMob during
+the pause, including any longer `Retry-After`. After the pause expires, the next
+run tries Sofascore again. Request pacing stays global across both providers.
+This fixture fallback is separate from the removed FotMob-only player backup;
+the player match collector still uses Sofascore as its baseline.
+
+Its scope is the top two divisions of England, Spain, Germany, Italy and France,
+plus the Champions League, Europa League and Conference League. It starts with
+2010/11, except Conference League starts with 2021/22. Current-season refreshing,
+upcoming fixtures and qualifying feeds retain their existing settings.
+
+The output is `dataset/fixtures.csv`. `dataset/fixtures.metadata.json` records
+the actual provider, requested provider, fallback reason and CSV checksum,
+allowing concordance builders to
+interpret its match/team IDs correctly. Keep these files together. A mismatch
+stops the reference build and asks for a fixture rebuild. Historical combined
+fixture CSVs without metadata are interpreted as FotMob, matching the existing
+default; rebuild an older Sofascore fixture CSV to attach its correct namespace.
+
+## Provider IDs and API host
+
+ScraperFC is the chosen ID/endpoint reference. The shared competition IDs are in
+`api/sofascore_ids.py`, with a pinned reference revision. See
+[ID_REFERENCE.md](docs/ID_REFERENCE.md) for the competition list and rules for
+finding season, fixture, team and player IDs. No extra scraping package needs
+to be installed; the existing clients retain their pacing and checkpoint logic.
+
+The Sofascore client uses `https://www.sofascore.com/api/v1`. Successful HTTP
+responses cached under the previous `api.sofascore.com` host remain reusable,
+including offline. Negative HTTP caches are specific to their host; provider
+cooldowns remain shared and are not cleared by this host change.
+
+## ID concordances
+
+Combined tables are written at the top level of `dataset/`:
+
+| File | Context columns, followed by `sofascore_id`, `fotmob_id`, `whoscored_id` |
+| --- | --- |
+| `player_ids.csv` | `competition`, `season`, `team_name`, `player_name` |
+| `team_ids.csv` | `team_name` |
+| `match_ids.csv` | `competition`, `season`, `date`, `home_team_name`, `away_team_name` |
+
+Provider IDs remain exact integer strings. Unknown IDs stay blank. Player team
+stints remain separate rows. Cross-season links are backfilled only through
+shared known provider IDs with a unique corresponding value, never from a name
+alone. Reviewed aliases and corrections remain in place.
+
+The build rejects conflicting ID links in both directions, including rows with
+missing third-provider IDs; it does not select an ID by majority vote. It also
+rejects reused player IDs under conflicting names and match IDs under conflicting
+fixtures. All requested tables are validated before existing concordances are
+replaced. Fixture-only teams and matches can remain partial rows rather than
+being assigned guessed provider IDs. Missing-ID counts are printed for teams.
+
+## Request safeguards and transfer
+
+Request safeguards are unchanged: one sequential request at a time; global
+8–15 second spacing across providers; persistent 401/403/429 cooldowns of at
+least 24 hours, extended by longer `Retry-After` values; cached successes and
+404s; and one process lock for the data root. Unsupported map categories retain
+their existing capability deferrals. These controls reduce request load but do
+not establish live availability.
+
+Move code with Git. Move saved player collection state separately:
+
+```sh
+python transfer.py pack data collection-state.zip
+python transfer.py restore collection-state.zip data
+```
+
+Restore only into a destination that does not exist. The archive includes caches,
+checkpoints and request/cooldown state. Use one active device and data root at a
+time so independent copies do not issue overlapping requests.
+
+## Offline verification
 
 ```sh
 python -m unittest discover -s tests -q
 ```
 
-Tests use mocked responses: provider priority, identity joins, missing maps,
-checkpoint/resume, persistent pacing, refusal handling, cached 404s,
-offline mode, and CSV rebuilding.
+Tests use mocked payloads to cover provider enrichment, heatmap coordinates,
+identity conflicts, concordance namespaces, missing values, dataset packaging,
+checkpoint/resume, cooldowns, cached 404s and offline export.

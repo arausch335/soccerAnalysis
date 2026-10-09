@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pandas as pd
 from api import SofaScoreLoader, SofaScoreRequestError
 from collection import CollectionConfig, CollectionRunner
-from models import FootballDataset, Player, Competition, derive_traits
+from models import FootballDataset, Player, Competition, PlayerTraitSnapshot, TraitCategory
 from storage import PandasStore
 
 
@@ -51,7 +51,8 @@ class StorageTests(unittest.TestCase):
         p.information = {'height': None, 'age': 32}
         p.performances[1].stats.record_action('passing', 30, 24)
         p.performances[2].stats.record_action('passing', None, 0)
-        derive_traits(p, matches[1])
+        p.traits[2] = PlayerTraitSnapshot(p, matches[1], 1, source_match_ids=[1],
+            passing=TraitCategory({'completion_rate': .8}, {'completion_rate': 30}))
         reserve = Player(100, 'Reserve')
         loader.dataset.add_player(reserve)
         loader.dataset.teams[44].players[100] = reserve

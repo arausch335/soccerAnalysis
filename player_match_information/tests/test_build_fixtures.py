@@ -54,7 +54,7 @@ class FixtureBackfillTests(unittest.TestCase):
     def test_same_schema_qualifiers_and_checkpoint_resume_without_stats(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);client=FakeScheduleClient()
-            options=dict(client=client,data_root=root/'data',
+            options=dict(provider='sofascore',client=client,data_root=root/'data',
                 output_csv=root/'dataset'/'fixtures.csv',
                 competitions=(FixtureCompetition('Champions League',7),),
                 start_season=2010,end_season=2011,refresh_current=False,
@@ -79,7 +79,7 @@ class FixtureBackfillTests(unittest.TestCase):
             output.parent.mkdir();output.write_text('existing\n')
             client=FakeScheduleClient()
             with self.assertRaisesRegex(ValueError,'Cannot uniquely resolve'):
-                build(client=client,data_root=root/'data',output_csv=output,
+                build(provider='sofascore',client=client,data_root=root/'data',output_csv=output,
                     competitions=(FixtureCompetition('Championship',18),),
                     start_season=2010,end_season=2012,refresh_current=False,
                     now=datetime(2026,10,7,tzinfo=timezone.utc))
@@ -88,7 +88,7 @@ class FixtureBackfillTests(unittest.TestCase):
     def test_current_season_refreshes_and_requests_upcoming_fixtures(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);client=FakeScheduleClient()
-            build(client=client,data_root=root/'data',
+            build(provider='sofascore',client=client,data_root=root/'data',
                 output_csv=root/'dataset'/'fixtures.csv',
                 competitions=(FixtureCompetition('Premier League',17),),
                 start_season=2010,end_season=2010,refresh_current=True,

@@ -1,116 +1,97 @@
-# Sofascore scrapers: transfer package
+# Sofascore scrapers
 
-This project packages the fixture scraper for Python 3.10+ on Windows, macOS,
-and Linux. A helper brings your existing player match information scraper from
-your local SoccerAnalysis project into the same repository.
+Both the fixture collector and the player match scraper are included. Clone this
+private repository on another computer and recreate the Python environment; see
+[transfer instructions](docs/PRIVATE_GITHUB.md).
 
-**The ZIP currently contains the fixture scraper and the transfer helper.** Your
-player scraper is on your computer, so run the helper below to include it. Its
-original folder is left unchanged. The player scraper's dependencies and run
-command cannot be verified until that code is available.
+## Player statistics and dataset tools
 
-## 1. Include your local player scraper
+Use 64-bit Python 3.12 on Windows or macOS (Intel or Apple Silicon). From
+the repository root, follow the commands for your operating system in the
+[Mac and Windows setup guide](docs/MAC_WINDOWS.md). For macOS:
 
-Unzip this package and open a terminal in the extracted `sofascore-scrapers`
-folder. Run the command for your operating system, adjusting the path to match
-your existing SoccerAnalysis folder.
-
-Windows:
-
-```powershell
-py tools/include_player_project.py --source "C:\Users\Alexander\PycharmProjects\SoccerAnalysis"
+```sh
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r player_match_information/requirements.txt
+cd player_match_information
 ```
 
-macOS:
+On Windows, create the environment with `py -3.12 -m venv .venv`. You can
+install dependencies and run scripts directly with `.venv\Scripts\python.exe`;
+PowerShell activation is optional.
 
-```bash
-python3 tools/include_player_project.py --source "/Users/Alexander/PycharmProjects/SoccerAnalysis"
+The supported entry points are:
+
+| Script | Purpose |
+| --- | --- |
+| `main.py` | Start/resume the configured seasons using Sofascore, FotMob and WhoScored |
+| `collect.py` | Start, resume, status and offline export for one saved season |
+| `build_csvs.py` | Rebuild player CSVs, optional packaged datasets and ID concordances |
+| `dataset_manager.py` | Package `player_match_stats.csv` and `fixtures.csv` by league/season |
+| `build_fixtures.py` | Build the combined fixture CSV from 2010/11 onward |
+
+The main scraper retains its provider collection, matching, caching and request
+pacing. FotMob enrichment remains part of player statistics. The separate
+FotMob-only backup collection path has been removed. Visualization, event-layer,
+role analysis, and derived spatial/pass/dribble processing have been removed.
+
+`player_match_stats.csv` retains conventional match statistics. The `fast` mode
+collects and exports `average_x` and `average_y` from the match's average-position
+endpoint, with no heatmap, action-map or shot-map requests. The existing `all`
+mode additionally caches those endpoints and exports `touch_count` plus
+`heatmap_xy`, a JSON array of original `{x,y}` touch coordinates. Missing values
+remain blank.
+
+`build_fixtures.py` starts with Sofascore and switches the whole fixture output
+to FotMob after a Sofascore HTTP 403. Its metadata records the actual provider
+so IDs remain correctly identified. The player project's Sofascore client uses
+`www.sofascore.com/api/v1` and reuses successful caches from its former API host.
+The [ID reference](player_match_information/docs/ID_REFERENCE.md) documents the
+ScraperFC reference and how competition, season, match and player IDs are resolved.
+
+Edit the Python settings in `main.py`, `build_csvs.py`, and `build_fixtures.py`
+before running them. In particular, `build_csvs.py` currently has
+`REFERENCE_CSVS_ONLY=True`; set it to `False` to rebuild per-season player CSVs.
+The [player project README](player_match_information/README.md) explains settings,
+output schemas, safe continuation, and concordance validation.
+
+## Standalone Sofascore fixture collector
+
+The original standard-library fixture command also remains available. From the
+repository root, without installing player dependencies:
+
+```sh
+python -m sofascore_scrapers.fixtures --output data/fixtures
 ```
 
-The helper creates `player_match_information/` with Python source files,
-dependency manifests and documentation, preserving subfolders. It excludes
-virtual environments, editor settings, environment files and common data/output
-folders. A manifest records the copied files. It stops if the destination already
-exists, so it cannot overwrite an earlier copy.
+It covers the top two divisions in England, Spain, Germany, Italy and France,
+plus the Champions League, Europa League and Conference League. Its cutoff is
+January 1, 2010 UTC; Conference League starts in 2021/22. It writes CSV, JSONL,
+SQLite checkpoints and a coverage report under the selected output directory.
+Requests are serial with 15–25 second gaps, and HTTP 403 stops collection.
 
-If your player scraper needs additional assets or config files, copy those into
-that folder as well. The helper copies code and dependencies; it cannot identify
-runtime assets without inspecting the original scraper.
-
-## 2. Transfer using a private GitHub repository
-
-Follow [PRIVATE_GITHUB.md](docs/PRIVATE_GITHUB.md). It gives GitHub Desktop and
-terminal instructions for publishing this folder privately, then cloning it on
-another computer. Publishing does not run either scraper.
-
-## 3. Run the fixture scraper
-
-From the extracted or cloned project folder:
-
-Windows:
-
-```powershell
-py -m sofascore_scrapers.fixtures --output data/fixtures
+```sh
+python -m sofascore_scrapers.fixtures --competition 17 --max-requests 3 --output data/trial
+python -m sofascore_scrapers.fixtures --output data/fixtures --export-only
 ```
 
-macOS/Linux:
+A one-request cloud check on October 9, 2026 also returned HTTP 403 (`challenge`)
+for a fixture on `www.sofascore.com/api/v1`; see the
+[compatibility and access check](docs/MAC_WINDOWS.md#verification-and-live-access).
+Availability from your computer and historical coverage have not been verified.
+Unit tests use saved or mocked payloads and make no provider requests.
 
-```bash
-python3 -m sofascore_scrapers.fixtures --output data/fixtures
+## Offline checks
+
+From the repository root:
+
+```sh
+python -m unittest discover -s tests -q
+cd player_match_information
+python -m unittest discover -s tests -q
 ```
 
-No dependencies are needed for fixtures. Its scope is England, Spain, Germany,
-Italy and France's top two divisions, plus the UEFA Champions League, Europa
-League and Conference League. Kickoffs start at January 1, 2010 UTC; published
-future fixtures are included. Conference League starts with its first season in
-2021/22.
-
-Requests are serial with 15–25 second gaps. HTTP 403 stops immediately;
-rate-limit and transient errors get increasing backoff. Rerun the same command
-to resume from saved pages. CSV, raw JSONL, SQLite checkpoints and a coverage
-report are saved under `data/fixtures/`. Git ignores generated outputs.
-
-For a small trial:
-
-```bash
-python3 -m sofascore_scrapers.fixtures --competition 17 --max-requests 3 --output data/trial
-```
-
-On Windows, substitute `py` for `python3`. To export checkpoints without making
-requests, add `--export-only`. See `--help` for pacing and date options.
-
-The first live request in the cloud workspace returned HTTP 403 `challenge`,
-so **no fixture data was collected and live pagination remains unverified**.
-Moving the code does not establish that Sofascore will accept requests from the
-destination computer. The internal API may change.
-
-## 4. Run the existing player scraper
-
-On the destination computer, open `player_match_information/` in PyCharm and
-create a new Python environment. Install the copied requirements if present:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-Use the player script's existing entry point and configuration. Preserve the
-working directory it used in your original project. Virtual environments are
-recreated on the new machine rather than copied between computers.
-
-## Optional installation
-
-You can also install the fixture command into a Python environment:
-
-```bash
-python -m pip install .
-sofascore-fixtures --output data/fixtures
-```
-
-## Verification
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-Tests run offline. GitHub Actions runs those checks on Windows, macOS, and Linux
-after you publish. No live scrape runs automatically.
+Scraped data, checkpoints, safety state and virtual environments are excluded
+from Git. Use the player's `transfer.py` to move its saved collection state
+separately when continuing on another computer.

@@ -3,6 +3,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 import re
 from api.identity import name_key
+from api.sofascore_ids import SOFASCORE_COMPETITION_IDS as SOFA_IDS
 
 
 @dataclass(frozen=True)
@@ -16,14 +17,14 @@ class CompetitionSelection:
 
 
 COMPETITIONS=[
-    CompetitionSelection('Premier League',17,47,'regions/252/tournaments/2/england-premier-league'),
-    CompetitionSelection('La Liga',8,87,'regions/206/tournaments/4/spain-laliga'),
-    CompetitionSelection('Bundesliga',35,54,'regions/81/tournaments/3/germany-bundesliga'),
-    CompetitionSelection('Serie A',23,55,'regions/108/tournaments/5/italy-serie-a'),
-    CompetitionSelection('Ligue 1',34,53,'regions/74/tournaments/22/france-ligue-1'),
-    CompetitionSelection('Champions League',7,42,
+    CompetitionSelection('Premier League',SOFA_IDS['Premier League'],47,'regions/252/tournaments/2/england-premier-league'),
+    CompetitionSelection('La Liga',SOFA_IDS['La Liga'],87,'regions/206/tournaments/4/spain-laliga'),
+    CompetitionSelection('Bundesliga',SOFA_IDS['Bundesliga'],54,'regions/81/tournaments/3/germany-bundesliga'),
+    CompetitionSelection('Serie A',SOFA_IDS['Serie A'],55,'regions/108/tournaments/5/italy-serie-a'),
+    CompetitionSelection('Ligue 1',SOFA_IDS['Ligue 1'],53,'regions/74/tournaments/22/france-ligue-1'),
+    CompetitionSelection('Champions League',SOFA_IDS['Champions League'],42,
         'regions/250/tournaments/12/europe-champions-league'),
-    CompetitionSelection('Europa League',679,73,
+    CompetitionSelection('Europa League',SOFA_IDS['Europa League'],73,
         'regions/250/tournaments/30/europe-europa-league'),
 ]
 

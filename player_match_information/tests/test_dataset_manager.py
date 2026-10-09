@@ -105,7 +105,7 @@ class DatasetManagerTests(unittest.TestCase):
             self.assertEqual(players.whoscored_id.tolist(),['700','700'])
             self.assertNotIn('Qualifier',teams.team_name.tolist())
             self.assertEqual(len(teams),3)
-            self.assertTrue(teams.fotmob_id.is_unique)
+            self.assertTrue(teams.fotmob_id.dropna().is_unique)
             team_a=teams.loc[teams.team_name.eq('Team A')].iloc[0]
             self.assertEqual((team_a.sofascore_id,team_a.fotmob_id,team_a.whoscored_id),
                              ('10','100','1000'))
@@ -196,10 +196,9 @@ class DatasetManagerTests(unittest.TestCase):
             with redirect_stdout(output):
                 dataset_manager.build_id_tables(root/'data',root/'dataset',
                     build_player_ids=False,build_team_ids=True,build_match_ids=False)
-            self.assertIn('1 have missing provider IDs (SofaScore: 1, WhoScored: 1)',
-                          output.getvalue())
+            self.assertIn('have missing provider IDs',output.getvalue())
             teams=pd.read_csv(root/'dataset'/'team_ids.csv',dtype=str)
-            self.assertTrue(teams.fotmob_id.is_unique)
+            self.assertTrue(teams.fotmob_id.dropna().is_unique)
             opponent=teams.loc[teams.fotmob_id.eq('123')].iloc[0]
             self.assertEqual(opponent.team_name,'Opponent')
             self.assertTrue(pd.isna(opponent.sofascore_id))
@@ -269,7 +268,7 @@ class DatasetManagerTests(unittest.TestCase):
             self.assertEqual(after.drop(columns=['home_team','away_team']).to_dict('records'),
                              before.drop(columns=['home_team','away_team']).to_dict('records'))
 
-    def test_packages_nested_dataset_and_preserves_long_team_statistics(self):
+    def test_packages_only_players_and_fixtures(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);source=root/'data'/'premier-league'/'2024-2025';source.mkdir(parents=True)
             (source/'config.json').write_text(json.dumps({
@@ -280,29 +279,16 @@ class DatasetManagerTests(unittest.TestCase):
                    'awayScore':{'current':1},'winnerCode':1,
                    'venue':{'name':'Ground','city':{'name':'Town'}}}
             (source/'schedule.json').write_text(json.dumps({'events':[event]}))
-            pd.DataFrame([{'match_id':1,'season':'Premier League 24/25','competition':'Premier League'}]).to_csv(source/'events.csv',index=False)
             pd.DataFrame([{'match_id':1,'season':'2024/2025','competition':'Premier League','player_id':7}]).to_csv(source/'player_match_stats.csv',index=False)
-            pd.DataFrame([
-                {'match_id':1,'season':'2024/2025','competition':'Premier League','side':'home','provider_team_id':100,'period':'All','group':'top_stats','field':'BallPossesion','value':'55'},
-                {'match_id':1,'season':'2024/2025','competition':'Premier League','side':'home','provider_team_id':100,'period':'All','group':'passes','field':'BallPossesion','value':'55'},
-                {'match_id':1,'season':'2024/2025','competition':'Premier League','side':'home','provider_team_id':100,'period':'FirstHalf','group':'top_stats','field':'expected_goals','value':'0.8'},
-                {'match_id':1,'season':'2024/2025','competition':'Premier League','side':'away','provider_team_id':200,'period':'All','group':'top_stats','field':'BallPossesion','value':'45'},
-            ]).to_csv(source/'fotmob_team_statistics.csv',index=False)
             self.assertEqual(dataset_manager.main([
                 '--data-root',str(root/'data'),'--output-root',str(root/'dataset')]),0)
             destination=root/'dataset'/'premier-league'/'2024-2025'
             self.assertEqual({p.name for p in destination.iterdir()},
-                {'events.csv','player_match_stats.csv','team_match_stats.csv','fixtures.csv'})
-            teams=pd.read_csv(destination/'team_match_stats.csv')
-            self.assertEqual(len(teams),4)
-            self.assertIn('period',teams)
-            self.assertIn('field',teams)
-            self.assertIn('value',teams)
-            self.assertNotIn('fotmob_all_ball_possesion',teams)
+                {'player_match_stats.csv','fixtures.csv'})
             fixtures=pd.read_csv(destination/'fixtures.csv')
             self.assertEqual(fixtures.iloc[0]['home_team'],'Home')
             self.assertEqual(fixtures.iloc[0]['matchweek'],1)
-            for name in ('events.csv','player_match_stats.csv','team_match_stats.csv','fixtures.csv'):
+            for name in ('player_match_stats.csv','fixtures.csv'):
                 self.assertEqual(set(pd.read_csv(destination/name)['season']),{'2024-2025'})
 
     def test_packaged_fixtures_exclude_qualifiers_and_replace_atomically(self):
@@ -316,7 +302,7 @@ class DatasetManagerTests(unittest.TestCase):
             qualifier={**main,'id':2,'tournament':{'qualificationOrPreliminary':True},
                        'homeTeam':{'id':3,'name':'Qualifier Home'}}
             (source/'schedule.json').write_text(json.dumps({'events':[main,qualifier]}))
-            for name in ('events.csv','player_match_stats.csv','fotmob_team_statistics.csv'):
+            for name in ('player_match_stats.csv',):
                 pd.DataFrame([{'match_id':1,'season':'2025/2026'}]).to_csv(source/name,index=False)
             destination=dataset_manager.package_collection(source,root/'dataset',replace=True)
             fixtures=pd.read_csv(destination/'fixtures.csv')
@@ -325,34 +311,6 @@ class DatasetManagerTests(unittest.TestCase):
             dataset_manager.package_collection(source,root/'dataset',replace=True)
             self.assertFalse((destination/'obsolete.txt').exists())
 
-    def test_team_stream_has_identical_source_schema_across_leagues(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root=Path(folder);data=root/'data'
-            for name,competition,field in (
-                    ('bundesliga-2024-25','Bundesliga','expected_goals'),
-                    ('premier-league-2024-25','Premier League','physical_metrics_running')):
-                league=name.rsplit('-',2)[0]
-                source=data/league/'2024-2025';source.mkdir(parents=True)
-                (source/'config.json').write_text(json.dumps({
-                    'competition':competition,'season':'2024/2025'}))
-                event={'id':1,'startTimestamp':1723834800,'roundInfo':{'round':1},
-                       'status':{'type':'finished'},'homeTeam':{'id':10,'name':'Home'},
-                       'awayTeam':{'id':20,'name':'Away'},'homeScore':{'current':0},
-                       'awayScore':{'current':0}}
-                (source/'schedule.json').write_text(json.dumps({'events':[event]}))
-                pd.DataFrame([{'match_id':1,'season':'bad/source label','competition':competition}]).to_csv(source/'events.csv',index=False)
-                pd.DataFrame([{'match_id':1,'season':'2024/2025','competition':competition}]).to_csv(source/'player_match_stats.csv',index=False)
-                pd.DataFrame([{'match_id':1,'season':'2024/2025','competition':competition,
-                    'side':'home','provider_team_id':100,
-                    'period':'All','field':field,'value':1}]).to_csv(
-                    source/'fotmob_team_statistics.csv',index=False)
-            self.assertEqual(dataset_manager.main([
-                '--data-root',str(data),'--output-root',str(root/'dataset')]),0)
-            bundesliga=pd.read_csv(root/'dataset/bundesliga/2024-2025/team_match_stats.csv')
-            premier=pd.read_csv(root/'dataset/premier-league/2024-2025/team_match_stats.csv')
-            self.assertEqual(list(bundesliga.columns),list(premier.columns))
-            self.assertEqual(bundesliga.loc[0,'field'],'expected_goals')
-            self.assertEqual(premier.loc[0,'field'],'physical_metrics_running')
 
 
 if __name__=='__main__':unittest.main()

@@ -6,7 +6,8 @@ SofaScoreError = ProviderError
 SofaScoreRequestError = ProviderRequestError
 
 class SofaScoreClient(HttpClient):
-    BASE_URL = "https://api.sofascore.com/api/v1"
+    BASE_URL = "https://www.sofascore.com/api/v1"
+    CACHE_BASE_URL_ALIASES = ("https://api.sofascore.com/api/v1",)
     REFERER = "https://www.sofascore.com/"
 
     def event(self, event_id: int) -> dict:

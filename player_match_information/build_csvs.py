@@ -9,7 +9,7 @@ from pathlib import Path
 
 from collect import main as collect
 from dataset_manager import (build_id_tables, package_collection,
-                             standardize_fixture_team_names)
+                             standardize_fixture_team_names, _fixture_provider)
 from api.team_crosswalk import refresh_team_crosswalk
 from collection.paths import collection_directory, collection_name, discover_collections
 
@@ -20,20 +20,19 @@ PROJECT_ROOT=Path(__file__).resolve().parent
 DATA_ROOT=PROJECT_ROOT/'data'
 DATASET_ROOT=PROJECT_ROOT/'dataset'
 COLLECTION_NAMES=()
-COMPILE_EVENTS=False
 REPLACE_DATASET=False
 # True skips every per-season export/package step and only rebuilds the
 # top-level reference tables selected by the three settings below.
 REFERENCE_CSVS_ONLY=True
 BUILD_PLAYER_IDS_CSV=True
-# Unknown SofaScore/WhoScored team IDs remain NA; the build prints missing-ID counts.
+# Unknown provider team IDs remain blank; the build prints missing-ID counts.
 BUILD_TEAM_IDS_CSV=True
 BUILD_MATCH_IDS_CSV=True
 # Refresh the published provider-ID snapshot when desired. This downloads the
 # Reep register; the normal reference build uses the saved JSON snapshot.
 REFRESH_PUBLISHED_TEAM_IDS=False
 # Set True only after team_ids.csv has been rebuilt successfully. This rewrites
-# dataset/fixtures.csv display names using FotMob IDs; match IDs and scores stay put.
+# dataset/fixtures.csv display names using its recorded provider IDs.
 STANDARDIZE_FIXTURE_TEAM_NAMES=False
 
 
@@ -44,6 +43,9 @@ def _build_reference_csvs(root,dataset_root):
         raise ValueError('Enable BUILD_TEAM_IDS_CSV before standardizing fixtures')
     try:
         if REFRESH_PUBLISHED_TEAM_IDS and BUILD_TEAM_IDS_CSV:
+            if _fixture_provider(dataset_root/'fixtures.csv')!='fotmob':
+                raise ValueError('The published team register needs FotMob fixtures; '
+                                 'disable REFRESH_PUBLISHED_TEAM_IDS for Sofascore fixtures')
             count=refresh_team_crosswalk(dataset_root/'fixtures.csv',
                                           PROJECT_ROOT/'api'/'team_id_crosswalk.json')
             print(f'Checked published provider links for {count} fixture teams.',
@@ -68,8 +70,6 @@ def main():
     if REFERENCE_CSVS_ONLY:
         print('Building reference CSVs only; saved-season exports are skipped.',flush=True)
         return _build_reference_csvs(root,dataset_root)
-    if REPLACE_DATASET and not COMPILE_EVENTS:
-        raise ValueError('REPLACE_DATASET requires COMPILE_EVENTS so events.csv cannot be stale')
     names=(list(COLLECTION_NAMES) or
            [collection_name(path) for path in discover_collections(root,'job.json')])
     if not names:raise ValueError(f'No saved seasons found under {root}')
@@ -78,8 +78,7 @@ def main():
     results=[]
     for index,name in enumerate(names,1):
         print(f'\n=== EXPORT {index}/{len(names)}: {name} ===',flush=True)
-        command=['export','--data-root',str(root),'--name',name,
-                 '--compile-events' if COMPILE_EVENTS else '--no-compile-events']
+        command=['export','--data-root',str(root),'--name',name]
         code=collect(command)
         if code==0 and REPLACE_DATASET:
             try:
