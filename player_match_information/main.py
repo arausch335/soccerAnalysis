@@ -74,9 +74,9 @@ def _run_one(command,competition,season,name,forwarded):
 def _collection_complete(directory):
     """Use checkpoint status, not the post-export summary, as the authority."""
     try:
-        events=json.loads((directory/'schedule.json').read_text())['events']
+        events=json.loads((directory/'schedule.json').read_text(encoding='utf-8'))['events']
         expected={str(event['id']) for event in events}
-        with (directory/'collection.csv').open(newline='') as handle:
+        with (directory/'collection.csv').open(newline='',encoding='utf-8') as handle:
             statuses={row['match_id']:row['status'] for row in csv.DictReader(handle)}
         return bool(expected) and set(statuses)==expected and all(
             statuses[match_id]=='complete' for match_id in expected)

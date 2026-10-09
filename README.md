@@ -6,17 +6,20 @@ private repository on another computer and recreate the Python environment; see
 
 ## Player statistics and dataset tools
 
-Use Python 3.12. From the repository root:
+Use 64-bit Python 3.12 on Windows or macOS (Intel or Apple Silicon). From
+the repository root, follow the commands for your operating system in the
+[Mac and Windows setup guide](docs/MAC_WINDOWS.md). For macOS:
 
 ```sh
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r player_match_information/requirements.txt
 cd player_match_information
 ```
 
-On Windows, create the environment with `py -3.12 -m venv .venv` and activate
-with `.venv\Scripts\Activate.ps1`.
+On Windows, create the environment with `py -3.12 -m venv .venv`. You can
+install dependencies and run scripts directly with `.venv\Scripts\python.exe`;
+PowerShell activation is optional.
 
 The supported entry points are:
 
@@ -73,9 +76,11 @@ python -m sofascore_scrapers.fixtures --competition 17 --max-requests 3 --output
 python -m sofascore_scrapers.fixtures --output data/fixtures --export-only
 ```
 
-The earlier cloud trial returned HTTP 403 on its first request. Live provider
-availability and historical coverage have not been verified. Unit tests use
-saved or mocked payloads and make no provider requests.
+A one-request cloud check on October 9, 2026 also returned HTTP 403 (`challenge`)
+for a fixture on `www.sofascore.com/api/v1`; see the
+[compatibility and access check](docs/MAC_WINDOWS.md#verification-and-live-access).
+Availability from your computer and historical coverage have not been verified.
+Unit tests use saved or mocked payloads and make no provider requests.
 
 ## Offline checks
 

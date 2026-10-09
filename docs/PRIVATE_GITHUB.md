@@ -9,7 +9,9 @@ GitHub with the account that has access to `arausch335/sofascore-scrapers`.
 2. Choose **File → Clone repository**, select `sofascore-scrapers`, and choose
    a new local folder.
 3. Open the cloned folder in PyCharm or a terminal and follow the
-   [README](../README.md) to create a Python environment and install dependencies.
+   [Mac and Windows setup guide](MAC_WINDOWS.md) to create a Python environment
+   and install dependencies. Before the proposed changes are merged, select
+   `simplify-scraper-outputs` in the **Current branch** menu.
 4. After code changes are merged, use **Fetch origin**, then **Pull origin**.
 
 ## Terminal

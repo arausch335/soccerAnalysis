@@ -89,7 +89,7 @@ def _slug(name):
 
 
 def _events_from_checkpoint(path, provider, competition_id, season_id):
-    saved=json.loads(path.read_text())
+    saved=json.loads(path.read_text(encoding='utf-8'))
     if (saved.get('provider') != provider or
             saved.get('competition_id') != competition_id or
             saved.get('season_id') != season_id):
@@ -163,7 +163,7 @@ def _schedule_events(client, competition, start, season_id, *, provider,
         # statistics, these contain both main-tournament and qualifying events.
         saved=data_root/_slug(competition.name)/label/'schedule.json'
         if provider=='sofascore' and saved.exists() and not refresh:
-            events=json.loads(saved.read_text())['events']
+            events=json.loads(saved.read_text(encoding='utf-8'))['events']
         else:
             client.refresh_cache=refresh
             try:
@@ -239,7 +239,7 @@ def _sofascore_403_pause(data_root):
     for path in (data_root/'fixture_schedules'/'fallback.json',
                  data_root/'safety'/'sofascore.json'):
         if not path.exists():continue
-        state=json.loads(path.read_text())
+        state=json.loads(path.read_text(encoding='utf-8'))
         is_403=state.get('status_code')==403 or 'HTTP 403' in state.get('reason','')
         if is_403 and state.get('blocked_until',0)>time.time():return state['reason']
     return None

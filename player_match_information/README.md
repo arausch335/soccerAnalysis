@@ -8,16 +8,19 @@ event-stream CSVs, role reports, or derived spatial/pass/dribble tables.
 
 ## Setup
 
-Python 3.12 is recommended. From this directory:
+Use 64-bit Python 3.12 on Windows or macOS (Intel or Apple Silicon). See the
+[Mac and Windows setup guide](../docs/MAC_WINDOWS.md) for installation,
+PyCharm and data transfer. From this directory on macOS:
 
 ```sh
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
 On Windows, use `py -3.12 -m venv .venv`, then
-`.venv\Scripts\Activate.ps1`. The remaining commands use `python`.
+`.venv\Scripts\python.exe -m pip install -r requirements.txt`. Run scripts
+with `.venv\Scripts\python.exe` or optionally activate the environment first.
 
 ## Collect and resume
 

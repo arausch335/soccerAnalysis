@@ -216,7 +216,7 @@ class PandasStore:
 
     @property
     def current_directory(self):
-        manifest = json.loads((self.directory / 'CURRENT.json').read_text())
+        manifest = json.loads((self.directory / 'CURRENT.json').read_text(encoding='utf-8'))
         if manifest.get('schema_version') != 1:
             raise ValueError('Unsupported CSV schema version')
         generation = manifest['generation']

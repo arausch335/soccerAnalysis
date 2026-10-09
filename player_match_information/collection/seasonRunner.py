@@ -59,7 +59,7 @@ class SeasonRunner:
         if not self.spatial_clients:raise ValueError('At least one Sofascore spatial client is required')
         self._sofascore_blocked=False
         self.capability_path=self.directory/'capabilities.json'
-        self.capabilities=json.loads(self.capability_path.read_text()) if self.capability_path.exists() else {}
+        self.capabilities=json.loads(self.capability_path.read_text(encoding='utf-8')) if self.capability_path.exists() else {}
 
     def _fetch(self,provider,key,request,*,refresh=False):
         return self.cache.fetch(provider,key,request,refresh=refresh or self.refresh)
@@ -275,7 +275,7 @@ class SeasonRunner:
         config={'schema_version':1,'competition':competition.name,'competition_id':competition_id,
                 'season':canonical,'season_id':season['id']}
         path=self.directory/'config.json'
-        if path.exists() and json.loads(path.read_text())!=config:raise ValueError('Output folder belongs to another season')
+        if path.exists() and json.loads(path.read_text(encoding='utf-8'))!=config:raise ValueError('Output folder belongs to another season')
         atomic_json(path,config)
         events=sorted((e for e in events if e['status']['type']=='finished'),key=lambda e:(e['startTimestamp'],e['id']))
         if len({e['id'] for e in events})!=len(events):raise ValueError('Duplicate baseline fixture IDs')
@@ -379,12 +379,12 @@ class SeasonRunner:
     def _export(self,events):
         """Rebuild player statistics and identity audit tables without network calls."""
         started=time.monotonic();clear_json_cache()
-        config=json.loads((self.directory/'config.json').read_text())
+        config=json.loads((self.directory/'config.json').read_text(encoding='utf-8'))
         competition=competition_by_name(config['competition'])
         events=with_reviewed_schedule_results(competition,config['season'],config['season_id'],events)
         events=sorted(events,key=lambda event:(event['startTimestamp'],event['id']))
         schedule_path=self.directory/'schedule.json'
-        fetched_at=(json.loads(schedule_path.read_text()).get('fetched_at') if schedule_path.exists() else now())
+        fetched_at=(json.loads(schedule_path.read_text(encoding='utf-8')).get('fetched_at') if schedule_path.exists() else now())
         atomic_json(schedule_path,{'fetched_at':fetched_at,'events':events})
         export_events=[event for event in events if not is_qualification_event(event)]
         self.report(f'[export 1/5] Reading {len(export_events)} match checkpoints...')
@@ -457,7 +457,7 @@ class SeasonRunner:
         """Add schedule-only awarded fixtures to result exports without inventing detail data."""
         awarded=[event for event in events if _is_awarded(event)]
         if not awarded:return
-        config=json.loads((self.directory/'config.json').read_text())
+        config=json.loads((self.directory/'config.json').read_text(encoding='utf-8'))
         loader=SofaScoreLoader(None,dataset=self.dataset)
         season=loader.select_season(config['competition_id'],config['competition'],
                                     config['season_id'],config['season'])

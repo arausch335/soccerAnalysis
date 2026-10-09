@@ -273,7 +273,7 @@ def standardize_fixture_team_names(fixtures_path,team_ids_path):
     atomic_csv(fixtures,fixtures_path)
     metadata=fixtures_path.with_suffix('.metadata.json')
     if metadata.exists():
-        saved=json.loads(metadata.read_text())
+        saved=json.loads(metadata.read_text(encoding='utf-8'))
         saved.update(provider=provider,sha256=hashlib.sha256(fixtures_path.read_bytes()).hexdigest())
         atomic_json(metadata,saved)
 
@@ -353,13 +353,13 @@ def _cached_provider_fixtures(source,provider):
 
 
 def _source_id_rows(source,player_rows,team_rows,match_rows):
-    source=Path(source);config=json.loads((source/'config.json').read_text())
+    source=Path(source);config=json.loads((source/'config.json').read_text(encoding='utf-8'))
     competition=config['competition'];season=_season_directory(config['season'])
     baseline=config.get('id_namespace',config.get('baseline_provider','sofascore'))
     if baseline not in ('sofascore','fotmob','whoscored'):
         raise ValueError(f'{source.name}: unsupported baseline provider {baseline!r}')
     baseline_column=baseline+'_id'
-    schedule=json.loads((source/'schedule.json').read_text()).get('events',[])
+    schedule=json.loads((source/'schedule.json').read_text(encoding='utf-8')).get('events',[])
     events={str(event['id']):event for event in schedule if not is_qualification_event(event)}
 
     if (source/'player_match_stats.csv').exists():
@@ -617,12 +617,12 @@ def fixtures_from_events(events, competition, season, *, include_qualifying=Fals
 
 
 def _fixtures(source,config):
-    events=json.loads((source/'schedule.json').read_text())['events']
+    events=json.loads((source/'schedule.json').read_text(encoding='utf-8'))['events']
     return fixtures_from_events(events,config['competition'],config['season'])
 
 
 def package_collection(source,output_root,*,replace=False):
-    source=Path(source);config=json.loads((source/'config.json').read_text())
+    source=Path(source);config=json.loads((source/'config.json').read_text(encoding='utf-8'))
     missing=[name for name in SOURCE_FILES if not (source/name).exists()]
     if missing:raise FileNotFoundError(f'{source.name}: missing '+', '.join(missing))
     destination=(Path(output_root)/_slug(config['competition'])/
@@ -667,7 +667,7 @@ def main(argv=None):
     seen={};failures=[]
     for index,source in enumerate(sources,1):
         try:
-            config=json.loads((source/'config.json').read_text())
+            config=json.loads((source/'config.json').read_text(encoding='utf-8'))
             identity=(_slug(config['competition']),_season_directory(config['season']))
             if identity in seen:
                 raise ValueError(f'duplicate league-season also provided by {seen[identity]}')
