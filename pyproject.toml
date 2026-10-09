@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sofascore-scrapers"
+version = "0.1.0"
+description = "Portable Sofascore fixture collectors with serial pacing and resumable checkpoints"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+sofascore-fixtures = "sofascore_scrapers.fixtures:main"
+
+[tool.setuptools.packages.find]
+include = ["sofascore_scrapers*"]

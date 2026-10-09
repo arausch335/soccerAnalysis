@@ -1,0 +1,25 @@
+"""Small provider-neutral fixture dictionaries consumed by all domain loaders."""
+from datetime import datetime
+
+
+def timestamp(value):
+    date=datetime.fromisoformat(value.replace('Z','+00:00'))
+    if date.tzinfo is None: raise ValueError('Fixture kickoff must have an explicit timezone')
+    return int(date.timestamp())
+
+def fotmob_fixture(row):
+    status=row['status']; scores=status.get('scoreStr','').split(' - ')
+    return {'id':int(row['id']),'startTimestamp':timestamp(status['utcTime']),
+        'homeTeam':{'id':int(row['home']['id']),'name':row['home']['name']},
+        'awayTeam':{'id':int(row['away']['id']),'name':row['away']['name']},
+        'homeScore':{'current':int(scores[0]) if len(scores)==2 else None},
+        'awayScore':{'current':int(scores[1]) if len(scores)==2 else None},
+        'status':{'type':'finished' if status.get('finished') and not status.get('awarded') else 'notstarted'}}
+
+
+def whoscored_fixture(row):
+    return {'id':int(row['id']),'startTimestamp':timestamp(row['startTimeUtc']),
+        'homeTeam':{'id':row['homeTeamId'],'name':row['homeTeamName']},
+        'awayTeam':{'id':row['awayTeamId'],'name':row['awayTeamName']},
+        'homeScore':{'current':row.get('homeScore')},'awayScore':{'current':row.get('awayScore')},
+        'status':{'type':'finished' if row.get('status')==6 else 'notstarted'}}
