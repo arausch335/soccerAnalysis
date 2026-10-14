@@ -6,7 +6,7 @@ import urllib.error
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-from sofascore_scrapers import fixtures as collect
+from fixtures import collector as collect
 
 
 SEASON = {"id": 2746, "name": "Premier League 10/11", "year": "10/11"}

@@ -3,14 +3,27 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sofascore-scrapers"
-version = "0.1.0"
-description = "Portable Sofascore fixture collectors with serial pacing and resumable checkpoints"
+name = "soccerAnalysis"
+version = "0.2.0"
+description = "Football collection, dataset building, and offline analysis"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["curl_cffi>=0.13,<0.17", "pandas>=2.2,<4", "matplotlib>=3.8,<4", "filelock>=3.13,<4"]
+
+[project.optional-dependencies]
+analysis = ["scipy", "scikit-learn", "plotly", "pyarrow"]
 
 [project.scripts]
-sofascore-fixtures = "sofascore_scrapers.fixtures:main"
+soccer-analysis = "main:main"
+soccer-dataset = "dataset_builder:main"
+soccer-fixtures = "fixtures.collector:main"
+
+[tool.setuptools]
+py-modules = ["main", "dataset_builder"]
 
 [tool.setuptools.packages.find]
-include = ["sofascore_scrapers*"]
+include = ["analysis*", "collection*", "fixtures*", "models*", "providers*", "storage*", "tools*"]
+
+[tool.setuptools.package-data]
+"analysis.role_pipeline" = ["*.html"]
+"analysis.match_visualization" = ["*.html", "*.css", "*.js"]
+"providers" = ["*.json"]
