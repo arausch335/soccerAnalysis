@@ -30,3 +30,6 @@ Thumbs.db
 .idea/
 .vscode/
 .player_project_staging/
+
+# Analysis-ready datasets remain local.
+dataset/

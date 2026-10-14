@@ -1,0 +1,128 @@
+<div id="football-explorer">
+<style>
+#football-explorer { color:var(--foreground); }
+#football-explorer .fe-stack {display:grid;gap:16px}
+#football-explorer .fe-field {min-width:0;flex:1 1 240px}
+#football-explorer .fe-pitch {display:block;width:100%;overflow:visible;touch-action:manipulation}
+#football-explorer .fe-legend {display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center}
+#football-explorer .fe-swatch {display:inline-block;width:20px;height:3px;vertical-align:middle;margin-right:5px;background:var(--viz-series-1)}
+#football-explorer .fe-detail {min-height:2.6em;overflow-wrap:anywhere}
+#football-explorer .fe-meta {display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+#football-explorer .fe-control {display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#football-explorer .fe-control label {flex:1 1 220px}
+#football-explorer .fe-note {margin:0}
+#football-explorer .fe-heat-key {display:inline-block;width:90px;height:9px;background:linear-gradient(to right,transparent,var(--viz-series-6));vertical-align:middle}
+#football-explorer [hidden] {display:none!important}
+</style>
+<div class="fe-stack">
+  <div class="viz-controls">
+    <label class="form-label fe-field">Match <select id="fe-match" class="form-select"></select></label>
+    <label class="form-label fe-field" id="fe-player-label">Player <select id="fe-player" class="form-select"></select></label>
+  </div>
+  <div class="viz-row" aria-label="View">
+    <button class="btn" id="fe-map" type="button" aria-pressed="true">Player match map</button>
+    <button class="btn" id="fe-replay" type="button" aria-pressed="false">Match replay</button>
+  </div>
+  <div id="fe-map-controls" class="fe-stack">
+    <div class="fe-legend" id="fe-layers"></div>
+    <div class="viz-row">
+      <label class="form-check"><input type="checkbox" class="form-check-input" id="fe-heat" checked><span class="form-check-label">Event heatmap</span></label>
+      <label class="form-check"><input type="checkbox" class="form-check-input" id="fe-carries"><span class="form-check-label">Inferred carries · dashed</span></label>
+      <span id="fe-heat-legend" class="text-small" hidden>Low <span class="fe-heat-key"></span> High · relative density</span>
+    </div>
+  </div>
+  <div id="fe-replay-controls" class="fe-stack" hidden>
+    <div class="fe-control">
+      <button class="btn btn-primary" id="fe-play" type="button">Play</button>
+      <button class="btn" id="fe-prev" type="button" aria-label="Previous event">← Event</button>
+      <button class="btn" id="fe-next" type="button" aria-label="Next event">Event →</button>
+      <label class="form-label">Speed <output id="fe-speed-value" class="tabular-nums">1×</output><input class="form-range" id="fe-speed" type="range" min="0" max="6" step="1" value="1" aria-label="Playback speed" aria-valuetext="1×"></label>
+    </div>
+    <label class="form-label">Match time <output id="fe-clock" class="tabular-nums"></output><input id="fe-time" class="form-range" type="range" min="0" max="1" step="0.1" value="0" aria-label="Match timeline"></label>
+  </div>
+  <label class="form-label" id="fe-inspect-label">Inspect action <select class="form-select" id="fe-inspect"><option value="">All actions</option></select></label>
+  <div class="fe-meta text-small"><span id="fe-context"></span><span id="fe-orientation"></span></div>
+  <svg id="fe-pitch" class="fe-pitch" role="img" aria-label="Football pitch with recorded event locations and action arrows"></svg>
+  <div id="fe-replay-key" class="fe-legend text-small" hidden></div>
+  <div id="fe-summary" class="text-small"></div>
+  <div class="fe-detail" id="fe-detail" aria-live="polite"></div>
+  <p class="text-small text-muted fe-note" id="fe-method"></p>
+  <p class="text-small text-muted fe-note" id="fe-source"></p>
+</div>
+</div>
+<script>
+(()=>{
+const D=/*__DATA__*/;
+const root=document.getElementById('football-explorer');
+const $=s=>root.querySelector(s), svg=$('#fe-pitch'), NS='http://www.w3.org/2000/svg';
+const cats=[['Passes',1],['Take-ons',2],['Shots',3],['Defending',4],['Other actions',5]];
+const defensive=new Set(['Tackle','Interception','Clearance','BlockedPass','Challenge','Aerial','Save','KeeperPickup','Claim','KeeperSweeper','Punch','Smother','ShieldBallOpp']);
+const shots=new Set(['Goal','SavedShot','MissedShots','ShotOnPost']);
+const category=e=>{let t=D.types[e[6]];return t==='Pass'||t==='OffsidePass'?0:t==='TakeOn'?1:shots.has(t)?2:defensive.has(t)?3:4};
+const color=c=>'var(--viz-series-'+(c+1)+')';
+let m,events=[],player='',view='map',t=0,index=0,playing=false,last=0,speed=1,frame=0,selected=null,heatCache=null;
+let width=700,height=460,pad=14,pw=672,ph=435,hitMarks=[];
+const enabled=new Set([0,1,2,3,4]);const rates=[.5,1,2,4,8,16,32];
+const node=(tag,attrs={},parent=svg)=>{const n=document.createElementNS(NS,tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);parent.appendChild(n);return n};
+const textNode=(text,x,y,parent=svg,attrs={})=>{let n=node('text',{x,y,fill:'var(--foreground)','font-size':12,...attrs},parent);n.textContent=text;return n};
+const escapeText=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const position=(x,y,team)=>{if(view==='replay'&&team===m.sides[1]){x=100-x;y=100-y}return [pad+x*pw/100,pad+(100-y)*ph/100]};
+function clock(e){let base=({1:0,2:45,3:90,4:105})[e[1]],end=({1:45,2:90,3:105,4:120})[e[1]],min=e[2];return (min>=end?end+'+'+(min-end):min)+':'+String(e[3]).padStart(2,'0')}
+function clockAt(){let e=events[index],d=Math.max(0,Math.floor(t-e[0])),sec=e[2]*60+e[3]+d;return clock([0,e[1],Math.floor(sec/60),sec%60])}
+function description(e){return clock(e)+' · '+(D.players[e[5]]||D.teams[e[4]]||'Match')+' · '+D.types[e[6]]+' · '+(e[7]?'successful':'unsuccessful')+(e[8]===null?' · no location recorded':e[10]===null?' · location only':'')}
+function layers(){cats.forEach(([label,n],i)=>{let l=document.createElement('label');l.className='form-check';l.innerHTML='<input class="form-check-input" type="checkbox" checked><span class="form-check-label"><span class="fe-swatch" style="background:var(--viz-series-'+n+')"></span>'+label+'</span>';l.querySelector('input').addEventListener('change',e=>{e.target.checked?enabled.add(i):enabled.delete(i);selected=null;draw()});$('#fe-layers').appendChild(l)})}
+function options(){D.matches.forEach(x=>$('#fe-match').add(new Option(x.date+' · '+x.home+' vs '+x.away,x.id)));$('#fe-match').value=D.matches.some(x=>x.id==='12436920')?'12436920':D.matches[0].id}
+function chooseMatch(){pause();m=D.matches.find(x=>x.id===$('#fe-match').value);events=m.events;t=0;index=0;selected=null;heatCache=null;$('#fe-time').max=m.duration;
+let ids=[...new Set(events.map(e=>e[5]).filter(Boolean))].sort((a,b)=>D.players[a].localeCompare(D.players[b]));let old=player;$('#fe-player').replaceChildren();
+for(let team of m.sides){let g=document.createElement('optgroup');g.label=D.teams[team];for(let id of ids.filter(id=>events.some(e=>e[5]===id&&e[4]===team)))g.appendChild(new Option(D.players[id],id));$('#fe-player').appendChild(g)}
+player=ids.includes(old)?old:ids.includes('108226')?'108226':ids[0];$('#fe-player').value=player;draw()}
+function field(){svg.replaceChildren();hitMarks=[];width=Math.max(280,svg.getBoundingClientRect().width);pw=width-pad*2;ph=pw*68/105;height=ph+pad*2;svg.setAttribute('viewBox',`0 0 ${width} ${height}`);
+let title=node('title');title.textContent=view==='map'?D.players[player]+' action map':'Match event replay';
+const defs=node('defs');for(let c=0;c<6;c++){let marker=node('marker',{id:'fe-arrow-'+c,viewBox:'0 0 8 8',refX:7,refY:4,markerWidth:6,markerHeight:6,orient:'auto-start-reverse',markerUnits:'userSpaceOnUse'},defs);node('path',{d:'M0 0 L8 4 L0 8 Z',fill:color(c)},marker)}
+node('rect',{x:pad,y:pad,width:pw,height:ph,fill:'var(--background)'});
+if(view==='map'&&$('#fe-heat').checked)drawHeat();
+let g=node('g',{fill:'none',stroke:'var(--border)','stroke-width':1.2});
+node('rect',{x:pad,y:pad,width:pw,height:ph},g);node('path',{d:`M${width/2} ${pad}V${height-pad}`},g);node('circle',{cx:width/2,cy:height/2,r:pw*9.15/105},g);
+for(let side of [0,1]){let boxw=pw*16.5/105,bh=ph*40.32/68;node('rect',{x:side?width-pad-boxw:pad,y:(height-bh)/2,width:boxw,height:bh},g);let small=pw*5.5/105,sh=ph*18.32/68;node('rect',{x:side?width-pad-small:pad,y:(height-sh)/2,width:small,height:sh},g);node('circle',{cx:side?width-pad-pw*11/105:pad+pw*11/105,cy:height/2,r:1.8,fill:'var(--border)'},g)}
+node('circle',{cx:width/2,cy:height/2,r:1.8,fill:'var(--border)'},g)
+}
+function drawHeat(){let rows=events.filter(e=>e[5]===player&&e[8]!==null);if(!heatCache){let vals=[];for(let j=0;j<16;j++)for(let i=0;i<24;i++){let x=(i+.5)*100/24,y=(j+.5)*100/16;vals.push(rows.reduce((a,e)=>a+Math.exp(-.5*(((x-e[8])/7)**2+((y-e[9])/10)**2)),0))}heatCache=vals}let max=Math.max(...heatCache,1);heatCache.forEach((v,k)=>node('rect',{x:pad+(k%24)*pw/24,y:pad+(15-Math.floor(k/24))*ph/16,width:pw/24+.2,height:ph/16+.2,fill:color(5),opacity:.65*v/max}))}
+function mark(e,c,opacity=1,active=false){if(e[8]===null)return;let a=position(e[8],e[9],e[4]),b=e[10]===null?a:position(e[10],e[11],e[4]);let g=node('g',{opacity});
+if(e[10]!==null&&Math.hypot(b[0]-a[0],b[1]-a[1])>1)node('line',{x1:a[0],y1:a[1],x2:b[0],y2:b[1],stroke:color(c),'stroke-width':active?2.8:1.5,'stroke-dasharray':e[7]?'none':'4 3','marker-end':'url(#fe-arrow-'+c+')'},g);
+let r=active?5:3.3;
+if(category(e)===1)node('path',{d:`M${a[0]} ${a[1]-r-1}l${r+1} ${r+1}l-${r+1} ${r+1}l-${r+1} -${r+1}Z`,fill:e[7]?color(c):'var(--background)',stroke:color(c),'stroke-width':1.5},g);
+else if(category(e)===2)node('rect',{x:a[0]-r,y:a[1]-r,width:2*r,height:2*r,fill:e[7]?color(c):'var(--background)',stroke:color(c),'stroke-width':1.5},g);
+else node('circle',{cx:a[0],cy:a[1],r:active?4:2.3,fill:e[7]?color(c):'var(--background)',stroke:color(c),'stroke-width':1.3},g);
+if(!e[7])node('path',{d:`M${b[0]-3} ${b[1]-3}l6 6m0 -6l-6 6`,stroke:color(c),'stroke-width':1.4},g);
+hitMarks.push({e,a,b});
+if(active&&e[10]!==null){let next=events[index+1],duration=Math.min(1.5,Math.max(.15,(next?next[0]:e[0]+1.5)-e[0])),u=playing?Math.min(1,(t-e[0])/duration):1;node('circle',{cx:a[0]+(b[0]-a[0])*u,cy:a[1]+(b[1]-a[1])*u,r:4,fill:'var(--foreground)',stroke:'var(--background)','stroke-width':1.5})}
+}
+function syncInspector(){let sel=$('#fe-inspect');sel.replaceChildren(new Option('All actions',''));events.forEach((e,i)=>{if(e[5]===player&&e[8]!==null&&enabled.has(category(e)))sel.add(new Option(description(e),String(i)))});sel.value=selected?String(events.indexOf(selected)):''}
+function draw(){if(!m)return;field();$('#fe-heat-legend').hidden=!$('#fe-heat').checked;$('#fe-source').textContent='WhoScored event data · '+D.matches.length+' available matches · '+m.date;
+if(view==='map'){let all=events.filter(e=>e[5]===player),shown=all.filter(e=>e[8]!==null&&enabled.has(category(e)));for(let e of shown)mark(e,category(e),selected && selected!==e ? .22 : .72,selected===e);
+if($('#fe-carries').checked)for(let c of m.carries.filter(c=>c[0]===player)){let a=position(c[1],c[2]),b=position(c[3],c[4]);node('line',{x1:a[0],y1:a[1],x2:b[0],y2:b[1],stroke:color(1),'stroke-width':2,'stroke-dasharray':'2 4','marker-end':'url(#fe-arrow-1)'});}
+syncInspector();$('#fe-context').textContent=D.players[player]+' · '+all.length+' recorded actions';$('#fe-orientation').textContent='Attack → · both halves aligned';$('#fe-summary').textContent=shown.length+' mapped · '+all.filter(e=>e[8]===null).length+' without location · '+all.filter(e=>D.types[e[6]]==='Pass'&&e[7]).length+'/'+all.filter(e=>D.types[e[6]]==='Pass').length+' passes completed'+($('#fe-carries').checked?' · '+m.carries.filter(c=>c[0]===player).length+' inferred carries':'');
+$('#fe-detail').textContent=selected?description(selected):'Select an action on the pitch for its player, time, and outcome.';
+$('#fe-method').textContent='Arrows = recorded endpoints; diamonds = take-ons; squares = shots. Dashed arrows and × = unsuccessful. Dotted carries are inferred endpoint-to-next-action gaps. Heatmap uses all recorded action origins, not time spent.';
+}else{let e=events[index],start=index;while(start>0&&events[start-1][0]>=t-12&&events[start-1][1]===e[1])start--;for(let i=start;i<=index;i++){let ev=events[i];mark(ev,ev[4]===m.sides[0]?0:1,i===index?1:Math.max(.12,.38*(1-(t-ev[0])/12)),i===index)}
+let score=[0,0];for(let i=0;i<=index;i++){let ev=events[i];if(D.types[ev[6]]==='Goal'){let side=ev[4]===m.sides[0]?0:1;if(ev[12])side=1-side;score[side]++}}
+$('#fe-context').textContent=D.teams[m.sides[0]]+' '+score[0]+' – '+score[1]+' '+D.teams[m.sides[1]];$('#fe-orientation').textContent='Fixed ends · home → · away ←';$('#fe-clock').textContent=clockAt()+' · '+(e[1]===1?'1st half':e[1]===2?'2nd half':'Extra time');$('#fe-time').value=t;$('#fe-time').setAttribute('aria-valuetext',clockAt());$('#fe-summary').textContent='Event '+(index+1)+' / '+events.length+' · previous 12 seconds shown';
+if($('#fe-detail').dataset.event!==m.id+':'+index){$('#fe-detail').textContent=description(e);$('#fe-detail').dataset.event=m.id+':'+index}
+$('#fe-method').textContent='1× = one recorded second per second. Half-time interval omitted. Arrows animate recorded endpoints; travel speed is illustrative. Only event locations are known; no off-ball positions or paths between separate events are invented.';
+}
+}
+function pause(){playing=false;cancelAnimationFrame(frame);$('#fe-play').textContent='Play';last=0}
+function locate(){let lo=0,hi=events.length;while(lo<hi){let mid=(lo+hi)>>1;if(events[mid][0]<=t)lo=mid+1;else hi=mid}index=Math.max(0,lo-1)}
+function tick(now){if(!playing)return;if(last)t=Math.min(m.duration,t+Math.min((now-last)/1000,.25)*speed);last=now;locate();draw();if(t>=m.duration){pause();return}frame=requestAnimationFrame(tick)}
+function switchView(v){pause();view=v;selected=null;$('#fe-map').setAttribute('aria-pressed',v==='map');$('#fe-replay').setAttribute('aria-pressed',v==='replay');$('#fe-map-controls').hidden=v!=='map';$('#fe-inspect-label').hidden=v!=='map';$('#fe-player-label').hidden=v!=='map';$('#fe-replay-controls').hidden=v!=='replay';$('#fe-replay-key').hidden=v!=='replay';$('#fe-detail').dataset.event='';$('#fe-replay-key').innerHTML=m.sides.map((id,i)=>'<span><span class="fe-swatch" style="background:'+color(i)+'"></span>'+escapeText(D.teams[id])+'</span>').join('')+'<span>Faint = earlier · × = unsuccessful</span>';draw()}
+$('#fe-inspect').onchange=e=>{selected=e.target.value===''?null:events[+e.target.value];draw()};
+$('#fe-map').onclick=()=>switchView('map');$('#fe-replay').onclick=()=>switchView('replay');$('#fe-match').onchange=()=>{chooseMatch();switchView(view)};$('#fe-player').onchange=()=>{player=$('#fe-player').value;selected=null;heatCache=null;draw()};$('#fe-heat').onchange=draw;$('#fe-carries').onchange=draw;
+$('#fe-play').onclick=()=>{if(playing){pause();return}if(t>=m.duration){t=0;index=0}playing=true;$('#fe-play').textContent='Pause';last=0;frame=requestAnimationFrame(tick)};
+$('#fe-speed').oninput=e=>{speed=rates[+e.target.value];$('#fe-speed-value').textContent=speed+'×';e.target.setAttribute('aria-valuetext',speed+'×')};
+$('#fe-time').oninput=e=>{pause();t=+e.target.value;locate();draw()};
+function step(d){pause();index=Math.max(0,Math.min(events.length-1,index+d));t=events[index][0];draw()}
+$('#fe-prev').onclick=()=>step(-1);$('#fe-next').onclick=()=>step(1);
+svg.addEventListener('click',ev=>{if(view!=='map')return;let r=svg.getBoundingClientRect(),x=(ev.clientX-r.left)*width/r.width,y=(ev.clientY-r.top)*height/r.height;let best=null,dist=22;for(let h of hitMarks){let dx=h.b[0]-h.a[0],dy=h.b[1]-h.a[1],u=Math.max(0,Math.min(1,((x-h.a[0])*dx+(y-h.a[1])*dy)/(dx*dx+dy*dy||1))),d=Math.hypot(x-h.a[0]-u*dx,y-h.a[1]-u*dy);if(d<dist){dist=d;best=h.e}}selected=best;draw()});
+new ResizeObserver(()=>draw()).observe(svg);layers();options();chooseMatch();
+})();
+</script>
