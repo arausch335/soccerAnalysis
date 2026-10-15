@@ -82,6 +82,48 @@ For fixture-only backfills, edit the settings in `fixtures/builder.py` and run
 `dataset/fixtures.csv`; its default provider is FotMob. The standalone Sofascore
 fixture collector is available as `python -m fixtures.collector --help`.
 
+## WhoScored events without Sofascore
+
+To check Sofascore access first, run **`sofascore_test.py`** in PyCharm or use:
+
+```bash
+python sofascore_test.py
+python sofascore_test.py --match-id 12436870
+python main.py probe --match-id 12436870
+```
+
+The check attempts one live match-details request and prints `GOOD` for a valid
+match response or `NOT GOOD` with the error (including HTTP 403). It bypasses
+cached responses, makes no retries, and respects shared cooldowns. An active
+cooldown or collection lock reports `NOT TESTED` without sending a request.
+The default match is Manchester United v Fulham from 16 August 2024. Change
+`MATCH_ID` in the script to test a different match. Success confirms access to
+that match's details; it does not test lineups, event maps, or other endpoints.
+Exit codes are 0 for success and 2 for failure or a skipped check.
+
+Open **`whoscored_events.py`**, set `COMPETITIONS` and `SEASONS`, and run it in
+PyCharm. This standalone collector discovers finished fixtures through WhoScored
+and downloads their full event streams. It requires no Sofascore or FotMob
+requests, so a Sofascore 403 does not block this workflow.
+
+```bash
+python whoscored_events.py --competition Bundesliga --season 2024/25
+python whoscored_events.py --competition Bundesliga --season 2024/25 --limit 5
+```
+
+Results are saved under `data/whoscored_events/<competition>/<YYYY-YYYY>/`.
+Original match payloads are retained under `raw/whoscored/`, wrapped with the
+provider, cache key, and fetch timestamp. Provider field names and nested event
+objects are preserved; this workflow creates no CSV exports.
+
+Repeat the command to resume from saved responses. `schedule.json`, `job.json`,
+and `failures.json` retain discovery and progress information. Use
+`--refresh-schedule` (or `REFRESH_SCHEDULE = True` in the script) to discover newly
+finished fixtures in an ongoing season. `--limit` selects the first N finished
+fixtures; omit it on a subsequent run to collect the rest. The collector uses the
+shared request pacing, HTTP cache, and WhoScored cooldown ledger. A WhoScored
+refusal pauses collection and retains saved progress.
+
 Analysis commands replace the former `run_*.py` wrappers:
 
 ```bash

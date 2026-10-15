@@ -16,9 +16,11 @@ analysis = ["scipy", "scikit-learn", "plotly", "pyarrow"]
 soccer-analysis = "main:main"
 soccer-dataset = "dataset_builder:main"
 soccer-fixtures = "fixtures.collector:main"
+soccer-whoscored-events = "whoscored_events:main"
+soccer-sofascore-test = "sofascore_test:main"
 
 [tool.setuptools]
-py-modules = ["main", "dataset_builder"]
+py-modules = ["main", "dataset_builder", "whoscored_events", "sofascore_test"]
 
 [tool.setuptools.packages.find]
 include = ["analysis*", "collection*", "fixtures*", "models*", "providers*", "storage*", "tools*"]

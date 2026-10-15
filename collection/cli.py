@@ -7,6 +7,7 @@ from pathlib import Path
 from filelock import FileLock, Timeout
 from providers.httpClient import ProviderError
 from providers.safeClient import SafeSofaScoreClient, SafeFotMobClient, SafeWhoScoredClient
+from providers.sofaScoreProbe import DEFAULT_MATCH_ID, probe_match
 from collection.paths import collection_directory
 from collection.seasonRunner import SeasonRunner, SPATIAL_ENDPOINTS
 from storage.pandasStore import atomic_json
@@ -36,7 +37,13 @@ def main(argv=None):
     parser.add_argument('--compile-events', action=argparse.BooleanOptionalAction, default=True,
                         help='Compile the WhoScored event stream CSV during export (default: enabled)')
     parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--match-id',type=int,default=DEFAULT_MATCH_ID,
+                        help='Sofascore match ID for the single-request probe')
     args = parser.parse_args(argv)
+    if args.match_id < 1:
+        parser.error('match ID must be positive')
+    if args.command == 'probe' and args.offline:
+        parser.error('probe requires a live request; omit --offline')
     if not args.name or Path(args.name).name != args.name or args.name in ('.','..'):
         parser.error('name must be a single directory name')
     try:
@@ -60,9 +67,9 @@ def main(argv=None):
         with FileLock(str(root / '.collector.lock'), timeout=0), ExitStack() as stack:
             if args.command == 'probe':
                 with SafeSofaScoreClient(root, 'sofascore', offline=args.offline) as client:
-                    payload = client.seasons(17)
-                    print(f"Sofascore accessible: {len(payload.get('seasons', []))} seasons. One request maximum.")
-                return 0
+                    ok,message = probe_match(client,args.match_id)
+                    print(message)
+                return 0 if ok else 2
             settings_path = directory / 'job.json'
             if args.command == 'start':
                 if directory.exists():
