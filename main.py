@@ -1,4 +1,4 @@
-"""Run or resume the competition and season selected below."""
+"""Run the collection workflow selected in config/settings.yaml."""
 import argparse
 import csv
 import json
@@ -6,27 +6,19 @@ import re
 import sys
 from pathlib import Path
 
+import config
+
 from collection.cli import main as collect
 from collection.paths import collection_directory
 from collection.selection import competition_by_name, season_key
 
 
-# Edit these values when running this file directly from an IDE. ``auto`` starts
-# a new collection or resumes an existing one. Set it to ``resume``, ``export``
-# or ``status`` to require that action without using a terminal.
-ACTION = 'auto'
-COMPETITIONS = [
-    'Premier League',
-    'Bundesliga',
-    'La Liga',
-    'Champions League',
-    'Europa League',
-    'Serie A',
-    'Ligue 1',
-]
-SEASONS = ['2023/24', '2026/27']
-SOFASCORE_SPATIAL_CAPTURE = 'fast'  # 'fast' = average positions; 'all' = every spatial endpoint
-BUILD_DATASET = False  # True rebuilds CSVs and packages them into dataset/ after collection.
+# Values loaded from config/settings.yaml; edit the YAML file, not this module.
+ACTION = config.ACTION
+COMPETITIONS = config.COMPETITIONS
+SEASONS = config.SEASONS
+SOFASCORE_SPATIAL_CAPTURE = config.SOFASCORE_SPATIAL_CAPTURE
+BUILD_DATASET = config.BUILD_DATASET
 
 
 def _collection_name(competition, season):
@@ -43,7 +35,7 @@ def _selection(args):
     parser.add_argument('--competition', default=COMPETITIONS[0])
     parser.add_argument('--season', default=SEASONS[0])
     parser.add_argument('--name')
-    parser.add_argument('--data-root', type=Path, default=Path(__file__).parent / 'data')
+    parser.add_argument('--data-root', type=Path, default=config.DATA_ROOT)
     selected, _ = parser.parse_known_args(args)
     selected.name = selected.name or _collection_name(selected.competition, selected.season)
     return selected
@@ -156,7 +148,7 @@ def main(argv=None):
     commands={'start','resume','export','status','probe'}
     parser = argparse.ArgumentParser(description=__doc__, epilog='Select a season with --competition/--season/--name. Use python -m collection --help for collection options.')
     parser.add_argument('--build-dataset', action=argparse.BooleanOptionalAction, default=BUILD_DATASET)
-    parser.add_argument('--dataset-root', type=Path, default=Path(__file__).resolve().parent / 'dataset')
+    parser.add_argument('--dataset-root', type=Path, default=config.DATASET_ROOT)
     build_settings, args = parser.parse_known_args(args)
     explicit_command=bool(args and args[0] in commands)
     explicit_selection=any(arg in ('--competition','--season','--name') or

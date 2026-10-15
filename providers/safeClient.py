@@ -1,6 +1,7 @@
 """Disk-backed pacing, cooldowns and caches for portable collection."""
 import hashlib
 import json
+import math
 import random
 import time
 from pathlib import Path
@@ -19,7 +20,13 @@ class PersistentGate:
     The CLI also holds a global run lock: no concurrent collectors. Times are
     UTC epoch values so copying the data directory preserves the cooldowns.
     """
-    def __init__(self, directory, provider):
+    def __init__(self, directory, provider, *, min_delay=8, max_delay=15):
+        if (any(isinstance(value,bool) or not isinstance(value,(int,float))
+                or not math.isfinite(value) for value in (min_delay,max_delay))
+                or not 0 < min_delay <= max_delay):
+            raise ValueError('request delays must be finite and 0 < min_delay <= max_delay')
+        self.min_delay = min_delay
+        self.max_delay = max_delay
         self.path = Path(directory) / (provider + '.json')
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.traffic_path = Path(directory) / 'traffic.json'
@@ -43,13 +50,18 @@ class PersistentGate:
                         endpoint=endpoint, status_code=429)
                 traffic = json.loads(self.traffic_path.read_text()) if self.traffic_path.exists() else {}
                 # Global pacing also spaces requests when switching providers.
-                delay = traffic.get('next_request', 0) - now
+                # Apply this provider's spacing even after another provider
+                # reserved a shorter delay. Older ledgers lack last_request.
+                ready = max(traffic.get('next_request',0),
+                            traffic.get('last_request',0) + self.min_delay)
+                delay = ready - now
                 if delay <= 0:
                     # Rewrite only the pacing timestamp. This also discards the
                     # retired batch_count/rest_until fields from older state.
                     atomic_json(
                         self.traffic_path,
-                        {'next_request': now + random.uniform(8, 15)},
+                        {'last_request':now,
+                         'next_request': now + random.uniform(self.min_delay, self.max_delay)},
                     )
                     return
             time.sleep(min(delay, 15))
@@ -65,12 +77,14 @@ class PersistentGate:
 
 
 class CachedTransport:
-    def __init__(self, state_directory, provider, *, offline=False, session=None):
+    def __init__(self, state_directory, provider, *, offline=False, session=None,
+                 min_delay=8, max_delay=15):
         self.offline = offline
         self.refresh_cache = False
         self.response_directory = Path(state_directory) / 'http_cache' / provider
         self.response_directory.mkdir(parents=True, exist_ok=True)
-        gate = PersistentGate(Path(state_directory) / 'safety', provider)
+        gate = PersistentGate(Path(state_directory) / 'safety', provider,
+                              min_delay=min_delay,max_delay=max_delay)
         super().__init__(request_gate=gate, max_retries=1, session=session)
 
     def _cached(self, endpoint, params, kind, request):
@@ -122,4 +136,7 @@ class SafeFotMobClient(CachedTransport, FotMobClient):
 
 
 class SafeWhoScoredClient(CachedTransport, WhoScoredClient):
-    pass
+    def __init__(self, state_directory, provider='whoscored', *, offline=False, session=None):
+        import config
+        super().__init__(state_directory,provider,offline=offline,session=session,
+                         min_delay=config.WHOSCORED_MIN_DELAY,max_delay=config.WHOSCORED_MAX_DELAY)

@@ -13,20 +13,15 @@ Python 3.12 is recommended. Install the collection dependencies if needed:
 python -m pip install -r requirements.txt
 ```
 
-Open **`main.py`** and edit the settings at the top:
+Edit **[`config/settings.yaml`](config/settings.yaml)** for both workflows.
+Under `collection`, choose `action`, `competitions`, `seasons`, and
+`spatial_capture`. Set `build_dataset: true` to package the selected dataset
+outputs after collection. Press **Run** on `main.py` in PyCharm; no arguments
+are needed.
 
-- `ACTION`: `auto` starts missing collections and resumes unfinished ones;
-  `resume`, `status`, and `export` select a specific workflow.
-- `COMPETITIONS` and `SEASONS`: select the competitions and seasons to process.
-- `SOFASCORE_SPATIAL_CAPTURE`: `fast` collects average positions; `all` collects
-  every supported spatial endpoint.
-- **`BUILD_DATASET`**: set `True` to rebuild CSVs from saved checkpoints and put
-  the resulting tables into `dataset/` after the collection batch. `False`
-  saves checkpoints without rebuilding the dataset.
-
-Press **Run**. Collection checkpoints, cached responses, provider cooldowns,
-and progress stay under `data/`. Completed seasons are skipped during collection
-but are still included when dataset building is enabled.
+`auto` starts missing collections and resumes unfinished ones. Checkpoints,
+caches, and cooldowns stay under `paths.data`. Completed seasons are skipped
+during collection but included when dataset building is enabled.
 
 ## One dataset-building step
 
@@ -46,24 +41,46 @@ when you rebuild only selected seasons. `dataset/fixtures.csv`, if present from
 the fixture builder, augments the FotMob-keyed team reference; season fixture
 tables retain their Sofascore IDs.
 
-Edit the builder's settings to select seasons or reference tables. The default
-build is offline. Only explicitly enabling `REFRESH_PUBLISHED_TEAM_IDS` downloads
-an external team-ID register.
+The same YAML file has a `dataset` section:
 
-Optional terminal commands:
-
-```bash
-python main.py --build-dataset
-python main.py export --competition Bundesliga --season 2025/26
-python dataset_builder.py --name bundesliga-2025-26
-python dataset_builder.py --references-only
+```yaml
+dataset:
+  collections: []  # Standalone builder: all saved seasons
+  tables:
+    events: true
+    player_match_stats: true
+    team_match_stats: true
+    fixtures: true
+  references:
+    player_ids: true
+    team_ids: true
+    match_ids: true
+  maintenance:
+    refresh_published_team_ids: false
+    standardize_fixture_team_names: false
 ```
+
+Set each dataset type to `true` or `false`, then press **Run** on
+`dataset_builder.py`. Disabled tables already in `dataset/` stay unchanged.
+For ID-only builds, set all four `tables` values to `false`.
+
+`dataset.collections` selects seasons for a standalone build; an empty list
+builds all saved seasons. Builds from `main.py` use `collection.competitions`
+and `collection.seasons`. Both entry points share the `paths` section; relative
+paths are resolved from the project root regardless of PyCharm's working directory.
+
+Season fixtures use saved schedules. The separate historical fixture backfill
+still has settings in `fixtures/builder.py`. The normal dataset build is offline.
+The two optional maintenance settings require the historical
+`dataset/fixtures.csv` to exist first; name standardization also requires
+`dataset.references.team_ids: true`.
 
 ## Organization
 
 ```text
 main.py                 Collection settings and the everyday workflow
 dataset_builder.py      Export, season packaging, and combined ID tables
+config/settings.yaml    Shared collection settings, dataset types, and paths
 collection/             Collection commands, checkpoints, and CSV exporters
 providers/              Provider clients, adapters, identity matching, and safety
 fixtures/               Historical fixture-only collection and building
@@ -82,27 +99,37 @@ For fixture-only backfills, edit the settings in `fixtures/builder.py` and run
 `dataset/fixtures.csv`; its default provider is FotMob. The standalone Sofascore
 fixture collector is available as `python -m fixtures.collector --help`.
 
-## WhoScored events without Sofascore
+## Check provider access
 
-To check Sofascore access first, run **`sofascore_test.py`** in PyCharm or use:
+Run **`api_test.py`** in PyCharm to check Sofascore, WhoScored, and FotMob.
+Set the providers and their match IDs under `api_test` in `config/settings.yaml`.
+Each provider has its own ID namespace; the default examples are independent
+matches, and all paths come from the shared configuration.
 
 ```bash
-python sofascore_test.py
-python sofascore_test.py --match-id 12436870
-python main.py probe --match-id 12436870
+python api_test.py
+python api_test.py --providers whoscored fotmob
+python api_test.py --providers fotmob --match-id 4506485
 ```
 
-The check attempts one live match-details request and prints `GOOD` for a valid
-match response or `NOT GOOD` with the error (including HTTP 403). It bypasses
-cached responses, makes no retries, and respects shared cooldowns. An active
-cooldown or collection lock reports `NOT TESTED` without sending a request.
-The default match is Manchester United v Fulham from 16 August 2024. Change
-`MATCH_ID` in the script to test a different match. Success confirms access to
-that match's details; it does not test lineups, event maps, or other endpoints.
-Exit codes are 0 for success and 2 for failure or a skipped check.
+The tester attempts one live match request per selected provider and prints
+`GOOD`, `NOT GOOD` (with the error), or `NOT TESTED` when a cooldown or active
+collector prevents a request. It bypasses cached responses, makes no retries,
+and continues checking the other providers after one fails. Shared pacing and
+cooldowns still apply, including the configured WhoScored delays. WhoScored's
+check reads structured event data from its match page; FotMob and Sofascore
+use their match-details JSON endpoints.
 
-Open **`whoscored_events.py`**, set `COMPETITIONS` and `SEASONS`, and run it in
-PyCharm. This standalone collector discovers finished fixtures through WhoScored
+A successful check confirms access to that match's data, not every endpoint.
+Exit codes are 0 when all selected checks pass, 2 for failed or skipped checks,
+and 130 for interruption. The Sofascore-only `python main.py probe --match-id
+12436870` command remains available. `api_test.py` replaces `sofascore_test.py`.
+
+## WhoScored events without Sofascore
+
+Edit **`config/settings.yaml`**, then run **`whoscored_events.py`** in PyCharm.
+It uses `collection.competitions`, `collection.seasons`, and `paths.data` from
+the same configuration as the main collector. This standalone collector discovers finished fixtures through WhoScored
 and downloads their full event streams. It requires no Sofascore or FotMob
 requests, so a Sofascore 403 does not block this workflow.
 
@@ -118,11 +145,20 @@ objects are preserved; this workflow creates no CSV exports.
 
 Repeat the command to resume from saved responses. `schedule.json`, `job.json`,
 and `failures.json` retain discovery and progress information. Use
-`--refresh-schedule` (or `REFRESH_SCHEDULE = True` in the script) to discover newly
+`--refresh-schedule` (or `whoscored.refresh_schedule: true` in the config) to discover newly
 finished fixtures in an ongoing season. `--limit` selects the first N finished
 fixtures; omit it on a subsequent run to collect the rest. The collector uses the
 shared request pacing, HTTP cache, and WhoScored cooldown ledger. A WhoScored
 refusal pauses collection and retains saved progress.
+
+WhoScored requests wait a random **15–30 seconds** between request starts by
+default. Set `whoscored.request_delay_min_seconds` and
+`whoscored.request_delay_max_seconds` in the YAML to adjust this range. Both must
+be positive, and the maximum must be at least the minimum. These settings apply
+to WhoScored requests in both collectors. Pacing persists across restarts;
+cached responses do not send requests or add delays. HTTP 401, 403, and 429
+responses retain the existing cooldown of at least 24 hours and respect a
+longer `Retry-After`. Delays reduce request pressure but cannot guarantee access.
 
 Analysis commands replace the former `run_*.py` wrappers:
 

@@ -30,7 +30,10 @@ class DatasetBuildTests(unittest.TestCase):
             before = {p: p.read_bytes() for p in (source / 'match_checkpoints').rglob('*')
                       if p.is_file() and p.name != 'CURRENT.json'}
             self.assertTrue(before)
-            with patch('providers.httpClient.HttpClient._request', side_effect=AssertionError('network')):
+            with patch('providers.httpClient.HttpClient._request', side_effect=AssertionError('network')), \
+                    patch.multiple(dataset_builder.config, BUILD_EVENTS=True,
+                        BUILD_PLAYER_MATCH_STATS=True, BUILD_TEAM_MATCH_STATS=True,
+                        BUILD_FIXTURES=True, BUILD_PLAYER_IDS=True, BUILD_TEAM_IDS=True, BUILD_MATCH_IDS=True):
                 self.assertEqual(dataset_builder.build_dataset(data, root / 'dataset'), 0)
             packaged = root / 'dataset/premier-league/2024-2025'
             self.assertEqual({p.name for p in packaged.iterdir()}, {

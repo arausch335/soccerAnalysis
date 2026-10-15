@@ -4,6 +4,8 @@ from contextlib import ExitStack
 import json
 from pathlib import Path
 
+import config
+
 from filelock import FileLock, Timeout
 from providers.httpClient import ProviderError
 from providers.safeClient import SafeSofaScoreClient, SafeFotMobClient, SafeWhoScoredClient
@@ -22,7 +24,7 @@ SPATIAL_CAPTURE_MODES = {
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['start', 'resume', 'export', 'status', 'probe'])
-    parser.add_argument('--data-root', type=Path, default=Path(__file__).resolve().parents[1] / 'data')
+    parser.add_argument('--data-root', type=Path, default=config.DATA_ROOT)
     parser.add_argument('--name', default='premier-league-2024-25')
     parser.add_argument('--competition', default='Premier League')
     parser.add_argument('--season', default='2024/25')

@@ -1,24 +1,23 @@
 """Run WhoScored-only event scraping directly from an IDE or terminal."""
 import sys
+import argparse
+import config
 
 from collection.whoScoredEvents import main as collect
 
 
-COMPETITIONS = ['Premier League']
-SEASONS = ['2024/25']
-REFRESH_SCHEDULE = False  # True adds newly finished fixtures to saved schedules.
-
-
 def main(argv=None):
     args = list(sys.argv[1:] if argv is None else argv)
-    if args:
+    if '--help' in args or '-h' in args:
         return collect(args)
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--competition')
+    parser.add_argument('--season')
+    selection,forwarded = parser.parse_known_args(args)
     result = 0
-    for competition in COMPETITIONS:
-        for season in SEASONS:
-            options = ['--competition',competition,'--season',season]
-            if REFRESH_SCHEDULE:
-                options.append('--refresh-schedule')
+    for competition in ([selection.competition] if selection.competition else config.COMPETITIONS):
+        for season in ([selection.season] if selection.season else config.SEASONS):
+            options = ['--competition',competition,'--season',season,*forwarded]
             code = collect(options)
             if code == 130:
                 return code

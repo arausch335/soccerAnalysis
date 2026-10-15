@@ -2,3 +2,4 @@ curl_cffi>=0.13,<0.17
 pandas>=2.2,<4
 matplotlib>=3.8,<4
 filelock>=3.13,<4
+PyYAML>=6,<7

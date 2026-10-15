@@ -7,7 +7,7 @@ name = "soccerAnalysis"
 version = "0.2.0"
 description = "Football collection, dataset building, and offline analysis"
 requires-python = ">=3.10"
-dependencies = ["curl_cffi>=0.13,<0.17", "pandas>=2.2,<4", "matplotlib>=3.8,<4", "filelock>=3.13,<4"]
+dependencies = ["curl_cffi>=0.13,<0.17", "pandas>=2.2,<4", "matplotlib>=3.8,<4", "filelock>=3.13,<4", "PyYAML>=6,<7"]
 
 [project.optional-dependencies]
 analysis = ["scipy", "scikit-learn", "plotly", "pyarrow"]
@@ -17,15 +17,17 @@ soccer-analysis = "main:main"
 soccer-dataset = "dataset_builder:main"
 soccer-fixtures = "fixtures.collector:main"
 soccer-whoscored-events = "whoscored_events:main"
-soccer-sofascore-test = "sofascore_test:main"
+soccer-api-test = "api_test:main"
 
 [tool.setuptools]
-py-modules = ["main", "dataset_builder", "whoscored_events", "sofascore_test"]
+py-modules = ["main", "dataset_builder", "whoscored_events", "api_test"]
 
 [tool.setuptools.packages.find]
-include = ["analysis*", "collection*", "fixtures*", "models*", "providers*", "storage*", "tools*"]
+include = ["config", "analysis*", "collection*", "fixtures*", "models*", "providers*", "storage*", "tools*"]
 
 [tool.setuptools.package-data]
 "analysis.role_pipeline" = ["*.html"]
 "analysis.match_visualization" = ["*.html", "*.css", "*.js"]
 "providers" = ["*.json"]
+
+"config" = ["settings.yaml"]
