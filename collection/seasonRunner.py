@@ -153,7 +153,8 @@ class SeasonRunner:
             status.setdefault(str(pid),{})[name]=state
             if path is not None:files.setdefault(str(pid),{})[name]=path
             if exc is not None and exc.status_code!=404:errors.append(f'{name} player {pid}: {exc}')
-            if exc is not None and exc.status_code in (401,403,429):blocked=True
+            if exc is not None and (exc.status_code in (401,403,429) or
+                    getattr(self.clients.get('sofascore'),'requires_manual_attention',False) is True):blocked=True
             if exc is not None and exc.status_code==403:self._sofascore_blocked=True
             completed.append((pid,name,state,exc))
             if blocked:break
@@ -409,6 +410,10 @@ class SeasonRunner:
                     atomic_csv(pd.DataFrame(statuses.values()),status_path)
                     self.report(f'[{index}/{len(selected)}] {mid}: failed ({exc})')
                     timing.finish_game(clients=self.clients.values(),status='failed',mode=timing_mode())
+                    if getattr(sofa,'requires_manual_attention',False) is True:
+                        self._sofascore_blocked=True
+                        self.report('Chrome extension needs attention; saved checkpoints and paused the season.')
+                        break
                     if isinstance(exc,ProviderRequestError) and exc.status_code in (401,403,429):
                         if exc.status_code==403:self.report(f'{self.baseline_provider} request safety stop triggered; collection stopped.')
                         break
@@ -419,6 +424,7 @@ class SeasonRunner:
                 errors.extend(self._browser_match_details(sofa,event,match));browser_done=True
             if self.baseline_provider=='sofascore' and not self._sofascore_blocked:
                 errors.extend(self._collect_spatial(match,event,sofa))
+                if getattr(sofa,'requires_manual_attention',False) is True:self._sofascore_blocked=True
                 # Fallback can begin on an optional spatial request after HTTP
                 # lineups succeeded. The same match still needs full browser data.
                 if getattr(sofa,'uses_browser',False) and not browser_done and not self._sofascore_blocked:
@@ -495,6 +501,7 @@ class SeasonRunner:
             errors=[f'browser match details: {exc}']
             match.metadata['browser_details']={'complete':False,'errors':[str(exc)]}
             if isinstance(exc,ProviderRequestError) and exc.status_code in (401,403,429):self._sofascore_blocked=True
+        if getattr(sofa,'requires_manual_attention',False) is True:self._sofascore_blocked=True
         self.browser_coverage[str(mid)]=match.metadata['browser_details']
         return errors
 

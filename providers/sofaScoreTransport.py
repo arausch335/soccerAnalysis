@@ -86,4 +86,8 @@ class SofaScoreTransport(SofaScoreClient):
 
 
 def create_sofascore_client(root,provider='sofascore',*,offline=False,mode=None):
+    import config
+    if (mode or config.TRANSPORT['sofascore_mode'])=='extension':
+        from .extensionSofaScore import ExtensionSofaScoreClient
+        return ExtensionSofaScoreClient(root,config.TRANSPORT['browser'],offline=offline)
     return SofaScoreTransport(root,provider,offline=offline,mode=mode)

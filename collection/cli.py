@@ -39,7 +39,7 @@ def main(argv=None):
                         help='Build combined CSV exports after collection (default: enabled)')
     parser.add_argument('--compile-events', action=argparse.BooleanOptionalAction, default=True,
                         help='Compile the WhoScored event stream CSV during export (default: enabled)')
-    parser.add_argument('--sofascore-transport',choices=('http','browser','auto'),default=config.TRANSPORT['sofascore_mode'])
+    parser.add_argument('--sofascore-transport',choices=('http','browser','auto','extension'),default=config.TRANSPORT['sofascore_mode'])
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--match-id',type=int,default=DEFAULT_MATCH_ID,
                         help='Sofascore match ID for the single-request probe')
@@ -70,7 +70,9 @@ def main(argv=None):
     try:
         with FileLock(str(root / '.collector.lock'), timeout=0), ExitStack() as stack:
             if args.command == 'probe':
-                with SafeSofaScoreClient(root, 'sofascore', offline=args.offline) as client:
+                probe_client=(create_sofascore_client(root,mode='extension') if args.sofascore_transport=='extension'
+                              else SafeSofaScoreClient(root,'sofascore',offline=args.offline))
+                with probe_client as client:
                     ok,message = probe_match(client,args.match_id)
                     print(message)
                 return 0 if ok else 2

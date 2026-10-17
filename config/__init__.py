@@ -100,8 +100,8 @@ def load_config(path=None, *, project_root=None):
     if 'combined' in kinds and 'sofascore' in kinds:
         raise ConfigError('Choose combined OR sofascore; they share the same match checkpoints')
     transport={'sofascore_mode':collection['sofascore_access'],'http':collection['http'],'browser':collection['browser']}
-    if transport['sofascore_mode'] not in ('http','browser','auto'):
-        raise ConfigError('collection.sofascore_access must be http, browser, or auto')
+    if transport['sofascore_mode'] not in ('http','browser','auto','extension'):
+        raise ConfigError('collection.sofascore_access must be http, browser, auto, or extension')
     http=_section(transport['http'],('profiles','languages','proxy_env','delay_min_seconds',
                                   'delay_max_seconds','attempts'),'collection.http')
     browser=_section(transport['browser'],('channel','delay_min_seconds','delay_max_seconds',
