@@ -26,6 +26,7 @@ from .spatialManifest import SPATIAL_MAP_COLUMNS, match_map_rows, player_map_row
 from .fotmobExports import match_payload, source_rows
 from .sofascoreTeams import team_stat_rows as sofascore_team_rows, TEAM_STAT_COLUMNS
 from .playerStatsSchema import PLAYER_MATCH_COLUMNS
+from .progress import get_job
 from .jsonFiles import clear_json_cache, read_json
 from .whoScoredExports import event_rows as whoscored_event_rows, match_payload as whoscored_match_payload, EVENT_COLUMNS
 
@@ -307,6 +308,12 @@ class SeasonRunner:
         self.directory.mkdir(parents=True,exist_ok=True)
         competition=competition_by_name(competition_name);canonical=season_key(season_name)
         sofa=self.clients.get('sofascore')
+        timing=get_job(self.directory,'fotmob_players' if self.baseline_provider=='fotmob' else
+                       'combined' if len(self.providers)>1 else 'sofascore',
+                       competition.name,season_label(canonical),report=self.report)
+        timing.begin()
+        def timing_mode():
+            return (str(getattr(sofa,'active','http')),self.providers,self.spatial)
         if self.baseline_provider=='sofascore':
             season=self._fetch('sofascore',f'season/{competition.sofascore_id}/{canonical}', lambda:resolve_sofascore_season(sofa,competition,canonical))
             competition_id=competition.sofascore_id
@@ -351,11 +358,16 @@ class SeasonRunner:
         for event in selected:
             statuses.setdefault(event['id'],{'match_id':event['id'],'competition':competition.name,
                 'status':'pending','attempts':0,'updated_at':'','error':''})
+        timing.schedule(selected,completed=[mid for mid,row in statuses.items()
+            if row['status']=='complete' and not self.refresh and not timing.revisit_complete
+            and not getattr(sofa,'uses_browser',False)],
+            mode=timing_mode())
         loaders={'fotmob':FotMobLoader(identity_resolver=self.identity_resolver),
                  'whoscored':WhoScoredLoader(identity_resolver=self.identity_resolver)}
         for index,event in enumerate(selected,1):
             if hasattr(sofa,'register_event'):sofa.register_event(event)
             self.report(f"{competition.name} {season_label(canonical)} | match {event['id']} | {event['homeTeam']['name']} vs {event['awayTeam']['name']}")
+            timing.start_game(event['id'],clients=self.clients.values())
             mid=event['id'];store=PandasStore(self.directory/'match_checkpoints'/str(mid));entry=statuses[mid]
             if store.exists and not self.refresh:
                 dataset=store.from_csv();match=dataset.matches[mid]
@@ -368,6 +380,7 @@ class SeasonRunner:
                         and (not getattr(sofa,'uses_browser',False) or match.metadata.get('browser_details',{}).get('complete'))):
                     entry.update(status='complete',error='')
                     self.report(f'[{index}/{len(selected)}] Already complete: {mid}')
+                    timing.finish_game(clients=self.clients.values(),cached=True,mode=timing_mode())
                     continue
             else:
                 try:
@@ -395,6 +408,7 @@ class SeasonRunner:
                     entry.update(status='failed',error=str(exc),updated_at=now(),attempts=int(entry.get('attempts',0))+1)
                     atomic_csv(pd.DataFrame(statuses.values()),status_path)
                     self.report(f'[{index}/{len(selected)}] {mid}: failed ({exc})')
+                    timing.finish_game(clients=self.clients.values(),status='failed',mode=timing_mode())
                     if isinstance(exc,ProviderRequestError) and exc.status_code in (401,403,429):
                         if exc.status_code==403:self.report(f'{self.baseline_provider} request safety stop triggered; collection stopped.')
                         break
@@ -439,6 +453,7 @@ class SeasonRunner:
                          updated_at=now(),attempts=int(entry.get('attempts',0))+1)
             atomic_csv(pd.DataFrame(statuses.values()),status_path)
             self.report(f'[{index}/{len(selected)}] {event["homeTeam"]["name"]} vs {event["awayTeam"]["name"]}: {entry["status"]}'+(f' ({entry["error"]})' if errors else ''))
+            timing.finish_game(clients=self.clients.values(),status=entry['status'],mode=timing_mode())
             if self._sofascore_blocked:
                 self.report('SofaScore request safety stop triggered; saved the current checkpoint and stopped collection.')
                 break
@@ -459,6 +474,7 @@ class SeasonRunner:
             'failed_or_pending':int(result.status.isin(['failed','pending']).sum()),
             'baseline_provider':self.baseline_provider,'providers':list(self.providers),
             'csvs_built':bool(build_csvs),'events_csv_compiled':bool(build_csvs and compile_events)})
+        timing.end(0 if len(result) and result.status.eq('complete').all() else 2)
         return result
 
     def _browser_match_details(self,sofa,event,match):

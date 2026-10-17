@@ -12,6 +12,7 @@ from providers.events import whoscored_fixture
 from providers.httpClient import ProviderError, ProviderRequestError
 from providers.safeClient import SafeWhoScoredClient
 from storage.pandasStore import atomic_json
+from .progress import get_job, collection_scope
 from .selection import competition_by_name, season_key, season_label, configured_whoscored_stages
 
 
@@ -56,6 +57,8 @@ class WhoScoredEventRunner:
     def run(self, competition, season, *, limit=None, refresh_schedule=False):
         competition = competition_by_name(competition)
         season = season_key(season)
+        timing=get_job(self.directory,'whoscored_events',competition.name,season_label(season),report=self.report)
+        timing.begin()
         self.directory.mkdir(parents=True, exist_ok=True)
         job = self.directory/'job.json'
         settings = dict(provider='whoscored',competition=competition.name,season=season)
@@ -72,8 +75,13 @@ class WhoScoredEventRunner:
         failure_path = self.directory/'failures.json'
         failures = json.loads(failure_path.read_text(encoding='utf-8')) if failure_path.exists() else {}
         complete = 0
+        timing.schedule(events,completed=[e['id'] for e in events
+            if self.cache.path('whoscored',f"match/{e['id']}").exists()],mode='http')
         for index,event in enumerate(events,1):
             mid = event['id']
+            cached=self.cache.path('whoscored',f'match/{mid}').exists()
+            timing.start_game(mid,clients=(self.client,),cached=cached)
+            game_status='complete'
             identity=(f"WhoScored {competition.name} {season_label(season)} | match {mid} | "
                       f"{event['homeTeam']['name']} vs {event['awayTeam']['name']}")
             self.report(f'{identity}: {index}/{len(events)}',flush=True)
@@ -97,6 +105,7 @@ class WhoScoredEventRunner:
                 complete += 1
                 failures.pop(str(mid),None)
             except (ProviderError,ValueError,KeyError,TypeError) as exc:
+                game_status='failed'
                 failures[str(mid)] = str(exc)
                 self.report(f'{identity} paused: {exc}',flush=True)
                 if (isinstance(exc,ProviderRequestError) and exc.status_code in (401,403,429)
@@ -104,8 +113,11 @@ class WhoScoredEventRunner:
                     break
             finally:
                 atomic_json(failure_path,failures)
+                timing.finish_game(clients=(self.client,),status=game_status)
         self.report(f'WhoScored {competition.name} {season_label(season)} raw responses saved: {complete}/{len(events)}',flush=True)
-        return 0 if events and complete == len(events) else 2
+        code=0 if events and complete == len(events) else 2
+        timing.end(code)
+        return code
 
 
 def main(argv=None):
@@ -134,7 +146,8 @@ def main(argv=None):
         # Share the existing safety ledger and lock; standalone jobs have their
         # own subtree so the Sofascore-keyed dataset builder cannot ingest them.
         directory = root/'whoscored_events'/slug/season_label(season)
-        with FileLock(str(root/'.collector.lock'),timeout=0):
+        with collection_scope('whoscored_events',root,[competition.name],[season],limit=args.limit), \
+                FileLock(str(root/'.collector.lock'),timeout=0):
             with SafeWhoScoredClient(root,'whoscored',offline=args.offline) as client:
                 return WhoScoredEventRunner(client,directory).run(competition.name,season,
                     limit=args.limit,refresh_schedule=args.refresh_schedule)

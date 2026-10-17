@@ -46,8 +46,8 @@ class WhoScoredConfigTests(unittest.TestCase):
             for minimum,maximum in ((0,30),(-1,30),(40,30),(True,30),(15,float('inf'))):
                 with self.subTest(minimum=minimum,maximum=maximum):
                     document=yaml.safe_load(config.CONFIG_FILE.read_text())
-                    document['whoscored']['request_delay_min_seconds']=minimum
-                    document['whoscored']['request_delay_max_seconds']=maximum
+                    document['collection']['whoscored']['request_delay_min_seconds']=minimum
+                    document['collection']['whoscored']['request_delay_max_seconds']=maximum
                     path.write_text(yaml.safe_dump(document))
                     with self.assertRaisesRegex(config.ConfigError,'request delays'):
                         config.load_config(path)

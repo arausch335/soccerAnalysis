@@ -14,8 +14,8 @@ python -m pip install -r requirements.txt
 ```
 
 Edit **[`config/settings.yaml`](config/settings.yaml)** for both workflows.
-Under `collection`, choose `action`, `competitions`, `seasons`, and
-`spatial_capture`. Set `build_dataset: true` to package the selected dataset
+Under `collection`, choose `types`, `action`, `competitions`, `seasons`, and
+`spatial_capture`. Set `build_dataset: true` to package combined/Sofascore dataset
 outputs after collection. Press **Run** on `main.py` in PyCharm; no arguments
 are needed.
 
@@ -23,9 +23,66 @@ are needed.
 caches, and cooldowns stay under `paths.data`. Completed seasons are skipped
 during collection but included when dataset building is enabled.
 
+## Choose collection types and see timing
+
+All match collectors can run from **`main.py`**. Edit this selection in the YAML:
+
+```yaml
+collection:
+  types: [combined, whoscored_events, fotmob_players]
+  action: auto
+  show_timing: true
+  sofascore_access: auto
+```
+
+This is an excerpt; keep the other settings in the supplied file. Types:
+
+- `combined`: Sofascore match/player data enriched with FotMob and WhoScored.
+- `sofascore`: Sofascore only. Choose this **or** `combined`; they share checkpoints.
+- `whoscored_events`: standalone WhoScored event responses.
+- `fotmob_players`: standalone FotMob player stats with `fmb_` columns and IDs.
+
+For example, use `types: [sofascore]` and `sofascore_access: browser` for a visible
+Sofascore run. `sofascore_access` replaces the old name “transport”: it means
+HTTP requests, a visible browser, or automatic HTTP-to-browser fallback. The
+HTTP, browser, and WhoScored preferences now all live inside `collection`.
+Older settings files with top-level `transport`/`whoscored` still load.
+
+After each game, the Run console shows its duration, the estimated remaining
+season time, and the estimated remaining time across all selected types,
+competitions, and seasons. It starts learning after the first scraped game,
+marks estimates provisional until three games are sampled, and uses the most
+recent 12 games of the same type/access mode. Cache-only skips and failed
+attempts do not train the estimate. A browser fallback learns its own speed.
+Future schedules not yet discovered use approximate fixture counts and are
+marked **provisional**; known cached fixtures are subtracted. Paused seasons are
+reported separately and excluded from further ETA calculations. ETAs cover
+scraping plus estimated season setup, excluding final CSV/dataset builds; the
+final elapsed run time includes those builds. Set `show_timing: false` to hide
+these additional lines.
+
+```text
+[Timing] La Liga 2023-2024 | match 123 complete: 1m 30s | season remaining ~8h 12m | collection remaining ~2d 3h 20m | 12 recent scraped games
+```
+
+CLI overrides are also available:
+
+```bash
+python main.py --collection-types whoscored_events fotmob_players --competition "La Liga" --season 2023/24 --limit 3
+python main.py --collection-types sofascore --sofascore-transport browser
+```
+
+`collection.action` applies to each selected type. `auto` starts or resumes;
+`start` selects new jobs, and `resume` selects saved jobs. Standalone `status`
+reads local cache counts. Standalone `export` validates WhoScored caches or
+rebuilds FotMob CSVs offline; combined/Sofascore `export` builds the packaged
+dataset. Standalone output remains in its existing source-specific folders.
+Explicit CLI commands or competition/season selections target one season;
+running without arguments uses every configured competition and season.
+
 ## Standalone scrapers and coverage review
 
-Run `whoscored_events.py` for WhoScored events, `fotmob_player_stats.py` for
+The older shortcuts still work: `whoscored_events.py` for WhoScored events, `fotmob_player_stats.py` for
 FotMob-only player stats, and `review_data.py` for separate WhoScored/Sofascore
 match coverage for every configured season. Both scrapers print the competition,
 season, match ID, and team names. FotMob output uses `fmb_` columns and IDs and
@@ -99,7 +156,7 @@ The two optional maintenance settings require the historical
 ## Organization
 
 ```text
-main.py                 Collection settings and the everyday workflow
+main.py                 Entry point for every match collection type
 dataset_builder.py      Export, season packaging, and combined ID tables
 config/settings.yaml    Shared collection settings, dataset types, and paths
 collection/             Collection commands, checkpoints, and CSV exporters
@@ -166,15 +223,15 @@ objects are preserved; this workflow creates no CSV exports.
 
 Repeat the command to resume from saved responses. `schedule.json`, `job.json`,
 and `failures.json` retain discovery and progress information. Use
-`--refresh-schedule` (or `whoscored.refresh_schedule: true` in the config) to discover newly
+`--refresh-schedule` (or `collection.whoscored.refresh_schedule: true` in the config) to discover newly
 finished fixtures in an ongoing season. `--limit` selects the first N finished
 fixtures; omit it on a subsequent run to collect the rest. The collector uses the
 shared request pacing, HTTP cache, and WhoScored cooldown ledger. A WhoScored
 refusal pauses collection and retains saved progress.
 
 WhoScored requests wait a random **15–30 seconds** between request starts by
-default. Set `whoscored.request_delay_min_seconds` and
-`whoscored.request_delay_max_seconds` in the YAML to adjust this range. Both must
+default. Set `collection.whoscored.request_delay_min_seconds` and
+`collection.whoscored.request_delay_max_seconds` in the YAML to adjust this range. Both must
 be positive, and the maximum must be at least the minimum. These settings apply
 to WhoScored requests in both collectors. Pacing persists across restarts;
 cached responses do not send requests or add delays. HTTP 401, 403, and 429
