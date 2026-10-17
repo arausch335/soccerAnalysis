@@ -19,12 +19,13 @@ from storage.pandasStore import atomic_json, KEYS
 from .runner import atomic_csv, now
 from .selection import (competition_by_name, resolve_sofascore_season, season_key,
                         season_label, months_between, is_qualification_event,
-                        with_reviewed_schedule_results)
+                        with_reviewed_schedule_results, configured_whoscored_stages)
 from .spatial import (RAW_DRIBBLE_RECORD_COLUMNS, RAW_PASS_RECORD_COLUMNS,
                       extract_minimal_spatial, extract_raw_dribbles,
                       extract_raw_passes)
 from .spatialManifest import SPATIAL_MAP_COLUMNS, match_map_rows, player_map_rows
 from .fotmobExports import match_payload, source_rows
+from .playerStatsSchema import PLAYER_MATCH_COLUMNS
 from .jsonFiles import clear_json_cache, read_json
 from .whoScoredExports import event_rows as whoscored_event_rows, match_payload as whoscored_match_payload, EVENT_COLUMNS
 
@@ -103,7 +104,7 @@ class SeasonRunner:
             raise ValueError('At least one Sofascore spatial client is required')
         self._sofascore_blocked=False
         self.capability_path=self.directory/'capabilities.json'
-        self.capabilities=json.loads(self.capability_path.read_text()) if self.capability_path.exists() else {}
+        self.capabilities=json.loads(self.capability_path.read_text(encoding='utf-8')) if self.capability_path.exists() else {}
 
     def _fetch(self,provider,key,request,*,refresh=False):
         return self.cache.fetch(provider,key,request,refresh=refresh or self.refresh)
@@ -185,28 +186,27 @@ class SeasonRunner:
                     result[provider]=list(events.values())
                 else:
                     events={}
-                    paths=(competition.whoscored_path,*competition.whoscored_supplemental_paths)
-                    for competition_path in paths:
-                        seasons=self._fetch(provider,f'seasons/{competition_path}',
-                            lambda competition_path=competition_path:
-                                client.seasons(competition_path))
-                        found=[s for s in seasons if s['name']==season]
-                        if len(found)!=1:
-                            raise ValueError(f'WhoScored season {season} is not uniquely available for {competition_path}')
-                        path=found[0]['path']
-                        # European cups need every stage-option, not merely the
-                        # landing page's selected stage. Version their key so runs
-                        # created before multi-stage parsing automatically refresh.
-                        multi_stage=competition.name in ('Champions League','Europa League')
-                        stage_key=('stages-v2/' if multi_stage else 'stage/')+path
-                        stages=self._fetch(provider,stage_key,lambda path=path:client.season_stages(path))
-                        if isinstance(stages,int):stages=[stages]
-                        for stage in stages:
-                            for month in months_between(selected):
-                                raw=self._fetch(provider,f'fixtures/{stage}/{month}',
-                                    lambda stage=stage,month=month:client.season_events(stage,month))
-                                for row in raw:
-                                    if row.get('status')==6:events[row['id']]=whoscored_fixture(row)
+                    stages=configured_whoscored_stages(competition,season)
+                    if stages is None:
+                        stages=[]
+                        paths=(competition.whoscored_path,*competition.whoscored_supplemental_paths)
+                        for competition_path in paths:
+                            seasons=self._fetch(provider,f'seasons/{competition_path}',
+                                lambda competition_path=competition_path:client.seasons(competition_path))
+                            found=[s for s in seasons if season_key(s['name'])==season_key(season)]
+                            if len(found)!=1:
+                                raise ValueError(f'WhoScored season {season} is not uniquely available')
+                            path=found[0]['path']
+                            multi_stage=competition.name in ('Champions League','Europa League')
+                            stage_key=('stages-v2/' if multi_stage else 'stage/')+path
+                            discovered=self._fetch(provider,stage_key,lambda path=path:client.season_stages(path))
+                            stages.extend([discovered] if isinstance(discovered,int) else discovered)
+                    for stage in dict.fromkeys(stages):
+                        for month in months_between(selected):
+                            raw=self._fetch(provider,f'fixtures/{stage}/{month}',
+                                lambda stage=stage,month=month:client.season_events(stage,month))
+                            for row in raw:
+                                if row.get('status')==6:events[row['id']]=whoscored_fixture(row)
                     result[provider]=list(events.values())
                 if len({e['id'] for e in result[provider]})!=len(result[provider]):raise ValueError('Duplicate fixture IDs')
                 self.report(f'{provider}: {len(result[provider])} finished fixtures available.')
@@ -340,7 +340,7 @@ class SeasonRunner:
                     'season':canonical,'season_id':season['id'],
                     'baseline_provider':'fotmob','id_namespace':'fotmob'}
         path=self.directory/'config.json'
-        if path.exists() and json.loads(path.read_text())!=config:raise ValueError('Output folder belongs to another season')
+        if path.exists() and json.loads(path.read_text(encoding='utf-8'))!=config:raise ValueError('Output folder belongs to another season')
         atomic_json(path,config)
         events=sorted((e for e in events if e['status']['type']=='finished'),key=lambda e:(e['startTimestamp'],e['id']))
         if len({e['id'] for e in events})!=len(events):raise ValueError('Duplicate baseline fixture IDs')
@@ -455,10 +455,10 @@ class SeasonRunner:
         Old checkpoint snapshots remain available. Missing per-player statistics
         are surfaced in data_quality.csv rather than dropping the whole fixture.
         """
-        config=json.loads((self.directory/'config.json').read_text())
+        config=json.loads((self.directory/'config.json').read_text(encoding='utf-8'))
         if self.baseline_provider!='fotmob' or self.providers!=('fotmob',) or config.get('baseline_provider')!='fotmob':
             raise ValueError('Cached rebuild requires a FotMob-only baseline collection')
-        events=json.loads((self.directory/'schedule.json').read_text())['events']
+        events=json.loads((self.directory/'schedule.json').read_text(encoding='utf-8'))['events']
         statuses=[]
         for index,event in enumerate(events,1):
             mid=event['id'];path=self.cache.path('fotmob',f'match/{mid}')
@@ -483,7 +483,7 @@ class SeasonRunner:
         for row in statuses:row['attempts']=old.get(row['match_id'],{}).get('attempts',0)
         atomic_csv(pd.DataFrame(statuses),old_path)
         summary_path=self.directory/'run_summary.json'
-        summary=json.loads(summary_path.read_text()) if summary_path.exists() else {}
+        summary=json.loads(summary_path.read_text(encoding='utf-8')) if summary_path.exists() else {}
         summary.update(complete=len(events),partial=0,failed_or_pending=0,
                        rebuilt_from_cache_at=now(),data_quality_warnings=len(self.data_quality_warnings))
         atomic_json(summary_path,summary)
@@ -491,13 +491,13 @@ class SeasonRunner:
 
     def _export(self,events,*,compile_events=True):
         started=time.monotonic();clear_json_cache()
-        config=json.loads((self.directory/'config.json').read_text())
+        config=json.loads((self.directory/'config.json').read_text(encoding='utf-8'))
         competition=competition_by_name(config['competition'])
         events=with_reviewed_schedule_results(
             competition,config['season'],config['season_id'],events)
         events=sorted(events,key=lambda event:(event['startTimestamp'],event['id']))
         schedule_path=self.directory/'schedule.json'
-        fetched_at=(json.loads(schedule_path.read_text()).get('fetched_at')
+        fetched_at=(json.loads(schedule_path.read_text(encoding='utf-8')).get('fetched_at')
                     if schedule_path.exists() else now())
         atomic_json(schedule_path,{'fetched_at':fetched_at,'events':events})
         export_events=[event for event in events if not is_qualification_event(event)]
@@ -581,7 +581,8 @@ class SeasonRunner:
                         'competition':match.season.competition.name,
                         'team':p.team.name,'opponent':p.opponent.name,'player_id':p.player.id,'player_name':p.player.name,
                         'starter':p.starter,'position':p.position,'minutes_played':p.minutes_played}
-                    row={**context,**p.stats.raw.get('_combined',{})}
+                    row={**context,**p.stats.raw.get('_combined',{}),
+                         'team_id':p.team.id,'opponent_id':p.opponent.id}
                     appeared=p.starter or p.did_play
                     row['appeared']=appeared
                     fot=p.stats.raw.get('_providers',{}).get('fotmob',{})
@@ -609,7 +610,7 @@ class SeasonRunner:
                             'provider_match_id':match.metadata['provider_match_ids'][provider],'identity_method':entry['identity_method']})
             if match_index==len(ordered) or match_index%25==0:
                 progress(f'[export 5/5] Processed {match_index}/{len(ordered)} matches.')
-        atomic_csv(pd.DataFrame(rows) if rows else pd.DataFrame(columns=context_columns+['appeared']),
+        atomic_csv(pd.DataFrame(rows).reindex(columns=PLAYER_MATCH_COLUMNS),
                    self.directory/'player_match_stats.csv')
         atomic_csv(pd.DataFrame(sources,columns=context_columns+['metric','provider','value']),
                    self.directory/'provenance.csv')
@@ -639,7 +640,7 @@ class SeasonRunner:
         status_path=self.directory/'collection.csv'
         if status_path.exists():
             status=pd.read_csv(status_path,keep_default_na=False)
-            status['competition']=self.dataset.matches[next(iter(self.dataset.matches))].season.competition.name if self.dataset.matches else json.loads((self.directory/'config.json').read_text())['competition']
+            status['competition']=self.dataset.matches[next(iter(self.dataset.matches))].season.competition.name if self.dataset.matches else json.loads((self.directory/'config.json').read_text(encoding='utf-8'))['competition']
             columns=['match_id','competition']+[c for c in status.columns if c not in ('match_id','competition')]
             atomic_csv(status[columns],status_path)
         for obsolete in ('player_stats.csv','player_match_features.csv','spatial_features.csv','touches.csv',
@@ -655,7 +656,7 @@ class SeasonRunner:
         """Add schedule-only awarded fixtures to result exports without inventing detail data."""
         awarded=[event for event in events if _is_awarded(event)]
         if not awarded:return
-        config=json.loads((self.directory/'config.json').read_text())
+        config=json.loads((self.directory/'config.json').read_text(encoding='utf-8'))
         loader=SofaScoreLoader(None,dataset=self.dataset)
         season=loader.select_season(config['competition_id'],config['competition'],
                                     config['season_id'],config['season'])

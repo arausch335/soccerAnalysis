@@ -23,6 +23,16 @@ are needed.
 caches, and cooldowns stay under `paths.data`. Completed seasons are skipped
 during collection but included when dataset building is enabled.
 
+## Standalone scrapers and coverage review
+
+Run `whoscored_events.py` for WhoScored events, `fotmob_player_stats.py` for
+FotMob-only player stats, and `review_data.py` for separate WhoScored/Sofascore
+match coverage for every configured season. Both scrapers print the competition,
+season, match ID, and team names. FotMob output uses `fmb_` columns and IDs and
+keeps unavailable normal-schema columns as NA. All share `config/settings.yaml`.
+
+[Output paths, schema, direct WhoScored stage IDs, and coverage definitions](docs/PROVIDER_COLLECTION.md).
+
 ## One dataset-building step
 
 Run **`dataset_builder.py`** to rebuild all saved seasons without scraping.

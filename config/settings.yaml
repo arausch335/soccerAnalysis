@@ -24,6 +24,10 @@ whoscored:
   # Random delay between request starts; cached responses do not need to wait.
   request_delay_min_seconds: 15
   request_delay_max_seconds: 30
+  # Optional verified stage IDs skip competition/season HTML discovery.
+  # Include ALL main-competition stages for cups. Never use a tournament ID here.
+  # Example key format: "La Liga 2023-2024": [verified_stage_id]
+  stage_ids: {}
   refresh_schedule: false     # Refresh the standalone scraper's saved fixtures
 
 api_test:

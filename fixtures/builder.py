@@ -17,6 +17,7 @@ import re
 from filelock import FileLock
 import pandas as pd
 
+from providers.sofascore_ids import SOFASCORE_COMPETITION_IDS
 from providers.events import fotmob_fixture
 from providers.safeClient import SafeFotMobClient, SafeSofaScoreClient
 from collection.runner import atomic_csv
@@ -49,21 +50,21 @@ class FixtureCompetition:
 # SofaScore unique-tournament IDs. Qualifying rounds of the UEFA tournaments
 # are included in the same season endpoint and identified per event.
 COMPETITIONS = (
-    FixtureCompetition('Premier League', 17, fotmob_id=47),
-    FixtureCompetition('Championship', 18, fotmob_id=48),
-    FixtureCompetition('La Liga', 8, fotmob_id=87),
-    FixtureCompetition('La Liga 2', 54, fotmob_id=140),
-    FixtureCompetition('Bundesliga', 35, fotmob_id=54),
-    FixtureCompetition('2. Bundesliga', 44, fotmob_id=146),
-    FixtureCompetition('Serie A', 23, fotmob_id=55),
-    FixtureCompetition('Serie B', 53, fotmob_id=86),
-    FixtureCompetition('Ligue 1', 34, fotmob_id=53),
-    FixtureCompetition('Ligue 2', 182, fotmob_id=110),
-    FixtureCompetition('Champions League', 7, fotmob_id=42,
+    FixtureCompetition('Premier League', SOFASCORE_COMPETITION_IDS['Premier League'], fotmob_id=47),
+    FixtureCompetition('Championship', SOFASCORE_COMPETITION_IDS['Championship'], fotmob_id=48),
+    FixtureCompetition('La Liga', SOFASCORE_COMPETITION_IDS['La Liga'], fotmob_id=87),
+    FixtureCompetition('La Liga 2', SOFASCORE_COMPETITION_IDS['La Liga 2'], fotmob_id=140),
+    FixtureCompetition('Bundesliga', SOFASCORE_COMPETITION_IDS['Bundesliga'], fotmob_id=54),
+    FixtureCompetition('2. Bundesliga', SOFASCORE_COMPETITION_IDS['2. Bundesliga'], fotmob_id=146),
+    FixtureCompetition('Serie A', SOFASCORE_COMPETITION_IDS['Serie A'], fotmob_id=55),
+    FixtureCompetition('Serie B', SOFASCORE_COMPETITION_IDS['Serie B'], fotmob_id=86),
+    FixtureCompetition('Ligue 1', SOFASCORE_COMPETITION_IDS['Ligue 1'], fotmob_id=53),
+    FixtureCompetition('Ligue 2', SOFASCORE_COMPETITION_IDS['Ligue 2'], fotmob_id=110),
+    FixtureCompetition('Champions League', SOFASCORE_COMPETITION_IDS['Champions League'], fotmob_id=42,
                        fotmob_qualification_id=10611),
-    FixtureCompetition('Europa League', 679, fotmob_id=73,
+    FixtureCompetition('Europa League', SOFASCORE_COMPETITION_IDS['Europa League'], fotmob_id=73,
                        fotmob_qualification_id=10613),
-    FixtureCompetition('Conference League', 17015, 2021, 10216, 10615),
+    FixtureCompetition('Conference League', SOFASCORE_COMPETITION_IDS['Conference League'], 2021, 10216, 10615),
 )
 EUROPEAN_COMPETITIONS = {'Champions League', 'Europa League', 'Conference League'}
 
@@ -82,7 +83,7 @@ def _slug(name):
 
 
 def _events_from_checkpoint(path, provider, competition_id, season_id):
-    saved=json.loads(path.read_text())
+    saved=json.loads(path.read_text(encoding='utf-8'))
     if (saved.get('provider') != provider or
             saved.get('competition_id') != competition_id or
             saved.get('season_id') != season_id):
@@ -156,7 +157,7 @@ def _schedule_events(client, competition, start, season_id, *, provider,
         # statistics, these contain both main-tournament and qualifying events.
         saved=data_root/_slug(competition.name)/label/'schedule.json'
         if provider=='sofascore' and saved.exists() and not refresh:
-            events=json.loads(saved.read_text())['events']
+            events=json.loads(saved.read_text(encoding='utf-8'))['events']
         else:
             client.refresh_cache=refresh
             try:

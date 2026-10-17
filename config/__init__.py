@@ -81,8 +81,16 @@ def load_config(path=None, *, project_root=None):
     match_ids = _section(api_test['match_ids'],supported,'api_test.match_ids')
     if any(type(value) is not int or value < 1 for value in match_ids.values()):
         raise ConfigError('api_test.match_ids must be positive integer provider IDs')
+    if isinstance(document['whoscored'],dict):
+        document['whoscored'].setdefault('stage_ids',{})
     whoscored = _section(document['whoscored'], (
-        'request_delay_min_seconds','request_delay_max_seconds','refresh_schedule'), 'whoscored')
+        'request_delay_min_seconds','request_delay_max_seconds','refresh_schedule','stage_ids'), 'whoscored')
+    stage_ids=whoscored['stage_ids']
+    if (not isinstance(stage_ids,dict) or any(
+            not isinstance(key,str) or not isinstance(ids,list) or not ids
+            or any(type(value) is not int or value < 1 for value in ids)
+            for key,ids in stage_ids.items())):
+        raise ConfigError('whoscored.stage_ids must map competition season labels to nonempty lists of positive IDs')
     minimum,maximum = (whoscored[key] for key in (
         'request_delay_min_seconds','request_delay_max_seconds'))
     if (any(type(value) not in (int,float) or not math.isfinite(value) or value <= 0
@@ -120,6 +128,7 @@ def load_config(path=None, *, project_root=None):
         'SOFASCORE_SPATIAL_CAPTURE': collection['spatial_capture'],
         'BUILD_DATASET': _boolean(collection['build_dataset'], 'collection.build_dataset'),
         'COLLECTION_NAMES': tuple(_strings(dataset['collections'], 'dataset.collections', allow_empty=True)),
+        'WHOSCORED_STAGE_IDS':stage_ids,
         'WHOSCORED_MIN_DELAY':minimum,
         'API_TEST_PROVIDERS':providers,
         'API_TEST_MATCH_IDS':dict(match_ids),
