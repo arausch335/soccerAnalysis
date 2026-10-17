@@ -36,8 +36,8 @@ collection:
     attempts: 2                   # Never retries 401/403/429
   browser:
     channel: chrome              # Installed chrome/msedge, or Playwright chromium
-    delay_min_seconds: 0.5        # Set both to 0 to remove added action spacing
-    delay_max_seconds: 1.5
+    delay_min_seconds: 2          # Spacing between navigation, clicks and resource fetches
+    delay_max_seconds: 4
     timeout_seconds: 30
     manual_wait_seconds: 120
   whoscored:

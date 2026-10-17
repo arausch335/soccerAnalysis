@@ -14,7 +14,7 @@ from .sofaScoreClient import SofaScoreClient
 
 API_PATH=re.compile(r'/(?:api/v1/)(event/\d+(?:/.*)?|unique-tournament/\d+(?:/.*)?)$')
 AD_HOSTS=('doubleclick.net','googlesyndication.com','googleadservices.com','adnxs.com','adsystem.com','outbrain.com','taboola.com','criteo.com','criteo.net','seedtag.com','missena.io')
-CHALLENGE=re.compile(r'verify you are human|access denied|checking your browser|security verification',re.I)
+CHALLENGE=re.compile(r'verif(?:y|ying) you are (?:a )?human|access denied|checking your browser|security verification|just a moment',re.I)
 
 
 def validate_payload(endpoint,payload):
@@ -66,6 +66,14 @@ class BrowserGate:
         self.gate.traffic_path=self.root/'safety'/'browser_traffic.json'
         from filelock import FileLock
         self.gate.lock=FileLock(str(self.gate.traffic_path)+'.lock')
+        # Older browser runs persisted verification failures as day-long bans.
+        # Retire only those 403 entries; retain rate limits and other failures.
+        with self.gate.lock:
+            state=self.gate.read()
+            if (self.gate._blocked_status(state)==403 and
+                    'HTTP 429' not in state.get('reason','')):
+                for key in ('blocked_until','reason','status_code'):state.pop(key,None)
+                atomic_json(self.gate.path,state)
 
     def _shared(self):
         path=self.root/'safety'/'sofascore.json'
@@ -83,6 +91,7 @@ class BrowserGate:
         self.gate.wait(endpoint)
 
     def block(self,error):
+        if error.status_code==403:return
         self.gate.block(error)
         if error.status_code==429:
             from .safeClient import PersistentGate
@@ -200,32 +209,46 @@ class BrowserSofaScoreClient(SofaScoreClient):
                       'Close ad','Close advertisement','Dismiss ad','Skip ad',
                       'Close slide-in banner','Dismiss banner'):
             button=self.page.get_by_role('button',name=label,exact=True)
-            if button.count() and button.first.is_visible():button.first.click(timeout=2500)
+            if button.count() and button.first.is_visible():
+                self.request_gate.wait('dismiss browser overlay')
+                button.first.click(timeout=2500)
         for frame in self.page.frames:
             if frame==self.page.main_frame:continue
             host=urlsplit(frame.url).hostname or ''
             if not any(host==ad or host.endswith('.'+ad) for ad in AD_HOSTS):continue
             for label in ('Close ad','Close advertisement','Dismiss ad'):
                 control=frame.get_by_role('button',name=label,exact=True)
-                if control.count() and control.first.is_visible():control.first.click(timeout=1500)
+                if control.count() and control.first.is_visible():
+                    self.request_gate.wait('dismiss browser advertisement')
+                    control.first.click(timeout=1500)
 
     def _click(self,locator):
         self._dismiss()
+        self.request_gate.wait('website click')
         try:locator.click(timeout=min(self.timeout,5000))
         except Exception:
             # A late interstitial may have appeared after the initial check.
             self._dismiss()
+            self.request_gate.wait('website click retry')
             locator.click(timeout=min(self.timeout,5000))
 
-    def _challenge(self):
+    def _challenge(self,*,force=False,endpoint=None):
         text=self.page.locator('body').inner_text(timeout=5000)
-        if not CHALLENGE.search(text):return
-        self.report('Sofascore needs manual attention in the visible browser; collection is waiting.',flush=True)
+        visible=bool(CHALLENGE.search(text))
+        if not visible and not force:return False
+        self.report('Sofascore needs manual verification. Complete it yourself in the visible browser; collection is waiting. No 24-hour browser cooldown applies.',flush=True)
         try:
-            self.page.wait_for_function("() => !/verify you are human|access denied|checking your browser|security verification/i.test(document.body?.innerText || '')",
-                timeout=float(self.settings['manual_wait_seconds'])*1000)
+            if visible:
+                self.page.wait_for_function("pattern => !new RegExp(pattern,'i').test(document.body?.innerText || '')",
+                    arg=CHALLENGE.pattern,timeout=float(self.settings['manual_wait_seconds'])*1000)
+            else:
+                # An API 403 or verification iframe may leave no body marker.
+                # Human acknowledgement avoids polling a denied resource.
+                input('Complete verification in the browser (reload the match page there if needed), then press Enter here to retry once: ')
+            self.page.wait_for_timeout(300)
         except Exception as exc:
-            raise ProviderRequestError('Browser verification not completed; resume later',status_code=403) from exc
+            raise ProviderRequestError('Browser verification not completed; run again when ready. No timed browser cooldown was set.',endpoint=endpoint,status_code=403,attempts=1) from exc
+        return True
 
     def _navigate(self,url):
         self.request_gate.wait('website navigation');self._start()
@@ -248,7 +271,7 @@ class BrowserSofaScoreClient(SofaScoreClient):
 
     def _close_player(self):
         close=self.page.get_by_role('button',name='Close',exact=True)
-        if close.count() and close.last.is_visible():close.last.click(timeout=5000)
+        if close.count() and close.last.is_visible():self._click(close.last)
         self.active_player=None
 
     def _tab(self,name):
@@ -308,7 +331,9 @@ class BrowserSofaScoreClient(SofaScoreClient):
         if self.offline:raise ProviderRequestError('Offline browser cache miss: '+endpoint,endpoint=endpoint)
         self.request_gate.wait(endpoint);self._start()
         try:
-            record=self.responses.get((endpoint,urlencode(params or {},doseq=True)))
+            response_key=(endpoint,urlencode(params or {},doseq=True))
+            verified=False
+            record=self.responses.get(response_key)
             if record and record.get('status')==200 and not self.refresh_cache:
                 return validate_payload(endpoint,record['payload'])
             try:self._drive(endpoint)
@@ -320,12 +345,18 @@ class BrowserSofaScoreClient(SofaScoreClient):
                 if not self.page.url.startswith('https://www.sofascore.com/'):raise
                 self._challenge()
             self.page.wait_for_timeout(300)
-            record=self.responses.get((endpoint,urlencode(params or {},doseq=True)))
+            record=self.responses.get(response_key)
             if record and record.get('status')==200:
                 return validate_payload(endpoint,record['payload'])
             if record and record.get('status') in (401,403,429):
-                if record['status']==403:self._challenge()
-                self._fail_status(endpoint,record['status'],record.get('headers',{}))
+                if record['status']==403:
+                    self._challenge(force=True,endpoint=endpoint);verified=True
+                    record=self.responses.get(response_key)
+                    if record and record.get('status')==200:
+                        return validate_payload(endpoint,record['payload'])
+                    if record and record.get('status') in (401,429):
+                        self._fail_status(endpoint,record['status'],record.get('headers',{}))
+                else:self._fail_status(endpoint,record['status'],record.get('headers',{}))
             if record and record.get('status')==404:
                 self._save(endpoint,None,params=params,method='website_response',status=404)
                 raise ProviderRequestError('Sofascore website HTTP 404: '+endpoint,endpoint=endpoint,status_code=404)
@@ -334,16 +365,15 @@ class BrowserSofaScoreClient(SofaScoreClient):
             # This remains a browser fetch, not a separate HTTP session.
             if urlsplit(self.page.url).hostname!='www.sofascore.com':
                 raise ProviderError('Browser left Sofascore; return to the match page before resuming')
-            result=self.page.evaluate('''async ({path,timeout}) => {
-                const controller=new AbortController();
-                const timer=setTimeout(()=>controller.abort(),timeout);
-                try {
-                    const r=await fetch('/api/v1/'+path,{credentials:'same-origin',signal:controller.signal});
-                    const text=await r.text();
-                    let payload=null;try {payload=JSON.parse(text);} catch (_) {}
-                    return {status:r.status,payload,retryAfter:r.headers.get('Retry-After')};
-                } finally {clearTimeout(timer);}
-            }''',{'path':endpoint+('?' + urlencode(params,doseq=True) if params else ''),'timeout':self.timeout})
+            result=self._browser_fetch(endpoint,params)
+            if result['status']==403 and not verified:
+                self._challenge(force=True,endpoint=endpoint)
+                record=self.responses.get(response_key)
+                if record and record.get('status')==200:
+                    return validate_payload(endpoint,record['payload'])
+                if record and record.get('status') in (401,429):
+                    self._fail_status(endpoint,record['status'],record.get('headers',{}))
+                result=self._browser_fetch(endpoint,params)
             status=result['status']
             if status!=200:
                 if status==404:self._save(endpoint,None,params=params,method='browser_fetch',status=404)
@@ -357,9 +387,26 @@ class BrowserSofaScoreClient(SofaScoreClient):
             self._diagnostic(endpoint)
             raise ProviderRequestError(f'Browser data unavailable: {endpoint}; inspect browser_diagnostics',endpoint=endpoint,attempts=1) from exc
 
+    def _browser_fetch(self,endpoint,params):
+        if urlsplit(self.page.url).hostname!='www.sofascore.com':
+            raise ProviderError('Browser left Sofascore; return to the match page before resuming')
+        self.request_gate.wait('browser resource: '+endpoint)
+        return self.page.evaluate('''async ({path,timeout}) => {
+                const controller=new AbortController();
+                const timer=setTimeout(()=>controller.abort(),timeout);
+                try {
+                    const r=await fetch('/api/v1/'+path,{credentials:'same-origin',signal:controller.signal});
+                    const text=await r.text();
+                    let payload=null;try {payload=JSON.parse(text);} catch (_) {}
+                    return {status:r.status,payload,retryAfter:r.headers.get('Retry-After')};
+                } finally {clearTimeout(timer);}
+            }''',{'path':endpoint+('?' + urlencode(params,doseq=True) if params else ''),'timeout':self.timeout})
+
     def _fail_status(self,endpoint,status,headers=None):
         from types import SimpleNamespace
         error=ProviderRequestError(f'Sofascore browser HTTP {status}: {endpoint}',endpoint=endpoint,status_code=status,attempts=1)
+        if status==403:
+            error=ProviderRequestError(f'Sofascore browser verification/access still unresolved: {endpoint}; run again after manual verification. No timed browser cooldown was set.',endpoint=endpoint,status_code=403,attempts=1)
         error.retry_after=HttpClient._retry_delay(SimpleNamespace(headers=headers or {}),0)
         if status in (401,403,429):self.request_gate.block(error)
         raise error
