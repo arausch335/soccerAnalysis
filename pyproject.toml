@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = ["curl_cffi>=0.13,<0.17", "pandas>=2.2,<4", "matplotlib>=3.8,<4", "filelock>=3.13,<4", "PyYAML>=6,<7"]
 
 [project.optional-dependencies]
+browser = ["playwright>=1.50,<2"]
 analysis = ["scipy", "scikit-learn", "plotly", "pyarrow"]
 
 [project.scripts]
@@ -17,12 +18,13 @@ soccer-analysis = "main:main"
 soccer-dataset = "dataset_builder:main"
 soccer-fixtures = "fixtures.collector:main"
 soccer-whoscored-events = "whoscored_events:main"
+soccer-sofascore-browser = "sofascore_browser:main"
 soccer-fotmob-players = "fotmob_player_stats:main"
 soccer-data-review = "review_data:main"
 soccer-api-test = "api_test:main"
 
 [tool.setuptools]
-py-modules = ["main", "dataset_builder", "whoscored_events", "api_test", "fotmob_player_stats", "review_data"]
+py-modules = ["main", "dataset_builder", "whoscored_events", "api_test", "fotmob_player_stats", "review_data", "sofascore_browser"]
 
 [tool.setuptools.packages.find]
 include = ["config", "analysis*", "collection*", "fixtures*", "models*", "providers*", "storage*", "tools*"]

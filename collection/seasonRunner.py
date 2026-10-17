@@ -1,5 +1,4 @@
 """Resumable full-season collection, with independent per-match checkpoints."""
-from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
@@ -25,6 +24,7 @@ from .spatial import (RAW_DRIBBLE_RECORD_COLUMNS, RAW_PASS_RECORD_COLUMNS,
                       extract_raw_passes)
 from .spatialManifest import SPATIAL_MAP_COLUMNS, match_map_rows, player_map_rows
 from .fotmobExports import match_payload, source_rows
+from .sofascoreTeams import team_stat_rows as sofascore_team_rows, TEAM_STAT_COLUMNS
 from .playerStatsSchema import PLAYER_MATCH_COLUMNS
 from .jsonFiles import clear_json_cache, read_json
 from .whoScoredExports import event_rows as whoscored_event_rows, match_payload as whoscored_match_payload, EVENT_COLUMNS
@@ -103,6 +103,8 @@ class SeasonRunner:
         if baseline_provider=='sofascore' and not self.spatial_clients:
             raise ValueError('At least one Sofascore spatial client is required')
         self._sofascore_blocked=False
+        coverage_path=self.directory/'browser_coverage.json'
+        self.browser_coverage=json.loads(coverage_path.read_text(encoding='utf-8')) if coverage_path.exists() else {}
         self.capability_path=self.directory/'capabilities.json'
         self.capabilities=json.loads(self.capability_path.read_text(encoding='utf-8')) if self.capability_path.exists() else {}
 
@@ -142,25 +144,18 @@ class SeasonRunner:
         errors=[];blocked=False
         if not requests:return errors,blocked,[]
         completed=[]
-        workers=1  # One request at a time, including spatial requests.
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            for offset in range(0,len(requests),workers):
-                batch=requests[offset:offset+workers]
-                futures=[pool.submit(self._player_spatial_request,self.spatial_clients[index],
-                                     match.id,pid,name)
-                         for index,(name,pid) in enumerate(batch)]
-                results=[future.result() for future in futures]
-                for pid,name,state,path,exc in results:
-                    player_status=status.setdefault(str(pid),{})
-                    player_files=files.setdefault(str(pid),{})
-                    player_status[name]=state
-                    if path is not None:player_files[name]=path
-                    if exc is not None and exc.status_code!=404:
-                        errors.append(f'{name} player {pid}: {exc}')
-                    if exc is not None and exc.status_code in (401,403,429):blocked=True
-                    if exc is not None and exc.status_code==403:self._sofascore_blocked=True
-                    completed.append((pid,name,state,exc))
-                if blocked:break
+        # Browser objects are thread-affine. One caller thread also gives the
+        # intended sequential behavior for HTTP clients without an executor.
+        for name,pid in requests:
+            pid,name,state,path,exc=self._player_spatial_request(
+                self.spatial_clients[0],match.id,pid,name)
+            status.setdefault(str(pid),{})[name]=state
+            if path is not None:files.setdefault(str(pid),{})[name]=path
+            if exc is not None and exc.status_code!=404:errors.append(f'{name} player {pid}: {exc}')
+            if exc is not None and exc.status_code in (401,403,429):blocked=True
+            if exc is not None and exc.status_code==403:self._sofascore_blocked=True
+            completed.append((pid,name,state,exc))
+            if blocked:break
         return errors,blocked,completed
 
     def _fixtures(self,competition,season,selected):
@@ -359,6 +354,8 @@ class SeasonRunner:
         loaders={'fotmob':FotMobLoader(identity_resolver=self.identity_resolver),
                  'whoscored':WhoScoredLoader(identity_resolver=self.identity_resolver)}
         for index,event in enumerate(selected,1):
+            if hasattr(sofa,'register_event'):sofa.register_event(event)
+            self.report(f"{competition.name} {season_label(canonical)} | match {event['id']} | {event['homeTeam']['name']} vs {event['awayTeam']['name']}")
             mid=event['id'];store=PandasStore(self.directory/'match_checkpoints'/str(mid));entry=statuses[mid]
             if store.exists and not self.refresh:
                 dataset=store.from_csv();match=dataset.matches[mid]
@@ -367,7 +364,8 @@ class SeasonRunner:
                 # aliases, decoder fixes, and previously skipped sources can
                 # backfill the checkpoint from cached or newly fetched data.
                 if (all(match.metadata.get('provider_status',{}).get(p)=='complete' for p in self.providers)
-                        and self._spatial_done(match)):
+                        and self._spatial_done(match)
+                        and (not getattr(sofa,'uses_browser',False) or match.metadata.get('browser_details',{}).get('complete'))):
                     entry.update(status='complete',error='')
                     self.report(f'[{index}/{len(selected)}] Already complete: {mid}')
                     continue
@@ -402,7 +400,16 @@ class SeasonRunner:
                         break
                     continue
             errors=[]
-            if self.baseline_provider=='sofascore':errors.extend(self._collect_spatial(match,event,sofa))
+            browser_done=False
+            if self.baseline_provider=='sofascore' and getattr(sofa,'uses_browser',False):
+                errors.extend(self._browser_match_details(sofa,event,match));browser_done=True
+            if self.baseline_provider=='sofascore' and not self._sofascore_blocked:
+                errors.extend(self._collect_spatial(match,event,sofa))
+                # Fallback can begin on an optional spatial request after HTTP
+                # lineups succeeded. The same match still needs full browser data.
+                if getattr(sofa,'uses_browser',False) and not browser_done and not self._sofascore_blocked:
+                    errors.extend(self._browser_match_details(sofa,event,match))
+                    if not self._sofascore_blocked:errors.extend(self._collect_spatial(match,event,sofa))
             for provider in self.providers:
                 if provider==self.baseline_provider:continue
                 if match.metadata['provider_status'].get(provider)=='complete' and not self.refresh:continue
@@ -422,7 +429,12 @@ class SeasonRunner:
                     errors.append(f'{provider}: {exc}');match.metadata['provider_status'][provider]='failed'
                     if isinstance(exc,ProviderRequestError) and exc.status_code in (401,403,429):disabled[provider]=str(exc)
             # An I/O failure propagates; never record an unsaved match as complete.
+            if hasattr(sofa,'audit'):
+                match.metadata['collection_transport']={key:value for key,value in sofa.audit.items()
+                    if key==f'event/{mid}' or key.startswith(f'event/{mid}/')}
             store.to_csv(dataset)
+            if self.browser_coverage:
+                atomic_json(self.directory/'browser_coverage.json',self.browser_coverage)
             entry.update(status='complete' if not errors else 'partial',error='; '.join(errors),
                          updated_at=now(),attempts=int(entry.get('attempts',0))+1)
             atomic_csv(pd.DataFrame(statuses.values()),status_path)
@@ -448,6 +460,47 @@ class SeasonRunner:
             'baseline_provider':self.baseline_provider,'providers':list(self.providers),
             'csvs_built':bool(build_csvs),'events_csv_compiled':bool(build_csvs and compile_events)})
         return result
+
+    def _browser_match_details(self,sofa,event,match):
+        mid=event['id']
+        try:
+            payload=self._fetch('sofascore',f'lineups/{mid}',lambda:sofa.lineups(mid))
+            detailed,coverage=sofa.collect_details(event,payload)
+            self._apply_browser_details(match,detailed)
+            self._fetch('sofascore',f'lineups/{mid}',lambda:detailed,refresh=True)
+            if hasattr(sofa,'match_payloads'):
+                for label,payload in sofa.match_payloads(mid).items():
+                    key=f'{label}/{mid}'
+                    self._fetch('sofascore',key,lambda payload=payload:payload,refresh=True)
+                    match.metadata.setdefault('raw_response_files',{})['sofascore_'+label]=str(self.cache.path('sofascore',key).relative_to(self.directory))
+            match.metadata['browser_details']={**coverage,'complete':not coverage['errors']}
+            errors=coverage['errors']
+        except DATA_ERRORS as exc:
+            errors=[f'browser match details: {exc}']
+            match.metadata['browser_details']={'complete':False,'errors':[str(exc)]}
+            if isinstance(exc,ProviderRequestError) and exc.status_code in (401,403,429):self._sofascore_blocked=True
+        self.browser_coverage[str(mid)]=match.metadata['browser_details']
+        return errors
+
+    @staticmethod
+    def _apply_browser_details(match,lineups):
+        for side in ('home','away'):
+            lineup=getattr(match,side+'_lineup')
+            if {p['player']['id'] for p in lineups[side]['players']}!={p.player.id for p in lineup.players}:
+                raise ValueError('Browser detail lineup differs from checkpoint identities')
+        for side in ('home','away'):
+            lineup=getattr(match,side+'_lineup')
+            entries={p['player']['id']:p for p in lineups[side]['players']}
+            for appearance in lineup.players:
+                stats=entries[appearance.player.id].get('statistics',{})
+                appearance.stats.raw.update(stats)
+                if stats.get('minutesPlayed') is not None:appearance.minutes_played=stats['minutesPlayed']
+                providers=appearance.stats.raw.get('_providers',{})
+                combined=synthesize(appearance.stats.raw,providers,appearance.starter or appearance.did_play)
+                appearance.stats.raw['_combined']=combined['metrics']
+                appearance.stats.raw['_combined_sources']=combined['sources']
+                appearance.stats.raw['_source_differences']=combined['differences']
+                appearance.stats.actions=combined['actions']
 
     def rebuild_cached(self):
         """Re-decode a FotMob-only collection from saved responses, without HTTP.
@@ -539,7 +592,7 @@ class SeasonRunner:
         PandasStore(self.directory/'dataset').to_csv(self.dataset)
         context_columns=['match_id','date','season','competition','team','opponent','player_id','player_name','starter','position','minutes_played']
         rows=[];sources=[];differences=[];identities=[];spatial_maps=[];passes=[];dribbles=[]
-        shots=[];fotmob_raw=[];fotmob_teams=[];quality=[]
+        shots=[];fotmob_raw=[];fotmob_teams=[];sofascore_teams=[];quality=[]
         whoscored_events=[];identity_mismatches=[];lineup_differences=[];team_results=[]
         progress('[export 5/5] Building flat analysis CSVs...')
         ordered=sorted(self.dataset.matches.values(),key=lambda m:(m.kickoff,m.id))
@@ -559,6 +612,7 @@ class SeasonRunner:
             saved=match_payload(match,self.directory)
             shot_rows,stat_rows,team_rows=source_rows(match,saved)
             shots.extend(shot_rows);fotmob_raw.extend(stat_rows);fotmob_teams.extend(team_rows)
+            sofascore_teams.extend(sofascore_team_rows(match,self.directory))
             team_results.extend(_team_result_rows(match,events_by_id.get(match.id,{}),team_rows))
             spatial_maps.extend(match_map_rows(match,self.directory))
             if compile_events:
@@ -633,6 +687,8 @@ class SeasonRunner:
         atomic_csv(pd.DataFrame(shots) if shots else pd.DataFrame(columns=['match_id','competition','provider','provider_match_id','id','playerId','teamId']),self.directory/'shots.csv')
         atomic_csv(pd.DataFrame(fotmob_raw) if fotmob_raw else pd.DataFrame(columns=['match_id','competition','provider_player_id','field','raw_value']),self.directory/'fotmob_raw_player_stats.csv')
         atomic_csv(pd.DataFrame(fotmob_teams) if fotmob_teams else pd.DataFrame(columns=['match_id','date','season','competition','provider','provider_match_id','fetched_at','side','provider_team_id','team','matchweek','period','group','field','label','value','format','type']),self.directory/'fotmob_team_statistics.csv')
+        atomic_csv(pd.DataFrame(sofascore_teams,columns=TEAM_STAT_COLUMNS),self.directory/'sofascore_team_statistics.csv')
+        atomic_csv(pd.DataFrame([*fotmob_teams,*sofascore_teams],columns=TEAM_STAT_COLUMNS),self.directory/'team_match_statistics.csv')
         atomic_csv(pd.DataFrame(team_results,columns=TEAM_RESULT_COLUMNS),self.directory/'team_match_results.csv')
         atomic_csv(pd.DataFrame(quality,columns=context_columns+['provider','provider_player_id','issue','appeared']),self.directory/'data_quality.csv')
         if compile_events:

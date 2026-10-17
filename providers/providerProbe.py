@@ -31,7 +31,7 @@ def probe_provider(client, provider, match_id):
             if not valid or len(names) != 2 or not all(isinstance(name,str) and name for name in names):
                 return False,f'NOT GOOD: {label} response is missing the requested match {match_id} or its data.'
         except ProviderRequestError as exc:
-            if exc.status_code == 429 and exc.attempts == 0:
+            if exc.status_code in (401,403,429) and exc.attempts == 0:
                 return False,f'NOT TESTED: {label} cooldown is active; no request sent. {exc}'
             return False,f'NOT GOOD: {label} match {match_id} failed: {exc}'
         except (ProviderError,ValueError,TypeError,KeyError,AttributeError) as exc:

@@ -11,12 +11,14 @@ def probe_match(client, match_id):
         raise ValueError('match ID must be a positive integer')
     # A cached success is not evidence that Sofascore is accessible now.
     refresh = client.refresh_cache
+    attempts=getattr(client,'max_retries',None)
+    if isinstance(attempts,int):client.max_retries=1
     client.refresh_cache = True
     try:
         try:
             payload = client.event(match_id)
         except ProviderRequestError as exc:
-            if exc.status_code == 429 and exc.attempts == 0:
+            if exc.status_code in (401,403,429) and exc.attempts == 0:
                 message = f'NOT TESTED: Sofascore cooldown is active; no request sent. {exc}'
             elif exc.status_code in (401,403,429):
                 message = f'NOT GOOD: Sofascore refused match {match_id}: {exc}'
@@ -36,3 +38,4 @@ def probe_match(client, match_id):
                      'One match-details request succeeded; other endpoints were not tested.')
     finally:
         client.refresh_cache = refresh
+        if isinstance(attempts,int):client.max_retries=attempts

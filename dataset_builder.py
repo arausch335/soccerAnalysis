@@ -565,7 +565,10 @@ def package_collection(source, output_root, *, replace=False, tables=None):
     tables = tuple(SEASON_TABLES) if tables is None else tuple(tables)
     if not tables or set(tables) - set(SEASON_TABLES):
         raise ValueError('Choose at least one valid season table')
-    required = {SEASON_TABLES[name][0] for name in tables}
+    source_files={name:SEASON_TABLES[name][0] for name in tables}
+    if 'team_match_stats' in tables and (source/'team_match_statistics.csv').is_file():
+        source_files['team_match_stats']='team_match_statistics.csv'
+    required = set(source_files.values())
     missing = [name for name in sorted(required) if not (source / name).exists()]
     if missing: raise FileNotFoundError(f'{source.name}: missing ' + ', '.join(missing))
     destination = (Path(output_root) / _slug(config['competition']) /
@@ -586,7 +589,8 @@ def package_collection(source, output_root, *, replace=False, tables=None):
                 if name not in tables and (destination / filename).is_file():
                     _atomic_copy(destination / filename, target / filename)
         for name in tables:
-            source_name, filename = SEASON_TABLES[name]
+            _, filename = SEASON_TABLES[name]
+            source_name=source_files[name]
             if name == 'fixtures':
                 atomic_csv(_fixtures(source, config), target / filename)
             else:

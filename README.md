@@ -33,6 +33,17 @@ keeps unavailable normal-schema columns as NA. All share `config/settings.yaml`.
 
 [Output paths, schema, direct WhoScored stage IDs, and coverage definitions](docs/PROVIDER_COLLECTION.md).
 
+## HTTP and visible-browser collection
+
+Sofascore supports `http`, visible `browser`, and `auto` fallback in
+`config/settings.yaml`. HTTP sessions use coherent saved browser profiles and
+cookies, with optional proxy routing. Run `sofascore_browser.py` for a dedicated
+visible-browser run with all spatial categories requested. It handles common
+advertising overlays and saves match-by-match coverage and diagnostics.
+
+Install browser support with `python -m pip install ".[browser]"` and use installed
+Chrome. [Setup, settings, output coverage, and ad handling](docs/BROWSER_COLLECTION.md).
+
 ## One dataset-building step
 
 Run **`dataset_builder.py`** to rebuild all saved seasons without scraping.

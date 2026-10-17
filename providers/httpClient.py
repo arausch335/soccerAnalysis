@@ -147,6 +147,11 @@ class HttpClient:
                 delay = max(delay, retry_after)
         return delay
 
+    @staticmethod
+    def _safe_error(exc):
+        from .networkSettings import redact
+        return redact(exc)
+
     def _request(self, endpoint: str, params: dict | None = None):
         if self._closed:
             raise ProviderError("Client is closed")
@@ -162,7 +167,7 @@ class HttpClient:
             except requests.exceptions.RequestException as exc:
                 if attempt + 1 == self.max_retries:
                     raise ProviderRequestError(
-                        f"Request failed after {attempt + 1} attempts: {endpoint}: {exc}",
+                        f"Request failed after {attempt + 1} attempts: {endpoint}: {self._safe_error(exc)}",
                         endpoint=endpoint, attempts=attempt + 1,
                     ) from exc
             if response is None:
