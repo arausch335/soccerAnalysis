@@ -1,11 +1,16 @@
-# Shared settings for main.py, whoscored_events.py, and dataset_builder.py.
-# Edit this file, then press Run in PyCharm; no CLI arguments are needed.
-# Relative paths are always resolved from the project root.
+# Edit this file, then run main.py in PyCharm for any collection type.
+# Relative paths resolve from this repository, regardless of the IDE directory.
 paths:
   data: data
   dataset: dataset
 
 collection:
+  # Run any combination; choose combined OR sofascore because they share data.
+  # combined = Sofascore baseline + FotMob/WhoScored enrichment
+  # sofascore = Sofascore only (HTTP, visible browser, or automatic fallback)
+  # whoscored_events = standalone WhoScored raw events
+  # fotmob_players = standalone FotMob player_match_stats with fmb_ columns/IDs
+  types: [combined]
   action: auto                 # auto, start, resume, export, status, probe
   competitions:
     - Premier League
@@ -17,66 +22,52 @@ collection:
     - Ligue 1
   seasons: ["2021/22", "2022/23", "2023/24"]
   spatial_capture: fast        # fast = average positions; all = every spatial endpoint
-  build_dataset: false        # Build the selected dataset types after collection
+  build_dataset: false        # Package combined/Sofascore seasons after collection
+  show_timing: true            # Per-game duration, season ETA, full collection ETA
 
-whoscored:
-  # Applies to live WhoScored requests in both collection workflows.
-  # Random delay between request starts; cached responses do not need to wait.
-  request_delay_min_seconds: 15
-  request_delay_max_seconds: 30
-  # Optional verified stage IDs skip competition/season HTML discovery.
-  # Include ALL main-competition stages for cups. Never use a tournament ID here.
-  # Example key format: "La Liga 2023-2024": [verified_stage_id]
-  stage_ids: {}
-  refresh_schedule: false     # Refresh the standalone scraper's saved fixtures
+  # How Sofascore is accessed; this used to be called "transport".
+  sofascore_access: auto       # http, browser (visible), or auto fallback
+  http:
+    profiles: [chrome, chrome131]  # One coherent identity, saved across resumes
+    languages: ["en-US,en;q=0.9"]
+    proxy_env: SOCCER_PROXY_URL    # Optional; credentials stay outside YAML/Git
+    delay_min_seconds: 8
+    delay_max_seconds: 15
+    attempts: 2                   # Never retries 401/403/429
+  browser:
+    channel: chrome              # Installed chrome/msedge, or Playwright chromium
+    delay_min_seconds: 0.5        # Set both to 0 to remove added action spacing
+    delay_max_seconds: 1.5
+    timeout_seconds: 30
+    manual_wait_seconds: 120
+  whoscored:
+    request_delay_min_seconds: 15
+    request_delay_max_seconds: 30
+    # Verified stage IDs skip competition/season HTML discovery.
+    # Key format: "La Liga 2023-2024": [verified_stage_id]
+    stage_ids: {}
+    refresh_schedule: false
 
 api_test:
-  providers: [sofascore, whoscored, fotmob]
-  # Each ID belongs to its own provider; these are independent example games.
+  providers:
+  - sofascore
+  - whoscored
+  - fotmob
   match_ids:
     sofascore: 12436870
     whoscored: 1821095
     fotmob: 4506485
-
 dataset:
-  # Standalone builder selection. [] = all saved seasons.
-  # main.py uses collection.competitions and collection.seasons above instead.
-  collections: []              # Example: ["bundesliga-2025-26"]
-
-  # Per-season files in dataset/<competition>/<YYYY-YYYY>/.
-  # false leaves an existing dataset table untouched; it does not delete it.
+  collections: []
   tables:
     events: false
     player_match_stats: true
     team_match_stats: true
-    fixtures: true             # Uses saved schedules; not a historical backfill
-
-  # Combined files at the dataset root, covering all saved collections.
-  # For ID-only builds, set all four season tables above to false.
+    fixtures: true
   references:
     player_ids: true
     team_ids: true
     match_ids: true
-
-  # Keep false for a fully offline dataset build.
   maintenance:
     refresh_published_team_ids: false
-    standardize_fixture_team_names: false  # Requires references.team_ids and dataset/fixtures.csv
-
-# HTTP profiles are selected once and retained in data/http_sessions/.
-# Change a saved identity only by removing that provider's identity.json.
-transport:
-  sofascore_mode: auto          # http, browser (visible), or auto fallback
-  http:
-    profiles: [chrome, chrome131]
-    languages: ["en-US,en;q=0.9"]
-    proxy_env: SOCCER_PROXY_URL  # Optional; credentials stay outside YAML/Git
-    delay_min_seconds: 8
-    delay_max_seconds: 15
-    attempts: 2                # Total attempts; never retries 401/403/429
-  browser:
-    channel: chrome            # Installed chrome/msedge, or playwright chromium
-    delay_min_seconds: 0.5     # Extra spacing between collection actions; 0 allowed
-    delay_max_seconds: 1.5
-    timeout_seconds: 30
-    manual_wait_seconds: 120   # Time to finish a challenge manually in the window
+    standardize_fixture_team_names: false

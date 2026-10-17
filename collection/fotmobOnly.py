@@ -18,6 +18,7 @@ from storage.pandasStore import atomic_json
 from .playerStatsSchema import (PLAYER_MATCH_COLUMNS, FOTMOB_PLAYER_MATCH_COLUMNS,
                                FOTMOB_COLUMNS, fotmob_column)
 from .runner import atomic_csv, now
+from .progress import get_job, collection_scope
 from .selection import competition_by_name, season_key, season_label
 
 
@@ -69,6 +70,8 @@ class FotMobOnlyRunner:
     def run(self,competition,season,*,limit=None,refresh_schedule=False):
         competition=competition_by_name(competition);season=season_key(season)
         if limit is not None and limit < 1:raise ValueError('limit must be positive')
+        timing=get_job(self.directory,'fotmob_players',competition.name,season_label(season),report=self.report)
+        timing.begin()
         self.directory.mkdir(parents=True,exist_ok=True)
         job=self.directory/'job.json'
         settings={'provider':'fotmob','competition':competition.name,'season':season,
@@ -95,8 +98,13 @@ class FotMobOnlyRunner:
             atomic_json(schedule,{'provider':'fotmob','fetched_at':now(),'events':events})
         selected=events[:limit] if limit else events
         failures={};stop=False
+        timing.schedule(selected,completed=[e['id'] for e in selected
+            if self.cache.path('fotmob',f"match/{e['id']}").exists()],mode='http')
         for index,event in enumerate(selected,1):
             mid=event['id']
+            cached=self.cache.path('fotmob',f'match/{mid}').exists()
+            timing.start_game(mid,clients=(self.client,),cached=cached)
+            game_status='complete'
             identity=(f"FotMob {competition.name} {season_label(season)} | match {mid} | "
                       f"{event['homeTeam']['name']} vs {event['awayTeam']['name']}")
             try:
@@ -108,10 +116,12 @@ class FotMobOnlyRunner:
                 player_rows(payload,competition.name,season,event)
                 self.report(f'{identity}: {index}/{len(selected)} saved')
             except (ProviderError,ValueError,KeyError,TypeError) as exc:
+                game_status='failed'
                 failures[str(mid)]=str(exc)
                 self.report(f'{identity} paused: {exc}')
                 stop=(isinstance(exc,ProviderRequestError) and exc.status_code in (401,403,429)
                       or getattr(getattr(self.client,'request_gate',None),'is_blocked',False))
+            timing.finish_game(clients=(self.client,),status=game_status)
             if stop:break
         # Rebuild from every saved scheduled match, so --limit never truncates
         # previous successes. Invalid caches are excluded and reported.
@@ -130,7 +140,9 @@ class FotMobOnlyRunner:
         atomic_json(self.directory/'run_summary.json',dict(settings,
             finished_matches_discovered=len(events),saved_matches=complete,failures=failures))
         self.report(f'FotMob {competition.name} {season_label(season)} player stats: {complete}/{len(events)} matches; {len(rows)} player rows')
-        return 0 if events and complete==len(events) and not failures else 2
+        code=0 if events and complete==len(events) and not failures else 2
+        timing.end(code)
+        return code
 
 
 def main(argv=None):
@@ -148,7 +160,10 @@ def main(argv=None):
     try:
         root=args.data_root.resolve();root.mkdir(parents=True,exist_ok=True)
         if not any(root.iterdir()):atomic_json(root/'.soccer-scraper.json',{'format':1})
-        with FileLock(str(root/'.collector.lock'),timeout=0):
+        with collection_scope('fotmob_players',root,
+                [args.competition] if args.competition else config.COMPETITIONS,
+                [args.season] if args.season else config.SEASONS,limit=args.limit), \
+                FileLock(str(root/'.collector.lock'),timeout=0):
             with SafeFotMobClient(root,'fotmob',offline=args.offline) as client:
                 for name in ([args.competition] if args.competition else config.COMPETITIONS):
                     competition=competition_by_name(name)

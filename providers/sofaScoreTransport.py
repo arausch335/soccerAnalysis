@@ -24,6 +24,11 @@ class SofaScoreTransport(SofaScoreClient):
         self.audit={};self.events={}
 
     @property
+    def network_requests(self):
+        counts=[getattr(c,'network_requests',None) for c in (self.http,self.browser) if c is not None]
+        return sum(counts) if all(type(n) in (int,float) for n in counts) else None
+
+    @property
     def uses_browser(self):return self.active=='browser'
     @property
     def request_gate(self):return (self.browser if self.uses_browser else self.http).request_gate

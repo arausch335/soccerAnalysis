@@ -15,7 +15,7 @@ HTTP collection and offline dataset building do not require Playwright.
 
 Edit `config/settings.yaml`, then run one of these files:
 
-- `main.py`: normal provider workflow, with the configured Sofascore transport.
+- `main.py`: all selected `collection.types`, with `collection.sofascore_access` controlling HTTP/browser access.
 - `sofascore_browser.py`: visible-browser Sofascore collection, requesting all
   spatial categories. It uses the same competition/season selections, data root,
   checkpoints and CSV schema. Existing seasons can be resumed and upgraded.
@@ -36,11 +36,11 @@ Explicit provider/spatial selections apply on resume; saved raw responses and
 unrelated local data stay in place. A browser run revisits an existing season
 when browser detail or requested spatial coverage is unfinished.
 
-## Configure the two transports
+## Configure HTTP and browser access
 
 ```yaml
-transport:
-  sofascore_mode: auto
+collection:
+  sofascore_access: auto
   http:
     profiles: [chrome, chrome131]
     languages: ["en-US,en;q=0.9"]

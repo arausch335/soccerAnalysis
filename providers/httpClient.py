@@ -110,6 +110,7 @@ class HttpClient:
             },
         )
         self._closed = False
+        self.network_requests = 0
 
     def close(self):
         if not self._closed:
@@ -163,6 +164,7 @@ class HttpClient:
             self._rate_limit(endpoint)
             response = None
             try:
+                self.network_requests += 1
                 response = self.session.get(url, params=params, timeout=self.timeout)
             except requests.exceptions.RequestException as exc:
                 if attempt + 1 == self.max_retries:

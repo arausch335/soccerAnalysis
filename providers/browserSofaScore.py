@@ -97,6 +97,7 @@ class BrowserSofaScoreClient(SofaScoreClient):
         self.root=Path(root);self.settings=settings;self.offline=offline;self.report=report
         self.proxy_env=proxy_env;self.page=page;self._injected=page is not None
         self._playwright=None;self._context=None;self._closed=False
+        self.network_requests=0
         self.refresh_cache=False;self.last_transport='browser';self.request_gate=BrowserGate(root,settings)
         self.responses={};self.events={};self.observations={};self.active_mid=None;self.active_player=None
         self.timeout=float(settings['timeout_seconds'])*1000
@@ -166,6 +167,7 @@ class BrowserSofaScoreClient(SofaScoreClient):
         endpoint=found[1]
         if response.request.resource_type not in ('xhr','fetch'):return
         # Ignore images/ads/country-IP lookup endpoints and never save cookies.
+        self.network_requests+=1
         key=(endpoint,url.query)
         try:
             status=response.status
@@ -228,6 +230,7 @@ class BrowserSofaScoreClient(SofaScoreClient):
     def _navigate(self,url):
         self.request_gate.wait('website navigation');self._start()
         try:
+            self.network_requests+=1
             self.page.goto(url,wait_until='domcontentloaded',timeout=self.timeout)
             if urlsplit(self.page.url).hostname!='www.sofascore.com':
                 raise ProviderError('Sofascore navigation left the expected website')

@@ -15,6 +15,7 @@ def main(argv=None):
     if '--providers' not in args:args.extend(['--providers','sofascore'])
     if '--sofascore-spatial-capture' not in args and '--no-spatial' not in args:
         args.extend(['--sofascore-spatial-capture','all'])
+    args.extend(['--collection-types','sofascore'])
     return collect(args)
 
 

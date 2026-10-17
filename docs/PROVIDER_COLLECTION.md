@@ -32,7 +32,7 @@ league JSON fixture feed and direct match-detail JSON requests.
 
 WhoScored normally discovers season and stage IDs from HTML, reusing its HTTP
 cache. If you already have verified stage IDs, add an entry under
-`whoscored.stage_ids` in the same YAML file. Keys must use the canonical
+`collection.whoscored.stage_ids` in the same YAML file. Keys must use the canonical
 competition name and full season label, such as `La Liga 2023-2024`; the value
 must be a list of positive stage IDs. Use IDs taken from the provider's stage
 URL or existing saved discovery data. They are not competition/tournament IDs.
