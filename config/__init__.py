@@ -70,9 +70,40 @@ def load_config(path=None, *, project_root=None):
         document.setdefault('whoscored', {
             'request_delay_min_seconds':15, 'request_delay_max_seconds':30,
             'refresh_schedule':False})
+        document.setdefault('transport', {
+            'sofascore_mode':'auto',
+            'http':{'profiles':['chrome','chrome131'],'languages':['en-US,en;q=0.9'],
+                    'proxy_env':'SOCCER_PROXY_URL','delay_min_seconds':8,'delay_max_seconds':15,
+                    'attempts':2},
+            'browser':{'channel':'chrome','delay_min_seconds':0.5,'delay_max_seconds':1.5,
+                       'timeout_seconds':30,'manual_wait_seconds':120}})
         document.setdefault('api_test', {'providers':['sofascore','whoscored','fotmob'],
             'match_ids':{'sofascore':12436870,'whoscored':1821095,'fotmob':4506485}})
-    document = _section(document, ('paths', 'collection', 'dataset', 'whoscored', 'api_test'), 'configuration')
+    document = _section(document, ('paths', 'collection', 'dataset', 'whoscored', 'api_test', 'transport'), 'configuration')
+    transport=_section(document['transport'],('sofascore_mode','http','browser'),'transport')
+    if transport['sofascore_mode'] not in ('http','browser','auto'):
+        raise ConfigError('transport.sofascore_mode must be http, browser, or auto')
+    http=_section(transport['http'],('profiles','languages','proxy_env','delay_min_seconds',
+                                  'delay_max_seconds','attempts'),'transport.http')
+    browser=_section(transport['browser'],('channel','delay_min_seconds','delay_max_seconds',
+                                        'timeout_seconds','manual_wait_seconds'),'transport.browser')
+    _strings(http['profiles'],'transport.http.profiles')
+    _strings(http['languages'],'transport.http.languages')
+    if not isinstance(http['proxy_env'],str) or (http['proxy_env'] and
+            not http['proxy_env'].replace('_','a').isalnum()):
+        raise ConfigError('transport.http.proxy_env must be an environment variable name or empty')
+    if type(http['attempts']) is not int or not 1 <= http['attempts'] <= 3:
+        raise ConfigError('transport.http.attempts must be 1 to 3')
+    if browser['channel'] not in ('chrome','msedge','chromium'):
+        raise ConfigError('transport.browser.channel must be chrome, msedge, or chromium')
+    for label,section in (('http',http),('browser',browser)):
+        lo,hi=section['delay_min_seconds'],section['delay_max_seconds']
+        if any(type(v) not in (int,float) or not math.isfinite(v) or v < 0 for v in (lo,hi)) or lo>hi:
+            raise ConfigError(f'transport.{label} delays must be finite and 0 <= min <= max')
+    for key in ('timeout_seconds','manual_wait_seconds'):
+        v=browser[key]
+        if type(v) not in (int,float) or not math.isfinite(v) or v <= 0:
+            raise ConfigError(f'transport.browser.{key} must be positive and finite')
     api_test = _section(document['api_test'], ('providers','match_ids'), 'api_test')
     providers = _strings(api_test['providers'], 'api_test.providers')
     supported = ('sofascore','whoscored','fotmob')
@@ -121,6 +152,7 @@ def load_config(path=None, *, project_root=None):
     if collection['spatial_capture'] not in ('fast', 'all'):
         raise ConfigError('collection.spatial_capture must be fast or all')
     values = {
+        'TRANSPORT':transport,
         'DATA_ROOT': data, 'DATASET_ROOT': output,
         'ACTION': collection['action'],
         'COMPETITIONS': _strings(collection['competitions'], 'collection.competitions'),

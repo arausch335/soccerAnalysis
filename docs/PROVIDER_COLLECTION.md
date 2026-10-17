@@ -126,14 +126,9 @@ before reviewing: a saved partial schedule can overstate whole-season coverage.
 Missing schedules or no finished fixtures produce N/A, never an invented 100%.
 The optional CSV includes exact counts, schedule paths, and audit notes.
 
-## Connection identity
+## Connection identity and visible-browser fallback
 
-The existing HTTP transport already uses persistent sessions and curl_cffi's
-Chrome connection profile. It also has randomized request spacing, HTTP caches,
-and persistent cooldowns. No header rotation, IP rotation, proxy subscription,
-or VPN change is introduced here. A VPN changes the public exit address; a
-per-client proxy is another routing option. Neither resolves local text-decoding
-errors or guarantees provider access.
-
-For implementation details on header overrides, sessions, and proxy routing,
-see the [curl_cffi documentation](https://curl-cffi.readthedocs.io/en/latest/quick_start.html).
+See [HTTP and browser collection](BROWSER_COLLECTION.md) for the shared HTTP
+profile/cookie/proxy settings and the visible Sofascore fallback. WhoScored's
+separate delay settings still apply. VPN/IP changes do not resolve local text
+encoding errors.

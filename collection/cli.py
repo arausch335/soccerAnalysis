@@ -9,6 +9,7 @@ import config
 from filelock import FileLock, Timeout
 from providers.httpClient import ProviderError
 from providers.safeClient import SafeSofaScoreClient, SafeFotMobClient, SafeWhoScoredClient
+from providers.sofaScoreTransport import create_sofascore_client
 from providers.sofaScoreProbe import DEFAULT_MATCH_ID, probe_match
 from collection.paths import collection_directory
 from collection.seasonRunner import SeasonRunner, SPATIAL_ENDPOINTS
@@ -29,7 +30,7 @@ def main(argv=None):
     parser.add_argument('--competition', default='Premier League')
     parser.add_argument('--season', default='2024/25')
     parser.add_argument('--providers', nargs='+', choices=['sofascore','fotmob','whoscored'],
-                        default=['sofascore','fotmob','whoscored'])
+                        default=None)
     parser.add_argument('--limit', type=int, help='First N finished matches; omit for the season')
     spatial_group = parser.add_mutually_exclusive_group()
     spatial_group.add_argument('--sofascore-spatial-capture', choices=SPATIAL_CAPTURE_MODES)
@@ -38,6 +39,7 @@ def main(argv=None):
                         help='Build combined CSV exports after collection (default: enabled)')
     parser.add_argument('--compile-events', action=argparse.BooleanOptionalAction, default=True,
                         help='Compile the WhoScored event stream CSV during export (default: enabled)')
+    parser.add_argument('--sofascore-transport',choices=('http','browser','auto'),default=config.TRANSPORT['sofascore_mode'])
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--match-id',type=int,default=DEFAULT_MATCH_ID,
                         help='Sofascore match ID for the single-request probe')
@@ -79,7 +81,7 @@ def main(argv=None):
                 capture = 'none' if args.no_spatial else (args.sofascore_spatial_capture or 'fast')
                 spatial = [] if capture == 'none' else list(SPATIAL_CAPTURE_MODES[capture])
                 settings = dict(competition=args.competition, season=args.season,
-                                providers=list(dict.fromkeys(['sofascore', *args.providers])),
+                                providers=list(dict.fromkeys(['sofascore', *(args.providers or ['sofascore','fotmob','whoscored'])])),
                                 sofascore_spatial_capture=capture, spatial=spatial)
                 directory.mkdir(parents=True)
                 atomic_json(settings_path, settings)
@@ -87,6 +89,9 @@ def main(argv=None):
                 parser.error('No saved collection with that name')
             else:
                 settings = json.loads(settings_path.read_text(encoding='utf-8'))
+                if args.command=='resume' and args.providers is not None:
+                    settings['providers']=list(dict.fromkeys(['sofascore',*args.providers]))
+                    atomic_json(settings_path,settings)
                 if args.command == 'resume' and (args.no_spatial or args.sofascore_spatial_capture):
                     capture = 'none' if args.no_spatial else args.sofascore_spatial_capture
                     spatial = [] if capture == 'none' else list(SPATIAL_CAPTURE_MODES[capture])
@@ -102,10 +107,11 @@ def main(argv=None):
                 for path in (root / 'safety').glob('*.json'):
                     print(path.name + '\n' + path.read_text(encoding='utf-8'))
                 return 0
-            classes = dict(sofascore=SafeSofaScoreClient, fotmob=SafeFotMobClient, whoscored=SafeWhoScoredClient)
+            classes = dict(sofascore=create_sofascore_client, fotmob=SafeFotMobClient, whoscored=SafeWhoScoredClient)
             clients = {
                 p: stack.enter_context(
-                    classes[p](root, p, offline=args.offline or args.command == 'export')
+                    classes[p](root, p, offline=args.offline or args.command == 'export',
+                               **({'mode':args.sofascore_transport} if p=='sofascore' else {}))
                 )
                 for p in settings['providers']
             }
