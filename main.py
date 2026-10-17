@@ -11,6 +11,7 @@ import config
 from collection.cli import main as collect
 from collection.paths import collection_directory
 from collection.selection import competition_by_name, season_key, season_label
+from providers.extensionBridge import extension_scope
 from collection.progress import CollectionProgress, progress_scope, prime_job, get_job
 from collection.whoScoredEvents import main as collect_whoscored
 from collection.fotmobOnly import main as collect_fotmob
@@ -155,7 +156,7 @@ def _batch(forwarded):
     transport_parser=argparse.ArgumentParser(add_help=False)
     transport_parser.add_argument('--sofascore-transport',default=config.TRANSPORT['sofascore_mode'])
     transport,_=transport_parser.parse_known_args(forwarded)
-    browser_requested=transport.sofascore_transport=='browser'
+    browser_requested=transport.sofascore_transport in ('browser','extension')
     existing=[target for target in targets if target[4]]
     new=[target for target in targets if not target[4]]
     results=[]
@@ -338,12 +339,12 @@ def main(argv=None):
                     access_parser=argparse.ArgumentParser(add_help=False)
                     access_parser.add_argument('--sofascore-transport',default=config.TRANSPORT['sofascore_mode'])
                     access,_=access_parser.parse_known_args(args)
-                    job.revisit_complete=_normal_requirements(directory,requirements)[0] or access.sofascore_transport=='browser'
+                    job.revisit_complete=_normal_requirements(directory,requirements)[0] or access.sofascore_transport in ('browser','extension')
                 prime_job(job,directory,limit=limits.limit)
                 targets[kind].append((job,directory,competition,season))
     result=0
     progress.emit('[Timing] Scrape ETAs update after each game; final CSV/dataset builds are excluded.')
-    with progress_scope(progress):
+    with progress_scope(progress), extension_scope():
         try:
             for kind in kinds:
                 if kind in ('combined','sofascore'):

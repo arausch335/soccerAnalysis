@@ -27,7 +27,7 @@ soccer-api-test = "api_test:main"
 py-modules = ["main", "dataset_builder", "whoscored_events", "api_test", "fotmob_player_stats", "review_data", "sofascore_browser"]
 
 [tool.setuptools.packages.find]
-include = ["config", "analysis*", "collection*", "fixtures*", "models*", "providers*", "storage*", "tools*"]
+include = ["config", "analysis*", "collection*", "fixtures*", "models*", "providers*", "storage*", "tools*", "chrome_extension"]
 
 [tool.setuptools.package-data]
 "analysis.role_pipeline" = ["*.html"]
@@ -35,3 +35,5 @@ include = ["config", "analysis*", "collection*", "fixtures*", "models*", "provid
 "providers" = ["*.json"]
 
 "config" = ["settings.yaml"]
+
+"chrome_extension" = ["*.json", "*.js", "*.html", "*.css"]

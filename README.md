@@ -44,7 +44,8 @@ This is an excerpt; keep the other settings in the supplied file. Types:
 
 For example, use `types: [sofascore]` and `sofascore_access: browser` for a visible
 Sofascore run. `sofascore_access` replaces the old name “transport”: it means
-HTTP requests, a visible browser, or automatic HTTP-to-browser fallback. The
+HTTP requests, a visible browser, automatic HTTP-to-browser fallback, or the
+Chrome extension. The
 HTTP, browser, and WhoScored preferences now all live inside `collection`.
 Older settings files with top-level `transport`/`whoscored` still load.
 
@@ -89,6 +90,24 @@ season, match ID, and team names. FotMob output uses `fmb_` columns and IDs and
 keeps unavailable normal-schema columns as NA. All share `config/settings.yaml`.
 
 [Output paths, schema, direct WhoScored stage IDs, and coverage definitions](docs/PROVIDER_COLLECTION.md).
+
+## Collect from your normal Chrome tab
+
+The JavaScript **Soccer Collector** extension can connect your chosen Sofascore
+Chrome tab to the Python collector. Install it with **Load unpacked** from the
+`chrome_extension` folder, then try one match:
+
+```bash
+python main.py --collection-types sofascore --sofascore-transport extension --competition "Premier League" --season 2024/25 --limit 1
+```
+
+Python prints a connection code. Open the extension on your Sofascore tab,
+paste that code, and click **Connect this Sofascore tab**. Python keeps the
+existing checkpoints, schema, dataset building and timing; JavaScript handles
+the page. Complete verification yourself and click **Resume** if prompted.
+For regular PyCharm runs set `collection.sofascore_access: extension` in YAML.
+
+[Installation, first-match check, permissions and limitations](docs/CHROME_EXTENSION.md).
 
 ## HTTP and visible-browser collection
 

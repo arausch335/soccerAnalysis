@@ -1,0 +1,6 @@
+body {width:330px;margin:0;padding:20px;font:14px/1.5 system-ui,sans-serif;color:#15253a;background:#f8fafc}
+h1 {font-size:20px;margin:0 0 10px}p {margin:10px 0}label {display:block;font-weight:600;margin-top:16px}
+input {box-sizing:border-box;width:100%;padding:10px;border:1px solid #9aabba;border-radius:6px;margin:6px 0 10px}
+button {padding:9px 12px;border:1px solid #879bb0;border-radius:6px;cursor:pointer;background:white;color:#15253a}
+#connect {background:#176446;color:white;border:0;width:100%}button:disabled {opacity:.5;cursor:default}
+.controls {display:flex;gap:8px}.note {font-size:12px;color:#4f6072}#status {padding:10px;background:#e6edf4;border-radius:6px;white-space:pre-wrap}

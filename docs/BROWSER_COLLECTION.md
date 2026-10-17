@@ -183,3 +183,5 @@ historical match.
 Additional live checks retrieved season discovery and populated lineups for an
 Arsenal–Leeds match in 2021/22 and Fulham–Bournemouth in 2025/26. A single live HTTP
 attempt failed and successfully selected the saved browser transport fallback.
+
+For collection in your existing normal Chrome tab, see [the Chrome extension mode](CHROME_EXTENSION.md).
