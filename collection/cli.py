@@ -86,7 +86,7 @@ def main(argv=None):
             elif not settings_path.exists():
                 parser.error('No saved collection with that name')
             else:
-                settings = json.loads(settings_path.read_text())
+                settings = json.loads(settings_path.read_text(encoding='utf-8'))
                 if args.command == 'resume' and (args.no_spatial or args.sofascore_spatial_capture):
                     capture = 'none' if args.no_spatial else args.sofascore_spatial_capture
                     spatial = [] if capture == 'none' else list(SPATIAL_CAPTURE_MODES[capture])
@@ -98,9 +98,9 @@ def main(argv=None):
             if args.command == 'status':
                 for name in ('job.json','run_summary.json','capabilities.json'):
                     path = directory / name
-                    if path.exists(): print(name + '\n' + path.read_text())
+                    if path.exists(): print(name + '\n' + path.read_text(encoding='utf-8'))
                 for path in (root / 'safety').glob('*.json'):
-                    print(path.name + '\n' + path.read_text())
+                    print(path.name + '\n' + path.read_text(encoding='utf-8'))
                 return 0
             classes = dict(sofascore=SafeSofaScoreClient, fotmob=SafeFotMobClient, whoscored=SafeWhoScoredClient)
             clients = {
@@ -111,7 +111,7 @@ def main(argv=None):
             }
             runner = SeasonRunner(clients,directory,providers=settings['providers'],spatial=settings['spatial'])
             if args.command == 'export':
-                events = json.loads((directory/'schedule.json').read_text())['events']
+                events = json.loads((directory/'schedule.json').read_text(encoding='utf-8'))['events']
                 runner._export(events,compile_events=args.compile_events)
                 print('Rebuilt available CSVs from checkpoints without network requests.')
                 return 0

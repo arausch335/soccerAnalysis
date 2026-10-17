@@ -17,10 +17,12 @@ soccer-analysis = "main:main"
 soccer-dataset = "dataset_builder:main"
 soccer-fixtures = "fixtures.collector:main"
 soccer-whoscored-events = "whoscored_events:main"
+soccer-fotmob-players = "fotmob_player_stats:main"
+soccer-data-review = "review_data:main"
 soccer-api-test = "api_test:main"
 
 [tool.setuptools]
-py-modules = ["main", "dataset_builder", "whoscored_events", "api_test"]
+py-modules = ["main", "dataset_builder", "whoscored_events", "api_test", "fotmob_player_stats", "review_data"]
 
 [tool.setuptools.packages.find]
 include = ["config", "analysis*", "collection*", "fixtures*", "models*", "providers*", "storage*", "tools*"]

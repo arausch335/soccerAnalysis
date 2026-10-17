@@ -108,7 +108,7 @@ class CollectionRunner:
         config_path = self.directory / 'config.json'
         config = asdict(self.config)
         if config_path.exists():
-            if json.loads(config_path.read_text()) != config:
+            if json.loads(config_path.read_text(encoding='utf-8')) != config:
                 raise ValueError('Output folder belongs to a different collection; use another folder')
         else:
             atomic_json(config_path, config)

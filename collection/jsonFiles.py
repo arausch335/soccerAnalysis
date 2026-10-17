@@ -6,7 +6,7 @@ from pathlib import Path
 
 @lru_cache(maxsize=64)
 def _read(path,modified_ns,size):
-    return json.loads(Path(path).read_text())
+    return json.loads(Path(path).read_text(encoding='utf-8'))
 
 
 def read_json(path):

@@ -3,6 +3,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 import re
 from providers.identity import name_key
+from providers.sofascore_ids import SOFASCORE_COMPETITION_IDS
 
 
 @dataclass(frozen=True)
@@ -16,14 +17,14 @@ class CompetitionSelection:
 
 
 COMPETITIONS=[
-    CompetitionSelection('Premier League',17,47,'regions/252/tournaments/2/england-premier-league'),
-    CompetitionSelection('La Liga',8,87,'regions/206/tournaments/4/spain-laliga'),
-    CompetitionSelection('Bundesliga',35,54,'regions/81/tournaments/3/germany-bundesliga'),
-    CompetitionSelection('Serie A',23,55,'regions/108/tournaments/5/italy-serie-a'),
-    CompetitionSelection('Ligue 1',34,53,'regions/74/tournaments/22/france-ligue-1'),
-    CompetitionSelection('Champions League',7,42,
+    CompetitionSelection('Premier League',SOFASCORE_COMPETITION_IDS['Premier League'],47,'regions/252/tournaments/2/england-premier-league'),
+    CompetitionSelection('La Liga',SOFASCORE_COMPETITION_IDS['La Liga'],87,'regions/206/tournaments/4/spain-laliga'),
+    CompetitionSelection('Bundesliga',SOFASCORE_COMPETITION_IDS['Bundesliga'],54,'regions/81/tournaments/3/germany-bundesliga'),
+    CompetitionSelection('Serie A',SOFASCORE_COMPETITION_IDS['Serie A'],55,'regions/108/tournaments/5/italy-serie-a'),
+    CompetitionSelection('Ligue 1',SOFASCORE_COMPETITION_IDS['Ligue 1'],53,'regions/74/tournaments/22/france-ligue-1'),
+    CompetitionSelection('Champions League',SOFASCORE_COMPETITION_IDS['Champions League'],42,
         'regions/250/tournaments/12/europe-champions-league'),
-    CompetitionSelection('Europa League',679,73,
+    CompetitionSelection('Europa League',SOFASCORE_COMPETITION_IDS['Europa League'],73,
         'regions/250/tournaments/30/europe-europa-league'),
 ]
 
@@ -125,3 +126,9 @@ def months_between(events):
         result.append(f'{y:04d}{m:02d}');m+=1
         if m==13:y+=1;m=1
     return result
+
+
+def configured_whoscored_stages(competition,season):
+    """Only use explicitly verified IDs; never derive a stage ID from a year."""
+    import config
+    return config.WHOSCORED_STAGE_IDS.get(f'{competition.name} {season_label(season)}')

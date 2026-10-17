@@ -323,14 +323,14 @@ def _cached_provider_fixtures(source, provider):
 
 def _source_id_rows(source, player_rows, team_rows, match_rows):
     source = Path(source);
-    config = json.loads((source / 'config.json').read_text())
+    config = json.loads((source / 'config.json').read_text(encoding='utf-8'))
     competition = config['competition'];
     season = _season_directory(config['season'])
     baseline = config.get('id_namespace', config.get('baseline_provider', 'sofascore'))
     if baseline not in ('sofascore', 'fotmob', 'whoscored'):
         raise ValueError(f'{source.name}: unsupported baseline provider {baseline!r}')
     baseline_column = baseline + '_id'
-    schedule = json.loads((source / 'schedule.json').read_text()).get('events', [])
+    schedule = json.loads((source / 'schedule.json').read_text(encoding='utf-8')).get('events', [])
     events = {str(event['id']): event for event in schedule if not is_qualification_event(event)}
 
     if (source / 'player_match_stats.csv').exists():
@@ -555,13 +555,13 @@ def fixtures_from_events(events, competition, season, *, include_qualifying=Fals
 
 
 def _fixtures(source, config):
-    events = json.loads((source / 'schedule.json').read_text())['events']
+    events = json.loads((source / 'schedule.json').read_text(encoding='utf-8'))['events']
     return fixtures_from_events(events, config['competition'], config['season'])
 
 
 def package_collection(source, output_root, *, replace=False, tables=None):
     source = Path(source);
-    config = json.loads((source / 'config.json').read_text())
+    config = json.loads((source / 'config.json').read_text(encoding='utf-8'))
     tables = tuple(SEASON_TABLES) if tables is None else tuple(tables)
     if not tables or set(tables) - set(SEASON_TABLES):
         raise ValueError('Choose at least one valid season table')
