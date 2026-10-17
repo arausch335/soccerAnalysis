@@ -85,7 +85,7 @@ def load_config(path=None, *, project_root=None):
         collection.setdefault('sofascore_access','auto')
         collection.setdefault('http',{'profiles':['chrome','chrome131'],'languages':['en-US,en;q=0.9'],
             'proxy_env':'SOCCER_PROXY_URL','delay_min_seconds':8,'delay_max_seconds':15,'attempts':2})
-        collection.setdefault('browser',{'channel':'chrome','delay_min_seconds':0.5,'delay_max_seconds':1.5,
+        collection.setdefault('browser',{'channel':'chrome','delay_min_seconds':2,'delay_max_seconds':4,
             'timeout_seconds':30,'manual_wait_seconds':120})
         collection.setdefault('whoscored',{'request_delay_min_seconds':15,'request_delay_max_seconds':30,
             'refresh_schedule':False})

@@ -50,8 +50,8 @@ collection:
     attempts: 2
   browser:
     channel: chrome
-    delay_min_seconds: 0.5
-    delay_max_seconds: 1.5
+    delay_min_seconds: 2
+    delay_max_seconds: 4
     timeout_seconds: 30
     manual_wait_seconds: 120
 ```
@@ -149,9 +149,20 @@ request cookies and proxy passwords are not dumped there. New ad providers or
 layout changes may require updating selectors or the ad-host list.
 
 A verification page waits for manual attention in the visible window for the
-configured time, then pauses if unresolved. Closing the window or interrupting
-Python preserves responses already written. Run the same selection again to
-resume. The collector does not reset saved provider cooldowns to force retries.
+configured `manual_wait_seconds`, then pauses if unresolved. Complete the
+verification yourself; the program does not click verification controls. If an
+API 403 or iframe leaves no recognizable verification text, the Run console asks
+you to complete verification in the browser and press Enter for one retry.
+There is no automatic 24-hour cooldown for a browser 403. Old browser-only 403
+cooldown entries are removed on startup; HTTP cooldowns and real 429 waiting
+periods remain. If access is still denied, the current run pauses and can be
+restarted as soon as you are ready. Closing the window or interrupting Python
+preserves responses already written.
+
+Browser navigation, UI clicks (including closing player panels and dismissing
+ads), and browser resource fetches use the configured spacing: 2–4 seconds by
+default. Adjust `collection.browser.delay_min_seconds` and `delay_max_seconds`
+to change it. Each verification recovery gets at most one resource retry.
 
 ## Validation
 

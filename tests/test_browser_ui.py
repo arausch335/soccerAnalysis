@@ -49,6 +49,42 @@ class BrowserUiUnitTests(unittest.TestCase):
 
 @unittest.skipUnless(importlib.util.find_spec('playwright'),'Optional Playwright dependency is not installed')
 class BrowserUiIntegrationTests(unittest.TestCase):
+    def test_local_verification_completion_resumes_without_cooldown(self):
+        from playwright.sync_api import sync_playwright
+        # Simulate completion with a local timer; no real verification service
+        # or external website is contacted by this regression test.
+        html='''<!doctype html><html><body>
+        <div id="verification">Verify you are human</div>
+        <button data-testid="tab-details">Overview</button>
+        <script>
+        window.verified=false;fetch('/api/v1/event/1');
+        setTimeout(()=>{window.verified=true;
+          document.getElementById('verification').remove();
+          fetch('/api/v1/event/1');},1500);
+        </script></body></html>'''
+        messages=[]
+        with tempfile.TemporaryDirectory() as tmp,sync_playwright() as p:
+            try:context=p.chromium.launch_persistent_context(str(Path(tmp)/'profile'),channel='chrome',headless=False)
+            except Exception as exc:
+                if 'not found' in str(exc) or "doesn't exist" in str(exc):self.skipTest('Chrome is not installed')
+                raise
+            requests=[]
+            def route(r):
+                if '/api/v1/event/1' in r.request.url:
+                    requests.append(r.request.url)
+                    r.fulfill(status=403 if len(requests)==1 else 200,
+                        content_type='application/json',body=json.dumps({'event':event(1)}))
+                else:r.fulfill(status=200,content_type='text/html',body=html)
+            context.route('**/*',route)
+            client=BrowserSofaScoreClient(tmp,browser_settings(),page=context.pages[0],
+                report=lambda message,**kw:messages.append(message))
+            try:
+                self.assertEqual(client.event(1)['event']['id'],1)
+                self.assertTrue(any('needs manual verification' in m for m in messages))
+                self.assertEqual(len(requests),2)
+                self.assertFalse(client.request_gate.is_blocked)
+            finally:context.close()
+
     def test_visible_chrome_dismisses_ad_and_captures_player_panel(self):
         from playwright.sync_api import sync_playwright
         data={'event/1':{'event':event(1)},'event/1/lineups':lineup(),
