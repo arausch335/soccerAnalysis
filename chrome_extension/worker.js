@@ -5,6 +5,8 @@ let polling = false;
 let controller;
 let verifying = false;
 let resolvingVerification = false;
+const RELOAD_DELAYS = [60000, 300000, 1800000];
+const RELOAD_ALARM = 'verification-reload';
 const state = () => chrome.storage.session.get(null);
 const save = values => chrome.storage.session.set(values);
 const badge = text => chrome.action.setBadgeText({text});
@@ -15,7 +17,7 @@ async function api(s, path, value) {
     headers: {Authorization: 'Bearer ' + s.token, 'X-Collector-Client': s.clientId,
       ...(value === undefined ? {} : {'Content-Type': 'application/json'})},
     body: value === undefined ? undefined : JSON.stringify(value),
-    signal: controller?.signal
+    signal: path === 'diagnostic' ? AbortSignal.timeout(5000) : controller?.signal
   });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || 'Python connection failed.');
@@ -28,14 +30,17 @@ async function selectedTab(s) {
   return tab;
 }
 
-async function runPage(s, args) {
-  let results;
+async function runPage(s, args, timeoutMs) {
+  let results, timer;
   try {
-    results = await chrome.scripting.executeScript({target: {tabId: s.tabId},
+    const execution = chrome.scripting.executeScript({target: {tabId: s.tabId},
       world: 'MAIN', func: pageOperation, args: [args]});
+    results = timeoutMs ? await Promise.race([execution, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Page inspection timed out.')), timeoutMs);
+    })]) : await execution;
   } catch (error) {
     return {ok: false, recoverable: true, error: `${error.name}: ${error.message}`};
-  }
+  } finally { clearTimeout(timer); }
   const frame = results.find(r => r.frameId === 0);
   const result = frame?.result;
   if (!result || typeof result !== 'object') {
@@ -90,22 +95,17 @@ export async function execute(s, command) {
   }
   await selectedTab(s);
   if (command.action === 'verify') {
-    const before = await runPage(s, {operation: 'inspect'});
+    const when = Date.now() + RELOAD_DELAYS[0];
     await save({verification: command, paused: true, verificationReadySince: null, verificationProbed: false,
-      verificationDocument: before.diagnostics?.document_id || null, verificationAwaitingDocument: true,
-      verificationStage: null,
-      message: 'Data request denied. Reloading this tab once, then waiting for browser verification to finish.'});
+      verificationDocument: null, verificationAwaitingDocument: false, verificationStage: null,
+      verificationReloads: 0, verificationNextReloadAt: when, verificationFinalDeadline: null,
+      verificationNeedsApproval: false,
+      message: 'Data request denied. Connected and paused; full page reload 1/3 in 1 minute.'});
+    await chrome.alarms.create(RELOAD_ALARM, {when});
     await chrome.tabs.update(s.tabId, {active: true});
     await badge('!');
-    const recovery = {...s, verification: command};
-    await verificationDiagnostic(recovery, 'reload_started', before);
-    try {
-      await chrome.tabs.reload(s.tabId);
-    } catch (error) {
-      await save({verificationAwaitingDocument: false,
-        message: 'Could not reload the selected tab. Inspect it and click Resume when ready.'});
-      await verificationDiagnostic(recovery, 'reload_failed', {error: error.message});
-    }
+    await verificationDiagnostic({...s, verification: command}, 'reload_scheduled', {
+      diagnostics: {reload_attempt: 1, wait_seconds: 60, next_reload_at: when}});
     void watchVerification();
     return null;
   }
@@ -135,7 +135,8 @@ async function finishVerification(s, result, message) {
     const current = await state();
     if (!current.connected || current.verification?.id !== s.verification.id) return false;
     await api(s, 'result', {id: s.verification.id, result});
-    await save({paused: false, verification: null, message});
+    await chrome.alarms.clear(RELOAD_ALARM);
+    await save({paused: false, verification: null, verificationNextReloadAt: null, message});
     await badge('ON');
     void poll();
     return true;
@@ -158,10 +159,55 @@ async function verificationStage(s, stage, observed) {
   await verificationDiagnostic(s, stage, observed);
 }
 
+async function requireApproval(s, observed = {}) {
+  await save({verificationNeedsApproval: true, verificationNextReloadAt: null,
+    message: 'Three full page reload attempts could not restore access. Collection is paused for your approval. Inspect Chrome, then click Resume, or Disconnect to stop.'});
+  await chrome.alarms.clear(RELOAD_ALARM);
+  await verificationDiagnostic(s, 'approval_required', observed);
+  return false;
+}
+
+async function reloadForVerification(s) {
+  const before = await runPage(s, {operation: 'inspect'}, 5000);
+  const current = await state();
+  if (!current.connected || current.verification?.id !== s.verification.id || current.verificationNeedsApproval) return;
+  const attempt = (current.verificationReloads || 0) + 1;
+  if (attempt > 3) return;
+  const now = Date.now();
+  const when = attempt < 3 ? now + RELOAD_DELAYS[attempt] : null;
+  const deadline = attempt === 3 ? now + 60000 : null;
+  // Persist the consumed attempt before reloading; worker restarts cannot loop it.
+  await save({verificationReloads: attempt, verificationNextReloadAt: when,
+    verificationFinalDeadline: deadline, verificationProbed: false, verificationReadySince: null,
+    verificationDocument: before.diagnostics?.document_id || current.verificationDocument,
+    verificationAwaitingDocument: true, verificationStage: null,
+    message: `Connected and paused; performing full page reload ${attempt}/3…`});
+  await chrome.alarms.create(RELOAD_ALARM, {when: when || deadline});
+  const evidence = {diagnostics: {...before.diagnostics, reload_attempt: attempt,
+    bypass_cache: true, next_reload_at: when}};
+  await verificationDiagnostic(s, 'reload_started', evidence);
+  try {
+    await selectedTab(s);
+    await chrome.tabs.reload(s.tabId, {bypassCache: true});
+    await verificationDiagnostic(s, 'reload_requested', evidence);
+  } catch (error) {
+    await verificationDiagnostic(s, 'reload_failed', {...evidence, error: error.message});
+    if (attempt === 3) await requireApproval(s, {error: error.message});
+    else await save({message: `Reload ${attempt}/3 failed; next full reload in ${RELOAD_DELAYS[attempt]/60000} minutes. Collection remains paused.`});
+  }
+}
+
 export async function checkVerification(s) {
-  if (!s.connected || !s.verification) return false;
+  if (!s.connected || !s.verification || s.verificationNeedsApproval) return false;
+  if (s.verificationNextReloadAt && Date.now() >= s.verificationNextReloadAt) {
+    await reloadForVerification(s);
+    return false;
+  }
+  if (s.verificationFinalDeadline && Date.now() >= s.verificationFinalDeadline) {
+    return requireApproval(s);
+  }
   await selectedTab(s);
-  const observed = await runPage(s, {operation: 'inspect'});
+  const observed = await runPage(s, {operation: 'inspect'}, 5000);
   if (!observed.ok) {
     await verificationStage(s, 'document_unavailable', observed);
     return false; // Navigation can replace a challenge document.
@@ -173,12 +219,16 @@ export async function checkVerification(s) {
   }
   // A user reload is also a new opportunity for one confirmation read.
   if (doc && doc !== s.verificationDocument) {
+    const wasReload = s.verificationAwaitingDocument;
     await save({verificationDocument: doc, verificationAwaitingDocument: false,
       verificationReadySince: null, verificationProbed: false, verificationStage: null});
     s = {...s, verificationDocument: doc, verificationAwaitingDocument: false,
       verificationReadySince: null, verificationProbed: false, verificationStage: null};
-    await verificationDiagnostic(s, 'document_changed', observed);
+    await verificationDiagnostic(s, wasReload ? 'reload_confirmed' : 'document_changed',
+      {...observed, diagnostics: {...observed.diagnostics, reload_attempt: s.verificationReloads}});
   }
+  // First recovery must replace the page, even if its old controls still work.
+  if (s.verificationReloads === 0) return false;
   const mid = Number(s.verification.args.endpoint?.match(/^event\/(\d+)/)?.[1]);
   const ready = mid ? observed.diagnostics?.match_controls && matchId(observed.source_url) === mid :
     ['interactive', 'complete'].includes(observed.diagnostics?.ready_state);
@@ -197,12 +247,13 @@ export async function checkVerification(s) {
   // Claim the one confirmation read before awaiting network work.
   await save({verificationProbed: true});
   const result = await runPage(s, {operation: 'read', endpoint: s.verification.args.endpoint,
-    timeout_ms: 15000});
+    timeout_ms: 15000}, 20000);
   const current = await state();
   if (!current.connected || current.verification?.id !== s.verification.id) return false;
   await verificationDiagnostic(s, 'confirmation_read', result);
   if (!result.ok || ![200, 404, 429].includes(result.status)) {
-    await save({message: 'The data request is still denied or unavailable after one reload. Collection is waiting, not stopped. Inspect the tab and click Resume when ready.'});
+    if (s.verificationReloads >= 3) return requireApproval(s, result);
+    await save({message: `Access is still denied after reload ${s.verificationReloads || 1}/3. Collection is waiting, not stopped; next reload is scheduled. You can also inspect Chrome and click Resume.`});
     return false;
   }
   return finishVerification(s, {ok: true, status: result.status,
@@ -217,7 +268,7 @@ async function watchVerification() {
   try {
     while (true) {
       const s = await state();
-      if (!s.connected || !s.verification) break;
+      if (!s.connected || !s.verification || s.verificationNeedsApproval) break;
       if (await checkVerification(s)) break;
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
@@ -308,6 +359,7 @@ async function message(msg, sender) {
     }
     await chrome.storage.session.clear();
     await chrome.alarms.clear('collector');
+    await chrome.alarms.clear(RELOAD_ALARM);
     await save({connected: false, message: 'Disconnected.'});
     await badge('');
   } else throw new Error('Unknown popup action.');
@@ -322,7 +374,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   return true;
 });
 chrome.alarms.onAlarm.addListener(async alarm => {
-  if (alarm.name === 'collector') {
+  if (alarm.name === 'collector' || alarm.name === RELOAD_ALARM) {
     const s = await state();
     if (s.verification) void watchVerification();
     else void poll();

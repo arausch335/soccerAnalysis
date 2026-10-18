@@ -33,6 +33,10 @@ class ExtensionSofaScoreClient(BrowserSofaScoreClient):
         self._closed = True
 
     @property
+    def waiting_seconds(self):
+        return getattr(self.bridge, 'waiting_seconds', 0.0)
+
+    @property
     def requires_manual_attention(self):
         return getattr(self.bridge, 'unavailable', False) is True
 
@@ -55,7 +59,7 @@ class ExtensionSofaScoreClient(BrowserSofaScoreClient):
     def _verify(self, endpoint, result):
         visible = result.get('diagnostics', {}).get('visible_challenge', False)
         reason = 'visible verification detected' if visible else 'a data request was denied; a visible challenge may not appear'
-        self.report(f'Sofascore {endpoint}: {reason}. Reloading the selected tab once, then waiting for automatic browser clearance; collection stays paused. If needed, inspect Chrome and click Resume. No timed browser cooldown applies.', flush=True)
+        self.report(f'Sofascore {endpoint}: {reason}. Collection stays paused; full page reloads follow waits of 1, 5 and 30 minutes, then manual approval is required if access is still denied. If needed, inspect Chrome and click Resume. No timed browser cooldown applies.', flush=True)
         resolved = self._step('verify', {'endpoint': endpoint, 'visible_challenge': visible,
             'challenge_evidence': result.get('challenge_evidence')}, timeout=self.settings['manual_wait_seconds'])
         if resolved.get('status') == 429:

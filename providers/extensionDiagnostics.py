@@ -25,7 +25,8 @@ class ExtensionDiagnostics:
                 'recoverable', 'title', 'ready_state', 'document_id', 'match_controls', 'player_panels',
                 'dialogs', 'label', 'players', 'player_target', 'actions', 'action',
                 'milliseconds', 'content_type', 'browser_load_state', 'navigation_retries',
-                'recovery_attempts', 'recovery_reason', 'recovery_stage', 'verification_resolution', 'diagnostics'}
+                'recovery_attempts', 'recovery_reason', 'recovery_stage', 'verification_resolution', 'reload_attempt', 'bypass_cache',
+                'next_reload_at', 'wait_seconds', 'diagnostics'}
         result = {}
         for key, item in value.items():
             if key in ('source_url', 'url') and isinstance(item, str):

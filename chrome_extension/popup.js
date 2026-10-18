@@ -1,8 +1,11 @@
 const $ = id => document.getElementById(id);
+$('version').textContent = 'Version ' + chrome.runtime.getManifest().version;
 async function refresh() {
   const s = await chrome.runtime.sendMessage({action: 'status'});
   if (s.error) throw new Error(s.error);
-  $('status').textContent = s.message || 'Not connected.';
+  const countdown = s.verificationNextReloadAt && s.verification && !s.verificationNeedsApproval ?
+    ` Next reload in ${Math.max(0, Math.ceil((s.verificationNextReloadAt - Date.now())/1000))} seconds.` : '';
+  $('status').textContent = (s.message || 'Not connected.') + countdown;
   $('connect').disabled = !!s.connected;
   $('pause').disabled = !s.connected || s.paused;
   $('resume').disabled = !s.connected || !s.paused;

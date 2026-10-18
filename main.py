@@ -341,7 +341,7 @@ def _main(argv=None):
                 prime_job(job,directory,limit=limits.limit)
                 targets[kind].append((job,directory,competition,season))
     result=0
-    progress.emit('[Timing] Scrape ETAs update after each game; final CSV/dataset builds are excluded.')
+    progress.emit('[Timing] Scrape ETAs update after each game; extension verification waits and final CSV/dataset builds are excluded.')
     with progress_scope(progress), extension_scope():
         try:
             for kind in kinds:
