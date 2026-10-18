@@ -15,8 +15,9 @@ import pandas as pd
 from storage.pandasStore import PandasStore, SCHEMA, KEYS, atomic_json, clean
 from .ensembleProgress import PortableProgress, progress_session
 from .selection import season_key, competition_by_name
+from .workerIdentity import ensure_identity, read_worker_id, read_origins, save_origins
 
-MACHINE_STATE={'safety','browser_profiles','http_sessions','.ensemble-computer.json'}
+MACHINE_STATE={'safety','browser_profiles','http_sessions','.ensemble-computer.json','identity.json'}
 STATUS={'not_attempted':0,'pending':0,'elsewhere':0,'failed':1,'partial':2,'visible_only':2,
         'deferred':3,'unavailable':3,'complete':4}
 
@@ -156,7 +157,10 @@ def import_folder(source, root, report=print):
             with path.open(encoding='utf-8-sig',newline='') as handle:
                 for row in csv.DictReader(handle):
                     if None in row or None in row.values():raise ValueError(f'Invalid imported CSV: {relative}')
-    PortableProgress(None,source).scan()
+    source_progress=PortableProgress(None,source)
+    source_progress.scan()
+    local_progress=PortableProgress(None,root)
+    local_progress.scan()
     for relative in stores:
         if any(parent in relative.parents for parent in stores):
             raise ValueError('Nested checkpoint stores are not supported')
@@ -209,6 +213,7 @@ def import_folder(source, root, report=print):
                     planned.append((output,target))
                 else:planned.append((path,target))
         atomic_json(journal,{'state':'applying','source_name':source.name,'source_group':source.parent.name,
+            'source_worker_id':read_worker_id(source),
             'imported_at':datetime.now(timezone.utc).isoformat(),
             'files':[{'path':str(relative),'sha256':checksum} for relative,_,checksum in files],
             'conflicts':'conflicts/','machine_state':'machine_state/'})
@@ -223,6 +228,11 @@ def import_folder(source, root, report=print):
             atomic_copy(incoming,target)
             if digest(incoming)!=digest(target):raise OSError('Published import checksum differs')
             if index%1000==0:report(f'Ensemble: incorporated {index}/{len(writes)} files...',flush=True)
+        origins=read_origins(root)
+        for progress in (local_progress,source_progress):
+            for key,row in progress.local_records.items():
+                origins[key]=sorted(set(origins.get(key,[]))|set(row['origins']))
+        save_origins(root,origins)
         PortableProgress(None,root).scan()
         atomic_json(journal,{**json.loads(journal.read_text()),'state':'complete'})
         if all(path.exists() and digest(path)==checksum for _,path,checksum in files):
@@ -252,8 +262,16 @@ def import_pending(root, ensemble, report=print):
 
 
 @contextmanager
-def ensemble_session(root, ensemble, report=print, *, skip_remote=True):
+def ensemble_session(root, ensemble, report=print, *, skip_remote=True, worker_id=None):
     root=Path(root).resolve();ensemble=Path(ensemble).resolve()
+    if root==ensemble or root in ensemble.parents or ensemble in root.parents:
+        raise ValueError('ensemble_data and the regular data root must be separate folders')
+    marker=root/'.soccer-scraper.json'
+    marked=marker.exists()
+    if marked or not root.exists() or not any(root.iterdir()):
+        if not marked:atomic_json(marker,{'format':1})
+        elif json.loads(marker.read_text(encoding='utf-8')).get('format')!=1:raise ValueError('Unsupported data folder format')
+        with FileLock(str(root/'.collector.lock'),timeout=0):ensure_identity(root,worker_id)
     import_pending(root,ensemble,report)
     # An existing unmarked directory remains subject to the collector's normal
     # refusal. Do not turn an arbitrary folder into a collection implicitly.
@@ -261,10 +279,12 @@ def ensemble_session(root, ensemble, report=print, *, skip_remote=True):
         yield None;return
     if not (root/'.soccer-scraper.json').exists():atomic_json(root/'.soccer-scraper.json',{'format':1})
     with FileLock(str(root/'.collector.lock'),timeout=0):
-        progress=PortableProgress(ensemble/'provenance.json',root)
+        progress=PortableProgress(ensemble/'provenance.json',root,worker_id=worker_id)
         progress.skip_remote=skip_remote
         progress.scan()
     report(f'Portable collection progress: {progress.path}')
+    report(f'Worker identity: {progress.origin} ({root/"identity.json"})')
+    report(f'Git-shareable inventory: {progress.worker_path}')
     with progress_session(progress):
         try:yield progress
         finally:progress.save()

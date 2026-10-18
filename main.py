@@ -373,10 +373,19 @@ def main(argv=None):
     parser.add_argument('--ensemble-root',type=Path,default=config.PROJECT_ROOT/'ensemble_data')
     parser.add_argument('--import-only',action='store_true')
     parser.add_argument('--ignore-provenance',action='store_true')
+    parser.add_argument('--inventory',action='store_true',help='Validate local data and rebuild this worker inventory without scraping')
+    parser.add_argument('--worker-id',help='Unique name for this computer, such as main-mac or laptop')
     transfer,args=parser.parse_known_args(args)
-    if '--help' in args or '-h' in args:return _main(args)
+    if '--help' in args or '-h' in args:
+        print('Worker inventory: --inventory --worker-id main-mac; transfers: --ensemble-root PATH --import-only --ignore-provenance')
+        return _main(args)
     try:
-        with ensemble_session(_selection(args).data_root,transfer.ensemble_root,skip_remote=not transfer.ignore_provenance):
+        with ensemble_session(_selection(args).data_root,transfer.ensemble_root,skip_remote=not transfer.ignore_provenance,
+                              worker_id=transfer.worker_id) as progress:
+            if transfer.inventory:
+                if progress is None:raise ValueError('Inventory requires a marked collection data root')
+                progress.inventory_summary()
+                return 0
             return 0 if transfer.import_only else _main(args)
     except (OSError,ValueError) as exc:
         print(f'Ensemble collection paused: {exc}. Staged copies are retained on an incomplete import.',flush=True)

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from contextlib import nullcontext
 from unittest.mock import patch
 
 import dataset_builder
@@ -15,6 +16,10 @@ DISABLED = dict(BUILD_EVENTS=False, BUILD_PLAYER_MATCH_STATS=False,
 
 
 class DatasetConfigTests(unittest.TestCase):
+    def setUp(self):
+        patcher=patch('main.ensemble_session',side_effect=lambda *a,**k:nullcontext())
+        patcher.start();self.addCleanup(patcher.stop)
+
     def source(self, root):
         source = collection_directory(root / 'data', 'bundesliga-2024-25')
         source.mkdir(parents=True)

@@ -5,13 +5,53 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
-import uuid
 
 from storage.pandasStore import atomic_json, PandasStore
 from .selection import season_label, competition_by_name
+from .workerIdentity import ensure_identity, read_worker_id, read_origins, save_origins
 
 FORMAT = 'soccer-analysis-progress-v1'
 ACTIVE = ContextVar('ensemble_progress', default=None)
+
+
+def read_progress(path):
+    saved=json.loads(Path(path).read_text(encoding='utf-8'))
+    if not isinstance(saved,dict) or saved.get('format')!=FORMAT or not isinstance(saved.get('records'),dict):
+        raise ValueError(f'Unsupported ensemble provenance file: {path}')
+    if any(not isinstance(row,dict) or any(not isinstance(row.get(field,[]),list)
+           or any(not isinstance(item,str) for item in row.get(field,[]))
+           for field in ('capabilities','origins','holders')) for row in saved['records'].values()):
+        raise ValueError(f'Invalid portable provenance records: {path}')
+    return saved
+
+
+def merge_records(target, incoming):
+    for key,row in incoming.items():
+        old=target.get(key,{})
+        target[key]={**old,**row,
+            'capabilities':sorted(set(old.get('capabilities',[]))|set(row.get('capabilities',[]))),
+            'origins':sorted(set(old.get('origins',[]))|set(row.get('origins',[]))),
+            'holders':sorted(set(old.get('holders',[]))|set(row.get('holders',[])))}
+    return target
+
+
+def shared_progress(path):
+    """Read the compatibility map plus every Git-shared worker inventory."""
+    path=Path(path);records={};workers=[]
+    for worker in sorted((path.parent/'workers').glob('*.json')):
+        saved=read_progress(worker)
+        if saved.get('worker_id')!=worker.stem:raise ValueError(f'Worker inventory ID differs from filename: {worker}')
+        workers.append(saved)
+    worker_ids={worker['worker_id'] for worker in workers}
+    if path.exists():
+        legacy=read_progress(path)['records']
+        # A current worker snapshot supersedes stale claims from the legacy
+        # aggregate. Manually supplied claims from unknown workers still work.
+        legacy={key:row for key,row in legacy.items()
+            if not set(row.get('holders') or row.get('origins',[]))&worker_ids}
+        merge_records(records,legacy)
+    for saved in workers:merge_records(records,saved['records'])
+    return records
 
 
 def job_key(namespace, competition, season, mid):
@@ -20,49 +60,73 @@ def job_key(namespace, competition, season, mid):
 
 
 class PortableProgress:
-    def __init__(self, path, root):
+    def __init__(self, path, root, *, worker_id=None):
         self.path=Path(path) if path is not None else None;self.root=Path(root);self.scanning=False;self.skip_remote=True
-        self.records={}
-        if self.path is not None and self.path.exists():
-            saved=json.loads(self.path.read_text(encoding='utf-8'))
-            if saved.get('format')!=FORMAT or not isinstance(saved.get('records'),dict):
-                raise ValueError('Unsupported ensemble provenance file; leave it in place and inspect it')
-            if any(not isinstance(row,dict) or not isinstance(row.get('capabilities',[]),list)
-                   or not isinstance(row.get('origins',[]),list) for row in saved['records'].values()):
-                raise ValueError('Invalid portable provenance records')
-            self.records=saved['records']
-        if self.path is None:self.origin='validation';return
-        identity=self.root/'.ensemble-computer.json'
-        if identity.exists():self.origin=json.loads(identity.read_text(encoding='utf-8'))['id']
-        else:
-            self.origin=uuid.uuid4().hex
-            atomic_json(identity,{'id':self.origin})
+        self.records=shared_progress(self.path) if self.path is not None else {}
+        self.local_records={};self.previous_local={};self.worker_path=None
+        self.origins=read_origins(self.root)
+        if self.path is None:self.origin=read_worker_id(self.root);return
+        identity=ensure_identity(self.root,worker_id)
+        self.origin=identity['worker_id'];self.instance_id=identity['instance_id']
+        self.worker_path=self.path.parent/'workers'/(self.origin+'.json')
+        if self.worker_path.exists():
+            saved=read_progress(self.worker_path)
+            if saved.get('instance_id')!=self.instance_id:
+                raise ValueError(f'Worker ID {self.origin!r} belongs to another data folder; choose a unique --worker-id')
+            self.previous_local=saved['records']
 
     def done(self, namespace, competition, season, mid, required=()):
         row=self.records.get(job_key(namespace,competition,season,mid),{})
         return (row.get('status')=='complete' and
                 set(required)<=set(row.get('capabilities',[])))
 
-    def record(self, namespace, competition, season, mid, capabilities=()):
+    def record(self, namespace, competition, season, mid, capabilities=(), *, collected_here=False):
         key=job_key(namespace,competition,season,mid)
-        old=self.records.get(key,{})
-        self.records[key]={'namespace':namespace,'competition':competition,'season':season_label(season),
+        old=self.local_records.get(key,{})
+        origins=set(self.origins.get(key,[]))
+        if not origins or collected_here:origins.add(self.origin)
+        self.origins[key]=sorted(origins)
+        row={'namespace':namespace,'competition':competition,'season':season_label(season),
             'match_id':str(mid),'status':'complete',
             'capabilities':sorted(set(old.get('capabilities',[]))|set(capabilities)),
-            'origins':sorted(set(old.get('origins',[]))|{self.origin}),
+            'origins':sorted(origins),
+            'holders':[self.origin],
             'updated_at':datetime.now(timezone.utc).isoformat()}
+        previous=self.previous_local.get(key,{})
+        if all(previous.get(field)==value for field,value in row.items() if field!='updated_at'):
+            row['updated_at']=previous['updated_at']
+        self.local_records[key]=row
+        merge_records(self.records,{key:row})
         if not self.scanning:self.save()
 
     def save(self):
         if self.path is None:return
         atomic_json(self.path,{'format':FORMAT,'records':self.records,
             'note':'Completed work only. Raw data and local completeness must be checked separately.'})
+        atomic_json(self.worker_path,{'format':FORMAT,'worker_id':self.origin,'instance_id':self.instance_id,
+            'records':dict(sorted(self.local_records.items())),
+            'note':'Validated data held by this worker. origins identifies its original collectors.'},indent=2,sort_keys=True)
+        save_origins(self.root,self.origins)
 
     def scan(self):
+        self.local_records={}
         self.scanning=True
         try:self._scan()
         finally:self.scanning=False
         self.save()
+        if self.path is not None:
+            self.records=shared_progress(self.path)
+            self.save()
+
+    def inventory_summary(self, report=print):
+        counts={}
+        for row in self.local_records.values():
+            group=(row['competition'],row['season'],row['namespace'])
+            counts[group]=counts.get(group,0)+1
+        report(f'Inventory for {self.origin}: {len(self.local_records)} validated local match records')
+        for (competition,season,namespace),count in sorted(counts.items()):
+            report(f'{competition} {season} | {namespace}: {count} local match records')
+        report('Run review_data.py for percentages and resource completeness; shared claims do not count as local data.')
 
     def _scan(self):
         # Validate actual artifacts rather than trusting a copied status CSV.
@@ -102,7 +166,7 @@ class PortableProgress:
                     else:player_rows(payload,competition,season,event)
                     self.record(namespace,competition,season,mid)
 
-    def record_match(self, match):
+    def record_match(self, match, *, collected_here=False):
         if match.metadata.get('id_namespace','sofascore')!='sofascore':return
         capabilities=['provider:'+key for key,value in match.metadata.get('provider_status',{}).items()
                       if value=='complete']
@@ -116,7 +180,8 @@ class PortableProgress:
             if played and all(spatial.get(str(p.player.id),{}).get(category) in terminal for p in played):
                 capabilities.append('spatial:'+category)
         if capabilities:
-            self.record('sofascore',match.season.competition.name,match.season.name,match.id,capabilities)
+            self.record('sofascore',match.season.competition.name,match.season.name,match.id,capabilities,
+                        collected_here=collected_here)
 
 
 def remote_done(namespace, competition, season, mid, required=()):
@@ -124,14 +189,14 @@ def remote_done(namespace, competition, season, mid, required=()):
     return progress is not None and progress.skip_remote and progress.done(namespace,competition,season,mid,required)
 
 
-def record_complete(namespace, competition, season, mid):
+def record_complete(namespace, competition, season, mid, *, collected_here=False):
     progress=ACTIVE.get()
-    if progress is not None:progress.record(namespace,competition,season,mid)
+    if progress is not None:progress.record(namespace,competition,season,mid,collected_here=collected_here)
 
 
-def record_match(match):
+def record_match(match, *, collected_here=True):
     progress=ACTIVE.get()
-    if progress is not None:progress.record_match(match)
+    if progress is not None:progress.record_match(match,collected_here=collected_here)
 
 
 @contextmanager

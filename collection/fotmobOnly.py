@@ -119,7 +119,7 @@ class FotMobOnlyRunner:
                     return payload
                 payload=self.cache.fetch('fotmob',f'match/{mid}',fetch)
                 player_rows(payload,competition.name,season,event)
-                record_complete('fotmob_players',competition.name,season,mid)
+                record_complete('fotmob_players',competition.name,season,mid,collected_here=not cached)
                 self.report(f'{identity}: {index}/{len(selected)} saved')
             except (ProviderError,ValueError,KeyError,TypeError) as exc:
                 game_status='failed'

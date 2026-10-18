@@ -26,7 +26,7 @@ from .spatialManifest import SPATIAL_MAP_COLUMNS, match_map_rows, player_map_row
 from .fotmobExports import match_payload, source_rows
 from .sofascoreTeams import team_stat_rows as sofascore_team_rows, TEAM_STAT_COLUMNS
 from .playerStatsSchema import PLAYER_MATCH_COLUMNS
-from .progress import get_job
+from .progress import get_job, network_count
 from .jsonFiles import clear_json_cache, read_json
 from .whoScoredExports import event_rows as whoscored_event_rows, match_payload as whoscored_match_payload, EVENT_COLUMNS
 
@@ -467,7 +467,8 @@ class SeasonRunner:
                 match.metadata['collection_transport']={key:value for key,value in sofa.audit.items()
                     if key==f'event/{mid}' or key.startswith(f'event/{mid}/')}
             store.to_csv(dataset)
-            record_match(match)
+            after=network_count(self.clients.values())
+            record_match(match,collected_here=timing.before is None or after is None or after>timing.before)
             entry.update(status='complete' if not errors else 'partial',error='; '.join(errors),
                          updated_at=now(),attempts=int(entry.get('attempts',0))+1)
             if str(mid) in self.browser_coverage:self._write_collection_coverage(match)
