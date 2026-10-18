@@ -49,13 +49,13 @@ KEYS = {'competitions': ['id'], 'seasons': ['competition_id', 'id'], 'teams': ['
 CATEGORIES = ('pace', 'physicality', 'passing', 'dribbling', 'shooting', 'defense')
 
 
-def atomic_json(path, value):
+def atomic_json(path, value, *, indent=None, sort_keys=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.' + uuid4().hex + '.tmp')
     try:
         with temporary.open('w', encoding='utf-8') as stream:
-            json.dump(value, stream, ensure_ascii=False, allow_nan=False)
+            json.dump(value, stream, ensure_ascii=False, allow_nan=False, indent=indent, sort_keys=sort_keys)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)

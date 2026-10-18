@@ -37,3 +37,7 @@ dataset/
 # Transfers and the portable work map stay local; keep only its instructions.
 ensemble_data/*
 !ensemble_data/README.md
+!ensemble_data/workers/
+ensemble_data/workers/*
+!ensemble_data/workers/README.md
+!ensemble_data/workers/*.json

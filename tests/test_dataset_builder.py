@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pandas as pd
 import dataset_builder
 import main
+from contextlib import nullcontext
 from collection.paths import collection_directory
 from collection.seasonRunner import SeasonRunner
 from storage.pandasStore import atomic_json
@@ -14,6 +15,10 @@ from tests.test_providers import Sofa
 
 
 class DatasetBuildTests(unittest.TestCase):
+    def setUp(self):
+        patcher=patch('main.ensemble_session',side_effect=lambda *a,**k:nullcontext())
+        patcher.start();self.addCleanup(patcher.stop)
+
     def test_cached_collection_exports_and_packages_without_network(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

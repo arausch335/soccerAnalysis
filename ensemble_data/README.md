@@ -11,16 +11,23 @@ conflicting originals and machine-specific state under `ensemble_imports/`.
 Machine-specific browser profiles, cookies and safety settings are archived,
 not activated on a different computer. Never paste files while an import runs.
 
-`provenance.json` is the small portable progress file. After scraping, copy it
-to this folder on the next computer before starting `main.py`. It identifies
-provider/collection type, competition, season, match ID and completed coverage.
-That computer skips work with matching coverage, while keeping remote-only
-matches distinct from files actually available locally. Copying this file does
-not transfer data; eventually import all data folders on the main Mac.
+Run `python main.py --inventory --worker-id main-mac` to inventory the main Mac
+without scraping. Choose a unique ID on every computer. The ID is saved in
+`data/identity.json` and travels with transferred data; an import keeps the
+receiver's identity and preserves the incoming records' original collectors.
+
+`workers/<worker-id>.json` contains that computer's validated local inventory.
+These files are allowed in Git: commit/push your own, then pull other workers'
+files before scraping. Main reads every shared inventory but updates only its
+own. [Worker setup and Git commands](workers/README.md).
+
+The older ignored `provenance.json` is still a compatible aggregate progress
+file you can copy manually. Neither Git inventories nor copied progress files
+transfer raw data; eventually import all data folders on the main Mac.
 
 The file updates after every saved match and is rebuilt/merged from local
 artifacts at startup. For simultaneous computers, use different league/season
-selections: a manually copied file cannot coordinate new work in real time.
+selections: Git snapshots cannot coordinate new work in real time.
 Use `main.py --ignore-provenance` to collect missing local data even if the
 portable map records it elsewhere; existing local caches/checkpoints still resume.
 

@@ -109,7 +109,7 @@ class WhoScoredEventRunner:
                     lambda:validate(self.client.match_details(mid)))
                 validate(payload)
                 complete += 1
-                record_complete('whoscored_events',competition.name,season,mid)
+                record_complete('whoscored_events',competition.name,season,mid,collected_here=not cached)
                 failures.pop(str(mid),None)
             except (ProviderError,ValueError,KeyError,TypeError) as exc:
                 game_status='failed'

@@ -136,20 +136,50 @@ starting an import. To import without scraping:
 python main.py --import-only
 ```
 
-`ensemble_data/provenance.json` updates after each saved match. Copy just this
-file to another computer's `ensemble_data` folder to skip matching completed
-work without transferring raw data. Local files are rechecked at startup, so
-the copied map is merged with that computer's own work. Provider namespaces,
+Give each computer a unique identity and inventory its existing data without
+scraping. On the main Mac:
+
+```bash
+python main.py --inventory --worker-id main-mac
+python review_data.py
+```
+
+This saves `data/identity.json` and builds
+`ensemble_data/workers/main-mac.json` from validated local artifacts. On other
+computers choose names such as `laptop` or `desktop`. You can also edit the
+`worker_id` in `data/identity.json`; keep the other generated fields. That file
+travels inside transferred data folders, while imports retain the receiving
+computer's identity. Collection origins stay with the imported records.
+
+The worker JSON files are allowed in Git; raw data, identity and logs remain
+ignored. Commit/push only your worker's file, then pull other workers' updates
+before starting collection:
+
+```bash
+git add ensemble_data/workers/main-mac.json
+git commit -m "Update main-mac inventory"
+git pull --rebase origin main
+git push origin main
+```
+
+`main.py` reads all shared worker files and updates only its own inventory
+after every saved match. Re-run `--inventory` to refresh the snapshot after
+transfers or filesystem changes. Inventories describe data held on a worker;
+their record `origins` preserve the original collectors. The program does not
+automatically run Git commands. The older ignored `ensemble_data/provenance.json`
+remains a compatible aggregate map you can manually copy between computers.
+Local files are rechecked at startup. Provider namespaces,
 competition/season and completed provider/spatial/browser coverage prevent a
 WhoScored event ID or a basic HTTP match from standing in for other requested
 data. Remote-only work is labeled `elsewhere`; it does not inflate local data
 coverage or create fake checkpoints. `review_data.py` reports these counts
 separately. Transfer the full folders to the Mac before building its complete
-dataset. A copied file is not live coordination: computers scraping at the same
+dataset. Git snapshots are not live coordination: computers scraping at the same
 time should use different configured league/season selections.
 
 [Transfer-folder instructions](ensemble_data/README.md). `--ensemble-root`
 selects another staging folder; `--data-root` selects the receiving data root.
+[Worker IDs and Git inventory workflow](ensemble_data/workers/README.md).
 Use `--ignore-provenance` to collect missing local data despite remote completion
 records, while retaining the usual local cache/checkpoint resume behavior.
 

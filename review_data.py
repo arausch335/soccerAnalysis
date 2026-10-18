@@ -153,11 +153,9 @@ def coverage(root,competition,season,provider):
 
 def build_report(root,competitions,seasons,provenance=None):
     portable={}
-    if provenance is not None and Path(provenance).exists():
-        from collection.ensembleProgress import FORMAT
-        saved=read(provenance)
-        if saved.get('format')!=FORMAT:raise ValueError('Unsupported portable provenance format')
-        portable=saved['records']
+    if provenance is not None:
+        from collection.ensembleProgress import shared_progress
+        portable=shared_progress(provenance)
     rows=[]
     for name in competitions:
         competition=competition_by_name(name)
