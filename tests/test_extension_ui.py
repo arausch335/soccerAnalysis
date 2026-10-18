@@ -13,6 +13,7 @@ from collection.playerStatsSchema import PLAYER_MATCH_COLUMNS
 from collection.seasonRunner import SeasonRunner
 from providers.extensionBridge import ExtensionBridge
 from providers.extensionSofaScore import ExtensionSofaScoreClient
+from tools.extension_setup import prepare_extension
 from tests.test_browser_transport import browser_settings
 from tests.test_extension_client import FakeBridge
 from tests.test_providers import event, lineup
@@ -26,7 +27,6 @@ def quiet(*args,**kwargs):pass
 class ExtensionUiTests(unittest.TestCase):
     def test_real_extension_connects_handles_manual_resume_and_exports_one_match(self):
         from playwright.sync_api import sync_playwright
-        directory=Path(__file__).resolve().parents[1]/'chrome_extension'
         html='''<!doctype html><html><body>
         <div id="ad">Advertisement<button aria-label="Close ad" onclick="this.parentElement.remove()">Close ad</button></div>
         <button data-testid="tab-details">Overview</button><button data-testid="tab-lineups">Lineups</button>
@@ -37,7 +37,9 @@ class ExtensionUiTests(unittest.TestCase):
         <script>function show(id){document.querySelector('[data-testid=sheet]').style.display='block';document.querySelector('#player').textContent='Player '+id;}</script>
         </body></html>'''
         with tempfile.TemporaryDirectory() as folder,sync_playwright() as p:
-            root=Path(folder);bridge=ExtensionBridge(report=quiet,connect_timeout=5);bridge.start()
+            root=Path(folder);directory=prepare_extension(root/'load-this-extension')
+            self.assertFalse(any(p.name.startswith('_') for p in directory.rglob('*')))
+            bridge=ExtensionBridge(report=quiet,connect_timeout=5);bridge.start()
             settings={**browser_settings(),'timeout_seconds':5,'manual_wait_seconds':10}
             context=p.chromium.launch_persistent_context(str(root/'profile'),headless=False,
                 args=[f'--disable-extensions-except={directory}',f'--load-extension={directory}'])

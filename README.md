@@ -94,8 +94,8 @@ keeps unavailable normal-schema columns as NA. All share `config/settings.yaml`.
 ## Collect from your normal Chrome tab
 
 The JavaScript **Soccer Collector** extension can connect your chosen Sofascore
-Chrome tab to the Python collector. Install it with **Load unpacked** from the
-`chrome_extension` folder, then try one match:
+Chrome tab to the Python collector. Run `python -m tools.extension_setup`, then
+use **Load unpacked** in Chrome to select the prepared folder it prints. Try one match:
 
 ```bash
 python main.py --collection-types sofascore --sofascore-transport extension --competition "Premier League" --season 2024/25 --limit 1
