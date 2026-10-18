@@ -15,15 +15,24 @@ It does not guarantee that Sofascore or Cloudflare will accept collection.
 ## Install once
 
 1. Pull the latest `main` and install the normal Python requirements.
-2. In normal Chrome, open `chrome://extensions` and enable **Developer mode**.
-3. Choose **Load unpacked** and select this repository's `chrome_extension`
-   folder. Select the folder containing `manifest.json`.
-4. Pin **Soccer Collector** to the Chrome toolbar.
+2. From the repository folder, run `python -m tools.extension_setup`. This creates
+   `build/soccer-collector-extension` and prints its full path.
+3. In normal Chrome, open `chrome://extensions` and enable **Developer mode**.
+4. Choose **Load unpacked** and select the **prepared folder printed by the
+   command**, containing `manifest.json`.
+5. Pin **Soccer Collector** to the Chrome toolbar.
 
-If you installed the Python package instead of using a Git checkout, run
-`python -m tools.extension_setup` to print the installed extension folder.
-There are no npm dependencies or JavaScript build steps. When an update changes
-extension files, click its **Reload** button at `chrome://extensions`.
+The same command works with an installed Python package. Use
+`--output /path/to/an/empty/folder` to choose another location. There are no npm
+dependencies. After pulling an extension update, rerun the preparation command
+and click **Reload** at `chrome://extensions`.
+
+If Chrome reports that `__init__.py` or another underscore-prefixed filename is
+reserved, prepare the folder with the command above and load that folder rather
+than the source/package directory. It copies only Chrome runtime assets and
+excludes Python files, `__pycache__`, tests and other development files. Existing
+local Python caches do not need to be deleted. A fresh prepared folder works
+even if those caches remain in the checkout.
 
 ## Try one match first
 

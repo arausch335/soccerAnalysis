@@ -27,6 +27,7 @@ soccer-api-test = "api_test:main"
 py-modules = ["main", "dataset_builder", "whoscored_events", "api_test", "fotmob_player_stats", "review_data", "sofascore_browser"]
 
 [tool.setuptools.packages.find]
+namespaces = true
 include = ["config", "analysis*", "collection*", "fixtures*", "models*", "providers*", "storage*", "tools*", "chrome_extension"]
 
 [tool.setuptools.package-data]
