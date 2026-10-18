@@ -11,7 +11,7 @@ class ExtensionDiagnosticTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             trace=ExtensionDiagnostics(folder)
             trace.record('command_finished',action='page',args={'endpoint':'event/1/player/7/statistics',
-                'token':'secret-token'},result={'ok':True,'status':403,
+                'token':'secret-token','match_url':'https://www.sofascore.com/event/1?private=secret-query#id:1'},result={'ok':True,'status':403,
                 'source_url':'https://www.sofascore.com/event/1?private=secret-query#id:1,tab:lineups',
                 'payload':{'secret':'raw-response'},'headers':{'Cookie':'secret-cookie'},
                 'diagnostics':{'recovery_stage':'confirmation_read','visible_challenge':False,'player_panels':2,
@@ -23,6 +23,7 @@ class ExtensionDiagnosticTests(unittest.TestCase):
             self.assertEqual(row['result']['diagnostics']['recovery_stage'],'confirmation_read')
             self.assertEqual(row['result']['status'],403)
             self.assertEqual(row['args']['endpoint'],'event/1/player/7/statistics')
+            self.assertEqual(row['args']['match_url'],'https://www.sofascore.com/event/1#id:1')
 
     def test_concurrent_connection_and_command_events_remain_complete_json_lines(self):
         with tempfile.TemporaryDirectory() as folder:

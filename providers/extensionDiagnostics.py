@@ -24,12 +24,12 @@ class ExtensionDiagnostics:
                 'visible_challenge', 'challenge_evidence', 'tab_opened', 'player_opened',
                 'recoverable', 'title', 'ready_state', 'document_id', 'match_controls', 'player_panels',
                 'dialogs', 'label', 'players', 'player_target', 'actions', 'action',
-                'milliseconds', 'content_type', 'browser_load_state', 'navigation_retries',
+                'milliseconds', 'content_type', 'browser_load_state', 'navigation_retries', 'navigation_reused',
                 'recovery_attempts', 'recovery_reason', 'recovery_stage', 'verification_resolution', 'reload_attempt', 'bypass_cache',
                 'next_reload_at', 'wait_seconds', 'diagnostics'}
         result = {}
         for key, item in value.items():
-            if key in ('source_url', 'url') and isinstance(item, str):
+            if key in ('source_url', 'url', 'match_url') and isinstance(item, str):
                 parsed = urlsplit(item)
                 if parsed.scheme == 'https' and parsed.netloc == 'www.sofascore.com':
                     mid = re.search(r'(?:^|,)id:(\d+)', parsed.fragment)

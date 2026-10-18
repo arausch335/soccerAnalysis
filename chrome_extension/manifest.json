@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Soccer Collector",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Connect a chosen Sofascore tab to your local soccerAnalysis collector.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "scripting", "alarms"],
