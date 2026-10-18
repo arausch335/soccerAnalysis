@@ -118,12 +118,14 @@ its older API work too. No data migration or deletion is needed.
   third. Each uses Chrome's bypass-cache reload and logs a changed document
   before checking access. Persistent Chrome alarms and saved deadlines keep
   the schedule alive if the extension worker sleeps. The popup shows version
-  0.4.0, the current attempt and the next reload countdown.
+  0.4.1, the current attempt and the next reload countdown.
   The Python connection stays connected while only the website tab reloads.
   The extension watches for the browser's automatic clearance, then four seconds
   of stable readiness before one confirmation request checks access. Match
   requests require the intended match controls; schedule requests also work
-  from a ready homepage. Successful clearance resumes collection automatically.
+  from a ready homepage. If the verification redirect drops the match ID from
+  the URL, the extension restores the intended match and then retries its data.
+  Successful clearance resumes collection automatically.
   A manual page reload permits a fresh confirmation after the new page settles.
   After the third failed confirmation, or 60 seconds without a ready page
   after the last reload, automatic recovery stops and waits for your approval.

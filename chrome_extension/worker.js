@@ -50,10 +50,18 @@ async function runPage(s, args, timeoutMs) {
   return result;
 }
 
-export async function navigate(s, url) {
+export async function navigate(s, url, forceReload = false) {
   if (!matchUrl(url)) throw new Error('Only Sofascore match pages can be opened.');
   const before = await selectedTab(s);
   const previous = await runPage(s, {operation: 'inspect'});
+  // After verification, Python may prepare the already restored match again.
+  // Keep that verified document; transient page failures explicitly force reload.
+  if (!forceReload && before.url === url && previous.ok &&
+      !previous.diagnostics?.visible_challenge && previous.diagnostics?.match_controls &&
+      matchId(previous.source_url) === matchId(url)) {
+    return {...previous, diagnostics: {...previous.diagnostics, browser_load_state: before.status,
+      navigation_retries: 0, navigation_reused: true}};
+  }
   // A same-document hash change can select another match without replacing
   // the document. A reload/full navigation must replace the old document first.
   const oldUrl = new URL(before.url), nextUrl = new URL(url);
@@ -61,7 +69,10 @@ export async function navigate(s, url) {
   let previousDocument = previous.diagnostics?.document_id;
   let last;
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (attempt === 0) await chrome.tabs.update(s.tabId, {url});
+    if (attempt === 0) {
+      if (before.url === url) await chrome.tabs.reload(s.tabId);
+      else await chrome.tabs.update(s.tabId, {url});
+    }
     else {
       await save({message: 'Match content not ready. Reloading this match once…'});
       await chrome.tabs.reload(s.tabId);
@@ -93,13 +104,18 @@ export async function execute(s, command) {
   if (!command || typeof command.id !== 'string' || !command.args || typeof command.args !== 'object') {
     throw new Error('Malformed collector command.');
   }
-  await selectedTab(s);
+  const initialTab = await selectedTab(s);
   if (command.action === 'verify') {
+    const mid = Number(command.args.endpoint?.match(/^event\/(\d+)/)?.[1]);
+    const candidate = command.args.match_url || initialTab.url;
+    const target = mid && matchUrl(candidate) && matchId(candidate) === mid ? candidate :
+      mid ? `https://www.sofascore.com/event/${mid}` : null;
     const when = Date.now() + RELOAD_DELAYS[0];
     await save({verification: command, paused: true, verificationReadySince: null, verificationProbed: false,
       verificationDocument: null, verificationAwaitingDocument: false, verificationStage: null,
       verificationReloads: 0, verificationNextReloadAt: when, verificationFinalDeadline: null,
-      verificationNeedsApproval: false,
+      verificationNeedsApproval: false, verificationMatchUrl: target,
+      verificationRestoreKey: null, verificationRestoringMatch: false,
       message: 'Data request denied. Connected and paused; full page reload 1/3 in 1 minute.'});
     await chrome.alarms.create(RELOAD_ALARM, {when});
     await chrome.tabs.update(s.tabId, {active: true});
@@ -118,7 +134,7 @@ export async function execute(s, command) {
       await save({message: 'Page operation failed. Reopening the intended match and retrying once…'});
       const tab = await selectedTab(s);
       const recovery = await navigate(s, matchId(tab.url) === mid && matchUrl(tab.url) ?
-        tab.url : `https://www.sofascore.com/event/${mid}`);
+        tab.url : `https://www.sofascore.com/event/${mid}`, true);
       if (!recovery.ok || recovery.verification) return recovery;
       const original = result.error;
       result = await runPage(s, command.args);
@@ -149,7 +165,7 @@ async function verificationDiagnostic(s, stage, result = {}) {
     await api(s, 'diagnostic', {id: s.verification.id, result: {
       endpoint: s.verification.args.endpoint, recovery_stage: stage,
       ok: result.ok, status: result.status, error: result.error,
-      source_url: result.source_url, diagnostics: result.diagnostics}});
+      source_url: result.source_url, url: result.url, diagnostics: result.diagnostics}});
   } catch (_) { /* Diagnostic delivery must not interrupt browser recovery. */ }
 }
 
@@ -230,7 +246,36 @@ export async function checkVerification(s) {
   // First recovery must replace the page, even if its old controls still work.
   if (s.verificationReloads === 0) return false;
   const mid = Number(s.verification.args.endpoint?.match(/^event\/(\d+)/)?.[1]);
-  const ready = mid ? observed.diagnostics?.match_controls && matchId(observed.source_url) === mid :
+  const observedMid = observed.source_url ? matchId(observed.source_url) : null;
+  const cleared = !!observed.source_url && !observed.diagnostics?.visible_challenge &&
+    ['interactive', 'complete'].includes(observed.diagnostics?.ready_state);
+  if (mid && cleared && observedMid !== mid) {
+    // Sofascore's verification redirect can strip #id:<match>, leaving the
+    // H2H page usable but without the specific historical event selected.
+    const source = new URL(observed.source_url);
+    if (source.pathname === '/captcha.html') {
+      await verificationStage(s, 'waiting_for_verification_return', observed);
+      return false;
+    }
+    const key = `${doc || ''}|${observed.source_url}`;
+    if (s.verificationRestoreKey !== key) {
+      const target = s.verificationMatchUrl && matchUrl(s.verificationMatchUrl) &&
+        matchId(s.verificationMatchUrl) === mid ? s.verificationMatchUrl :
+        `https://www.sofascore.com/event/${mid}`;
+      await save({verificationRestoreKey: key, verificationRestoringMatch: true,
+        verificationReadySince: null, verificationProbed: false,
+        message: 'Verification cleared. Restoring the selected match before retrying its data…'});
+      await chrome.tabs.update(s.tabId, {url: target});
+      await verificationDiagnostic(s, 'match_restore_requested', {...observed, url: target});
+    }
+    return false;
+  }
+  if (mid && observedMid === mid && s.verificationRestoringMatch) {
+    await save({verificationRestoringMatch: false, verificationReadySince: null});
+    s = {...s, verificationRestoringMatch: false, verificationReadySince: null};
+    await verificationDiagnostic(s, 'match_restored', observed);
+  }
+  const ready = mid ? observed.diagnostics?.match_controls && observedMid === mid :
     ['interactive', 'complete'].includes(observed.diagnostics?.ready_state);
   if (observed.diagnostics?.visible_challenge || !ready) {
     await save({verificationReadySince: null, ...(observed.diagnostics?.visible_challenge &&

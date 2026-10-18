@@ -40,7 +40,7 @@ class ExtensionUiTests(unittest.TestCase):
         function automaticChallenge(){
           const content=document.body.innerHTML;
           document.body.innerHTML='<p>Verify you are human</p><button onclick="challengeClicked()">Verify</button>';
-          setTimeout(()=>{document.body.innerHTML=content;sessionStorage.setItem('automaticallyCleared','yes');},2000);
+          setTimeout(()=>{history.replaceState(null,'',location.pathname);document.body.innerHTML=content;sessionStorage.setItem('automaticallyCleared','yes');},2000);
         }
         if(sessionStorage.getItem('needsReloadClearance')){
           sessionStorage.removeItem('needsReloadClearance');
@@ -68,13 +68,17 @@ class ExtensionUiTests(unittest.TestCase):
                     if key=='event/1/player/8/statistics' and not interrupted:
                         interrupted=True;r.abort();return
                     result=fake.request('page',{'operation':'read','endpoint':key})
+                    if '/events/' in key:
+                        for fixture in result.get('payload',{}).get('events',[]):
+                            fixture['customId']='abc'
+                            fixture['homeTeam']['slug']='home';fixture['awayTeam']['slug']='away'
                     r.fulfill(status=result['status'],content_type='application/json',body=json.dumps(result.get('payload',{})))
                 else:r.fulfill(status=200,content_type='text/html',body=html)
             context.route('https://www.sofascore.com/**',route)
             try:
                 worker=context.service_workers[0] if context.service_workers else context.wait_for_event('serviceworker')
                 extension_id=worker.url.split('/')[2]
-                sofa=context.new_page();sofa.goto('https://www.sofascore.com/event/1')
+                sofa=context.new_page();sofa.goto('https://www.sofascore.com/football/match/away-home/abc#id:1')
                 popup=context.new_page();popup.goto(f'chrome-extension://{extension_id}/popup.html')
                 popup.locator('#code').fill(f'http://{bridge.address}/#{bridge.token}')
                 # A browser-action popup leaves the site tab active. Reproduce
@@ -122,11 +126,11 @@ class ExtensionUiTests(unittest.TestCase):
                 self.assertEqual(sofa.evaluate("sessionStorage.getItem('automaticallyCleared')"),'yes')
                 self.assertEqual(sofa.evaluate("sessionStorage.getItem('reloadedForClearance')"),'yes')
                 self.assertEqual(sofa.evaluate("Number(sessionStorage.getItem('challengeClicks')||0)"),0)
-                self.assertTrue(interrupted)
                 trace=[json.loads(line) for line in bridge.diagnostics.path.read_text().splitlines()]
                 self.assertEqual(result.status.tolist(),['complete'],
                     {'matches':result[['status','error']].to_dict('records'),
-                     'trace':trace[-8:]})
+                     'trace':trace[-16:]})
+                self.assertTrue(interrupted)
                 frame=pd.read_csv(root/'season'/'player_match_stats.csv')
                 self.assertEqual(tuple(frame.columns),PLAYER_MATCH_COLUMNS)
                 self.assertEqual(len(frame),2)
@@ -139,6 +143,9 @@ class ExtensionUiTests(unittest.TestCase):
                 self.assertTrue(any(row.get('result',{}).get('diagnostics',{}).get('verification_resolution')=='automatic' for row in trace))
                 self.assertTrue(any(row.get('result',{}).get('recovery_stage')=='reload_confirmed' for row in trace))
                 self.assertTrue(any(row.get('result',{}).get('recovery_stage')=='confirmation_read' for row in trace))
+                self.assertTrue(any(row.get('result',{}).get('recovery_stage')=='match_restore_requested' for row in trace))
+                self.assertTrue(any(row.get('result',{}).get('recovery_stage')=='match_restored' for row in trace))
+                self.assertIn('#id:1',sofa.url)
                 self.assertNotIn(bridge.token,bridge.diagnostics.path.read_text())
                 popup.locator('#disconnect').click()
             finally:

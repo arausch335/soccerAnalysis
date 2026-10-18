@@ -110,7 +110,7 @@ test('reload readiness rejects the old document even when its match controls rem
     return [{frameId:0,documentId:calls<3?'old':'new',result:{ok:true,
       source_url:'https://www.sofascore.com/event/1',diagnostics:{match_controls:true}}}];
   }};
-  const result=await navigate({tabId:1},'https://www.sofascore.com/event/1');
+  const result=await navigate({tabId:1},'https://www.sofascore.com/event/1',true);
   assert.equal(calls,3);assert.equal(result.diagnostics.document_id,'new');
 });
 
@@ -309,4 +309,64 @@ test('a Chrome alarm resumes a saved due recovery without a new Python command',
   while(!reloads && Date.now()<deadline)await new Promise(r=>setTimeout(r,5));
   assert.equal(reloads,1);assert.equal(store.connected,true);
   store.connected=false;store.verification=null;
+});
+
+
+test('verification redirect losing the match hash restores the event before retrying automatically',async()=>{
+  verificationState();
+  const bare='https://www.sofascore.com/football/match/newcastle-united-brighton-and-hove-albion/FsO';
+  const target=bare+'#id:10385743';let url=bare,reads=0;const updates=[],posts=[];
+  store.verification.args.endpoint='event/10385743/player/560128/statistics';
+  store.verificationMatchUrl=target;store.verificationDocument='returned';
+  store.verificationNextReloadAt=Date.now()+300000;
+  chrome.tabs.get=async()=>({id:1,url});
+  chrome.tabs.update=async(_id,changes)=>{updates.push(changes.url);};
+  chrome.scripting={executeScript:async({args:[args]})=>{
+    if(args.operation==='read')reads++;
+    return [{frameId:0,documentId:'returned',result:{ok:true,status:200,source_url:url,
+      diagnostics:{match_controls:true,ready_state:'complete',visible_challenge:false}}}];
+  }};
+  globalThis.fetch=async(url,args)=>{posts.push({url,args});return {ok:true,json:async()=>({phase:'closed'})};};
+  assert.equal(await checkVerification({...store}),false);
+  assert.deepEqual(updates,[target]);assert.equal(reads,0);
+  // A stale observation while the hash update is pending must not loop navigation.
+  await checkVerification({...store});assert.deepEqual(updates,[target]);
+  url=target;await checkVerification({...store});assert.equal(reads,0);
+  store.verificationReadySince=Date.now()-5000;
+  assert.equal(await checkVerification({...store}),true);assert.equal(reads,1);
+  const stages=posts.filter(p=>p.url.endsWith('/diagnostic')).map(p=>JSON.parse(p.args.body).result.recovery_stage);
+  assert.ok(stages.includes('match_restore_requested'));assert.ok(stages.includes('match_restored'));
+  const result=JSON.parse(posts.find(p=>p.url.endsWith('/result')).args.body).result;
+  assert.equal(result.diagnostics.verification_resolution,'automatic');
+  assert.equal(store.verificationNextReloadAt,null);
+  await new Promise(r=>setTimeout(r,10));
+});
+
+test('restoration waits for verification and never selects a different historical match',async()=>{
+  verificationState();store.verificationDocument='captcha';
+  store.verificationMatchUrl='https://www.sofascore.com/event/999';
+  let challenged=true,url='https://www.sofascore.com/captcha.html';const updates=[];
+  chrome.tabs.get=async()=>({id:1,url});
+  chrome.tabs.update=async(_id,changes)=>updates.push(changes.url);
+  chrome.scripting={executeScript:async({args:[args]})=>{
+    assert.equal(args.operation,'inspect');
+    return [{frameId:0,documentId:'captcha',result:{ok:true,source_url:url,
+      diagnostics:{match_controls:false,ready_state:'complete',visible_challenge:challenged}}}];
+  }};
+  await checkVerification({...store});assert.equal(updates.length,0);
+  challenged=false;await checkVerification({...store});assert.equal(updates.length,0);
+  url='https://www.sofascore.com/';await checkVerification({...store});
+  assert.deepEqual(updates,['https://www.sofascore.com/event/1']);
+  store.connected=false;store.verification=null;
+});
+
+
+test('preparing the already verified match preserves its document without another reload',async()=>{
+  matchTab();let reloads=0,updates=0;
+  chrome.tabs.reload=async()=>{reloads++;};chrome.tabs.update=async()=>{updates++;};
+  chrome.scripting={executeScript:async()=>[{frameId:0,documentId:'verified',result:{ok:true,
+    source_url:'https://www.sofascore.com/event/1',diagnostics:{match_controls:true,visible_challenge:false}}}]};
+  const result=await navigate({tabId:1},'https://www.sofascore.com/event/1');
+  assert.equal(result.diagnostics.navigation_reused,true);
+  assert.equal(result.diagnostics.document_id,'verified');assert.equal(reloads,0);assert.equal(updates,0);
 });

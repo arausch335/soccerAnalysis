@@ -60,8 +60,13 @@ class ExtensionSofaScoreClient(BrowserSofaScoreClient):
         visible = result.get('diagnostics', {}).get('visible_challenge', False)
         reason = 'visible verification detected' if visible else 'a data request was denied; a visible challenge may not appear'
         self.report(f'Sofascore {endpoint}: {reason}. Collection stays paused; full page reloads follow waits of 1, 5 and 30 minutes, then manual approval is required if access is still denied. If needed, inspect Chrome and click Resume. No timed browser cooldown applies.', flush=True)
-        resolved = self._step('verify', {'endpoint': endpoint, 'visible_challenge': visible,
-            'challenge_evidence': result.get('challenge_evidence')}, timeout=self.settings['manual_wait_seconds'])
+        args = {'endpoint': endpoint, 'visible_challenge': visible,
+                'challenge_evidence': result.get('challenge_evidence')}
+        selected = re.match(r'event/(\d+)', endpoint)
+        if selected:
+            mid = int(selected[1])
+            args['match_url'] = event_url(self.events.get(mid, {'id': mid}))
+        resolved = self._step('verify', args, timeout=self.settings['manual_wait_seconds'])
         if resolved.get('status') == 429:
             self._fail_status(endpoint, 429, {'Retry-After': resolved.get('retryAfter')})
         # Manual navigation can change the selected page or open panel.

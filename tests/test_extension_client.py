@@ -82,6 +82,7 @@ class ExtensionClientTests(unittest.TestCase):
             self.assertEqual(sum(action=='verify' for action,_ in bridge.calls),1)
             verify=next(args for action,args in bridge.calls if action=='verify')
             self.assertFalse(verify['visible_challenge'])
+            self.assertEqual(verify['match_url'],'https://www.sofascore.com/event/1')
             bridge.denied=2;client.refresh_cache=True
             with self.assertRaises(ProviderRequestError) as caught:client.event(1)
             self.assertEqual(caught.exception.status_code,403)
