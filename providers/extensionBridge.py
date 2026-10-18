@@ -31,6 +31,7 @@ class ExtensionBridge:
         self.phase = 'waiting'
         self.user_paused = False
         self.unavailable = False
+        self.waiting_seconds = 0.0
         from .extensionDiagnostics import ExtensionDiagnostics
         self.diagnostics = ExtensionDiagnostics(diagnostics_dir, report) if diagnostics_dir is not None else None
 
@@ -216,7 +217,10 @@ class ExtensionBridge:
         self.start()
         if self.unavailable:
             raise ProviderRequestError('Extension needs attention; reconnect and resume collection', attempts=0)
-        if not self.connected.wait(self.connect_timeout):
+        connection_started = time.monotonic()
+        connected = self.connected.wait(self.connect_timeout)
+        self.waiting_seconds += time.monotonic() - connection_started
+        if not connected:
             self.unavailable = True
             raise ProviderRequestError('Chrome extension not connected; click Connect and run again', attempts=0)
         with self.serial:
@@ -236,7 +240,9 @@ class ExtensionBridge:
                     while item['result'] is None and not self.closed:
                         self.condition.wait(timeout=None if was_paused else max(0, remaining))
                         current = time.monotonic()
-                        if not was_paused:
+                        if was_paused:
+                            self.waiting_seconds += current - last
+                        else:
                             remaining -= current - last
                         last = current
                         was_paused = self.user_paused or action == 'verify'

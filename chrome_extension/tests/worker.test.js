@@ -118,7 +118,7 @@ function verificationState() {
   matchTab();
   store={connected:true,paused:true,tabId:1,base:'http://127.0.0.1:12345',token:'x'.repeat(43),
     clientId:'a'.repeat(32),verification:{id:'verify',args:{endpoint:'event/1/lineups'}},
-    verificationReadySince:Date.now()-5000,verificationProbed:false};
+    verificationReadySince:Date.now()-5000,verificationProbed:false,verificationReloads:1};
 }
 
 test('verification resumes automatically after settled match controls and successful access',async()=>{
@@ -171,10 +171,10 @@ test('manual Resume still completes a verification that did not clear automatica
 });
 
 
-test('first denial reloads once and rejects the previous document before checking access',async()=>{
+test('first denial schedules a real reload after one minute and rejects the previous document',async()=>{
   verificationState();store.connected=false;store.verification=null;
   let reloads=0,doc='old';const operations=[],posts=[];
-  chrome.tabs.reload=async()=>{reloads++;};
+  chrome.tabs.reload=async(_id,options)=>{assert.deepEqual(options,{bypassCache:true});reloads++;};
   chrome.scripting={executeScript:async({args:[args]})=>{
     operations.push(args.operation);
     return [{frameId:0,documentId:doc,result:{ok:true,status:200,
@@ -183,6 +183,12 @@ test('first denial reloads once and rejects the previous document before checkin
   globalThis.fetch=async(url,args)=>{posts.push({url,args});return {ok:true,json:async()=>({phase:'closed'})};};
   assert.equal(await execute({...store},{id:'reload-verify',action:'verify',args:{endpoint:'event/1/lineups'}}),null);
   await new Promise(r=>setTimeout(r,0));store.connected=true;
+  assert.equal(reloads,0);
+  assert.ok(store.verificationNextReloadAt-Date.now()>59000);
+  await checkVerification({...store});
+  assert.equal(reloads,0);
+  store.verificationNextReloadAt=Date.now()-1;
+  await checkVerification({...store});
   assert.equal(reloads,1);
   await checkVerification({...store});
   assert.equal(operations.includes('read'),false);
@@ -193,7 +199,7 @@ test('first denial reloads once and rejects the previous document before checkin
   assert.equal(reloads,1);assert.equal(operations.filter(x=>x==='read').length,1);
   const stages=posts.filter(p=>p.url.endsWith('/diagnostic')).map(p=>JSON.parse(p.args.body).result.recovery_stage);
   assert.ok(stages.includes('reload_started'));assert.ok(stages.includes('waiting_for_reload'));
-  assert.ok(stages.includes('document_changed'));assert.ok(stages.includes('confirmation_read'));
+  assert.ok(stages.includes('reload_confirmed'));assert.ok(stages.includes('confirmation_read'));
   await new Promise(r=>setTimeout(r,10));
 });
 
@@ -220,5 +226,87 @@ test('match recovery never reads from the wrong match and a manual reload permit
   store.verificationReadySince=Date.now()-5000;
   await checkVerification({...store});await checkVerification({...store});
   assert.equal(reads,1);assert.equal(store.paused,true);
+  store.connected=false;store.verification=null;
+});
+
+
+test('three reloads use 1, 5 and 30 minute waits and then require explicit Resume',async()=>{
+  verificationState();store.connected=false;store.verification=null;
+  const realNow=Date.now;let now=100000,doc='first',reloads=0,reads=0;const alarms=[];
+  Date.now=()=>now;
+  chrome.alarms.create=async(name,options)=>alarms.push({name,...options});
+  chrome.tabs.reload=async(_id,options)=>{assert.deepEqual(options,{bypassCache:true});reloads++;doc='reload-'+reloads;};
+  chrome.scripting={executeScript:async({args:[args]})=>{
+    if(args.operation==='read')reads++;
+    return [{frameId:0,documentId:doc,result:{ok:true,status:403,
+      source_url:'https://www.sofascore.com/event/1',diagnostics:{match_controls:true,visible_challenge:false}}}];
+  }};
+  try {
+    await execute({...store},{id:'three',action:'verify',args:{endpoint:'event/1/lineups'}});
+    await new Promise(r=>setTimeout(r,0));store.connected=true;
+    assert.equal(store.verificationNextReloadAt,now+60000);
+    for(let attempt=1;attempt<=3;attempt++) {
+      now=store.verificationNextReloadAt-1;
+      await checkVerification({...store});assert.equal(reloads,attempt-1);
+      now++;await checkVerification({...store});assert.equal(reloads,attempt);
+      if(attempt<3)assert.equal(store.verificationNextReloadAt,now+[0,300000,1800000][attempt]);
+      await checkVerification({...store});now+=5000;await checkVerification({...store});
+      assert.equal(reads,attempt);
+    }
+    assert.equal(store.verificationNeedsApproval,true);assert.equal(store.paused,true);
+    assert.match(store.message,/approval/);assert.equal(store.verification.id,'three');
+    now+=3600000;await checkVerification({...store});assert.equal(reloads,3);assert.equal(reads,3);
+    assert.equal(alarms.filter(a=>a.name==='verification-reload').length,4);
+  } finally {Date.now=realNow;store.connected=false;store.verification=null;}
+});
+
+test('missing new document cannot confirm access and still advances to the next reload',async()=>{
+  verificationState();store.verificationDocument='old';store.verificationReloads=1;
+  store.verificationAwaitingDocument=true;store.verificationNextReloadAt=Date.now()+300000;
+  let reads=0,reloads=0;
+  chrome.scripting={executeScript:async({args:[args]})=>{
+    if(args.operation==='read')reads++;
+    return [{frameId:0,documentId:'old',result:{ok:true,status:200,
+      source_url:'https://www.sofascore.com/event/1',diagnostics:{match_controls:true}}}];
+  }};
+  chrome.tabs.reload=async()=>{reloads++;};
+  await checkVerification({...store});assert.equal(reads,0);
+  store.verificationNextReloadAt=Date.now()-1;
+  await checkVerification({...store});assert.equal(reloads,1);assert.equal(store.verificationReloads,2);
+  assert.equal(reads,0);store.connected=false;store.verification=null;
+});
+
+test('third reload eventually requests approval if the page stays challenged',async()=>{
+  verificationState();store.verificationReloads=3;store.verificationFinalDeadline=Date.now()+60000;
+  chrome.scripting={executeScript:async({args:[args]})=>{
+    assert.equal(args.operation,'inspect');
+    return [{frameId:0,result:{ok:true,diagnostics:{visible_challenge:true}}}];
+  }};
+  await checkVerification({...store});assert.equal(store.verificationNeedsApproval,undefined);
+  store.verificationFinalDeadline=Date.now()-1;
+  await checkVerification({...store});assert.equal(store.verificationNeedsApproval,true);
+  assert.equal(store.paused,true);store.connected=false;store.verification=null;
+});
+
+
+test('a stalled page inspection cannot prevent a due full reload',async()=>{
+  verificationState();store.verificationNextReloadAt=Date.now()-1;
+  let reloads=0;
+  chrome.scripting={executeScript:async()=>new Promise(()=>{})};
+  chrome.tabs.reload=async(_id,options)=>{assert.deepEqual(options,{bypassCache:true});reloads++;};
+  await checkVerification({...store});
+  assert.equal(reloads,1);assert.equal(store.verificationReloads,2);
+  store.connected=false;store.verification=null;
+});
+
+test('a Chrome alarm resumes a saved due recovery without a new Python command',async()=>{
+  verificationState();store.verificationNextReloadAt=Date.now()-1;
+  let reloads=0;
+  chrome.scripting={executeScript:async()=>[{frameId:0,documentId:'old',result:{ok:true,diagnostics:{}}}]};
+  chrome.tabs.reload=async()=>{reloads++;};
+  await alarm({name:'verification-reload'});
+  const deadline=Date.now()+1000;
+  while(!reloads && Date.now()<deadline)await new Promise(r=>setTimeout(r,5));
+  assert.equal(reloads,1);assert.equal(store.connected,true);
   store.connected=false;store.verification=null;
 });

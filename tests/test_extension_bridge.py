@@ -85,6 +85,7 @@ class ExtensionBridgeTests(unittest.TestCase):
             self.http('/v1/resume',{})
             self.http('/v1/result',{'id':body['command']['id'],'result':{'ok':True}})
             self.assertTrue(future.result()['ok'])
+            self.assertGreaterEqual(self.bridge.waiting_seconds,.09)
 
     def test_disconnect_unblocks_pending_request_and_can_reconnect(self):
         self.connect()
@@ -105,6 +106,7 @@ class ExtensionBridgeTests(unittest.TestCase):
             self.assertFalse(future.done())
             self.http('/v1/result',{'id':body['command']['id'],'result':{'ok':True}})
             self.assertTrue(future.result(timeout=1)['ok'])
+            self.assertGreaterEqual(self.bridge.waiting_seconds,.04)
         self.assertIsNone(self.bridge.pending)
         self.assertFalse(self.bridge.unavailable)
         self.assertEqual(self.http('/v1/result',{'id':'expired','result':{'ok':True}})[0],409)

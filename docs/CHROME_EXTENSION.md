@@ -85,21 +85,49 @@ across all the competitions/seasons in that `main.py` run. `combined` is also
 supported: only Sofascore uses the extension, while FotMob/WhoScored retain
 their own clients and settings.
 
+## Existing API data
+
+Changing the transport does not invalidate completed API checkpoints. A match
+already complete for the requested providers and spatial categories prints
+`Already complete` and is skipped without connecting Chrome. Missing requested
+spatial resources are filled separately. Explicitly incomplete browser attempts
+remain eligible for retry. `--refresh` intentionally revisits saved work.
+
+The extension and visible browser can also read validated successful responses
+from `data/http_cache/sofascore`, `data/browser_cache/sofascore` and
+`data/extension_cache/sofascore`. Existing files retain their original source;
+no browser visit is claimed just because an API response was reused. The
+browser coverage report continues to distinguish actual browser collection.
+
+After updating, run `python main.py --inventory` to refresh your worker's Git
+inventory, then commit/push that worker file so other computers can recognize
+its older API work too. No data migration or deletion is needed.
+
 ## Pause, verification, disconnect
 
 - **Pause** stops after the current step. Its wait is excluded from command
   timeouts, so Python can wait until **Resume**. Per-game elapsed time includes
-  human waits and can affect the ETA.
+  human waits; the extension reports those separately and excludes them from
+  ETA speed samples. Recent successful speeds use a median; partial matches
+  do not train the estimate.
 - A visible verification challenge or denied data request (403) pauses Python
   and the extension displays **!**. A denied background request can happen
   without a visible checkbox; the message now distinguishes these cases.
-  The extension reloads the selected tab once, then passively watches for the
-  browser's automatic clearance. It waits for the new document and four seconds
+  The extension schedules up to three full reloads: wait 1 minute before the
+  first, another 5 minutes before the second, and another 30 minutes before the
+  third. Each uses Chrome's bypass-cache reload and logs a changed document
+  before checking access. Persistent Chrome alarms and saved deadlines keep
+  the schedule alive if the extension worker sleeps. The popup shows version
+  0.4.0, the current attempt and the next reload countdown.
+  The Python connection stays connected while only the website tab reloads.
+  The extension watches for the browser's automatic clearance, then four seconds
   of stable readiness before one confirmation request checks access. Match
   requests require the intended match controls; schedule requests also work
   from a ready homepage. Successful clearance resumes collection automatically.
   A manual page reload permits a fresh confirmation after the new page settles.
-  If access remains denied, collection stays paused without expiring; inspect
+  After the third failed confirmation, or 60 seconds without a ready page
+  after the last reload, automatic recovery stops and waits for your approval.
+  Collection stays paused without expiring; inspect
   the tab and use **Resume** when ready, or **Disconnect** to stop. No challenge
   controls are clicked. `manual_wait_seconds` still controls the initial
   extension connection window and the separate Playwright verification wait;
@@ -126,8 +154,8 @@ The extension waits for match controls to appear rather than waiting for all
 advertisements and background resources to finish loading. If match content
 does not appear, it reloads the intended match once. A transient page-script or
 network failure can reopen the intended match and retry the operation once.
-It does not browse random links or navigate unrelated pages. A 403 gets one
-reload and waits for automatic clearance or manual Resume; a 429 retains its rate-limit wait;
+It does not browse random links or navigate unrelated pages. A 403 uses the
+three scheduled reloads described above and then waits for manual Resume; a 429 retains its rate-limit wait;
 neither is retried as a transient page error. After recovery is exhausted,
 Python saves the checkpoint and pauses rather than continuing with an unusable
 connection. Running the same command again resumes incomplete work.
@@ -139,7 +167,8 @@ and an operation/connection event. It records requested match/player IDs or
 endpoint, current match URL, page title/readiness, visible challenge evidence,
 player-panel/dialog counts, observed clicks/delays, HTTP status, recovery
 attempts, errors and elapsed time. `verification_progress` records reload starts,
-document changes, readiness/challenge transitions and confirmation statuses. Compare `command_started` and
+actual reload requests and confirmed document changes, attempt numbers,
+next deadlines, readiness/challenge transitions and confirmation statuses. Compare `command_started` and
 `command_finished`/`command_failed` to find the exact failing step. This is
 operational metadata, not a full page recording or screenshot; response bodies,
 cookies, request headers, connection codes and tokens are excluded. Logs stay

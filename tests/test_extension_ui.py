@@ -101,12 +101,24 @@ class ExtensionUiTests(unittest.TestCase):
                     popup.wait_for_timeout(300)
                     self.assertFalse(future.done())
                     popup.locator('#resume').click()
-                    deadline=time.monotonic()+45;resumed=False
+                    deadline=time.monotonic()+45;resumed=False;reload_scheduled=False
                     while not future.done() and time.monotonic()<deadline:
+                        recovery=worker.evaluate('chrome.storage.session.get(null)')
+                        if recovery.get('verification') and not reload_scheduled:
+                            self.assertEqual(recovery['verificationReloads'],0)
+                            self.assertGreater(recovery['verificationNextReloadAt'],time.time()*1000)
+                            # Advance only the test deadline; production keeps its full minute.
+                            worker.evaluate('''async () => {
+                                await chrome.storage.session.set({verificationNextReloadAt:Date.now()-1});
+                                await chrome.alarms.create('verification-reload',{when:Date.now()+1});
+                            }''')
+                            reload_scheduled=True
                         popup.wait_for_timeout(100)
                     if not future.done():bridge.close()
                     result=future.result(timeout=3)
                 self.assertFalse(resumed)
+                self.assertTrue(reload_scheduled)
+                self.assertGreater(client.waiting_seconds,0)
                 self.assertEqual(sofa.evaluate("sessionStorage.getItem('automaticallyCleared')"),'yes')
                 self.assertEqual(sofa.evaluate("sessionStorage.getItem('reloadedForClearance')"),'yes')
                 self.assertEqual(sofa.evaluate("Number(sessionStorage.getItem('challengeClicks')||0)"),0)
@@ -125,7 +137,7 @@ class ExtensionUiTests(unittest.TestCase):
                 self.assertFalse(client.request_gate.is_blocked)
                 self.assertTrue(any(row.get('result',{}).get('diagnostics',{}).get('recovery_attempts')==1 for row in trace))
                 self.assertTrue(any(row.get('result',{}).get('diagnostics',{}).get('verification_resolution')=='automatic' for row in trace))
-                self.assertTrue(any(row.get('result',{}).get('recovery_stage')=='reload_started' for row in trace))
+                self.assertTrue(any(row.get('result',{}).get('recovery_stage')=='reload_confirmed' for row in trace))
                 self.assertTrue(any(row.get('result',{}).get('recovery_stage')=='confirmation_read' for row in trace))
                 self.assertNotIn(bridge.token,bridge.diagnostics.path.read_text())
                 popup.locator('#disconnect').click()

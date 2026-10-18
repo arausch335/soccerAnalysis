@@ -54,6 +54,24 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(self.progress.rate('sofascore','http'),(60,12,False))
         self.assertIn('cached/skipped: 1s',self.messages[-2])
 
+    def test_long_verification_and_user_pauses_are_excluded_from_match_eta(self):
+        job=self.job('first',count=10)
+        self.client.waiting_seconds=0
+        job.start_game(0,clients=(self.client,))
+        self.clock.advance(86400+60);self.client.network_requests+=1
+        self.client.waiting_seconds=86400
+        job.finish_game(clients=(self.client,))
+        self.assertEqual(self.progress.rate('sofascore','http'),(60,1,False))
+        self.assertIn('waiting 1d 0h 0m excluded from ETA',self.messages[-1])
+        self.assertIn('season remaining ~9m 0s',self.messages[-1])
+
+    def test_one_stuck_match_and_partial_failure_do_not_distort_typical_speed(self):
+        job=self.job('first',count=10)
+        self.scrape(job,0,60);self.scrape(job,1,60);self.scrape(job,2,4000000)
+        self.assertEqual(self.progress.rate('sofascore','http'),(60,3,False))
+        self.scrape(job,3,4000000,status='partial')
+        self.assertEqual(self.progress.rate('sofascore','http'),(60,3,False))
+
     def test_unknown_future_schedule_and_other_provider_are_provisional(self):
         job=self.job('first')
         self.progress.job('unknown','fotmob_players','La Liga','2024-2025')
