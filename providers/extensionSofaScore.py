@@ -1,5 +1,4 @@
 """Existing Sofascore data contract over JavaScript in a user-selected Chrome tab."""
-import json
 import re
 from urllib.parse import urlencode, urlsplit
 
@@ -104,14 +103,10 @@ class ExtensionSofaScoreClient(BrowserSofaScoreClient):
             raise ValueError('Endpoint is outside the extension collection contract')
         if params is not None and (not isinstance(params, dict) or params):
             raise ValueError('Extension endpoints do not accept query parameters')
-        path = self._cache_path(endpoint, params)
-        if path.exists() and not self.refresh_cache:
-            saved = json.loads(path.read_text(encoding='utf-8'))
-            if saved.get('endpoint') != endpoint or saved.get('params') != params:
-                raise ValueError('Extension cache identity mismatch')
-            if saved.get('status') == 404:
-                raise ProviderRequestError('Saved Sofascore extension HTTP 404', endpoint=endpoint, status_code=404)
-            return validate_payload(endpoint, saved['payload'])
+        if not self.refresh_cache:
+            saved = self._cached_response(endpoint, params)
+            if saved is not None:
+                return saved['payload']
         if self.offline:
             raise ProviderRequestError('Offline extension cache miss: '+endpoint, endpoint=endpoint)
         if self._closed:
@@ -141,6 +136,7 @@ class ExtensionSofaScoreClient(BrowserSofaScoreClient):
         return self._save(endpoint, payload, params=params, method='extension_page_fetch')
 
     def _save(self, endpoint, payload, *, method, params=None, status=200):
+        self.last_transport = 'extension'
         record = {'endpoint': endpoint, 'params': params, 'status': status, 'transport': 'extension',
             'method': method, 'source_url': self.source_url, 'payload': payload}
         from datetime import datetime, timezone
@@ -154,19 +150,6 @@ class ExtensionSofaScoreClient(BrowserSofaScoreClient):
         result, coverage = super().collect_details(event, lineups)
         coverage['transport'] = 'extension'
         return result, coverage
-
-    def match_payloads(self, mid):
-        result = {}
-        for label, suffix in (('statistics','statistics'),('incidents','incidents'),('momentum','graph/momentum')):
-            endpoint = f'event/{mid}/{suffix}'
-            path = self._cache_path(endpoint)
-            if path.exists():
-                saved = json.loads(path.read_text(encoding='utf-8'))
-                if saved.get('endpoint') != endpoint:
-                    raise ValueError('Extension detail cache identity mismatch')
-                if saved.get('status') == 200:
-                    result[label] = saved['payload']
-        return result
 
     def graph(self, mid):
         return self._get(f'event/{mid}/graph/momentum')

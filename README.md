@@ -110,6 +110,9 @@ once. It resumes automatically when access returns, including on the homepage.
 Reloads, page readiness and confirmation results appear in the diagnostic log. Persistent verification stays paused until you use
 **Resume** or **Disconnect**, without expiring the collection.
 For regular PyCharm runs set `collection.sofascore_access: extension` in YAML.
+Completed API checkpoints remain valid when switching transports; saved API
+responses are reused before opening the browser. `python main.py --inventory`
+refreshes Git-shareable worker records for that older data.
 
 [Installation, first-match check, permissions and limitations](docs/CHROME_EXTENSION.md).
 

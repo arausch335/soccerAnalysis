@@ -77,8 +77,9 @@ class PortableProgress:
 
     def done(self, namespace, competition, season, mid, required=()):
         row=self.records.get(job_key(namespace,competition,season,mid),{})
-        return (row.get('status')=='complete' and
-                set(required)<=set(row.get('capabilities',[])))
+        capabilities=set(row.get('capabilities',[]))
+        if 'browser_details' in capabilities:capabilities.add('sofascore_match_stats')
+        return row.get('status')=='complete' and set(required)<=capabilities
 
     def record(self, namespace, competition, season, mid, capabilities=(), *, collected_here=False):
         key=job_key(namespace,competition,season,mid)
@@ -170,6 +171,8 @@ class PortableProgress:
         if match.metadata.get('id_namespace','sofascore')!='sofascore':return
         capabilities=['provider:'+key for key,value in match.metadata.get('provider_status',{}).items()
                       if value=='complete']
+        from .completion import sofascore_stats_complete
+        if sofascore_stats_complete(match):capabilities.append('sofascore_match_stats')
         if match.metadata.get('browser_details',{}).get('complete'):capabilities.append('browser_details')
         spatial=match.metadata.get('sofascore_spatial_status',{})
         terminal={'complete','unavailable','deferred'}

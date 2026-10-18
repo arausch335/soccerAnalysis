@@ -1,6 +1,5 @@
 """Select HTTP, visible browser, or a single sticky HTTP-to-browser fallback."""
 from pathlib import Path
-import json
 
 from .browserSofaScore import BrowserSofaScoreClient, validate_payload
 from .httpClient import ProviderError, ProviderRequestError
@@ -64,22 +63,15 @@ class SofaScoreTransport(SofaScoreClient):
                 self.report(f'HTTP collection unavailable at {endpoint}; switching to visible Sofascore browser for this run.',flush=True)
         self.browser.refresh_cache=self.refresh_cache
         payload=self.browser.get(endpoint,params)
-        return self._record(endpoint,'browser',payload)
+        transport=getattr(self.browser,'last_transport','browser')
+        return self._record(endpoint,transport if isinstance(transport,str) else 'browser',payload)
 
     def collect_details(self,event,lineups):
         self.register_event(event)
         return self.browser.collect_details(event,lineups)
 
     def match_payloads(self,mid):
-        result={}
-        for label,endpoint in (('statistics',f'event/{mid}/statistics'),('incidents',f'event/{mid}/incidents'),
-                               ('momentum',f'event/{mid}/graph/momentum')):
-            path=self.browser._cache_path(endpoint)
-            if path.exists():
-                saved=json.loads(path.read_text(encoding='utf-8'))
-                if saved.get('endpoint')!=endpoint:raise ValueError('Browser detail cache identity mismatch')
-                if saved.get('status')==200:result[label]=saved['payload']
-        return result
+        return self.browser.match_payloads(mid)
 
     def graph(self,mid):
         return self._get(f'event/{mid}/graph/momentum') if self.uses_browser else super().graph(mid)
