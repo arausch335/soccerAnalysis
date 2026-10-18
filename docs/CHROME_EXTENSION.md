@@ -93,12 +93,15 @@ their own clients and settings.
 - A visible verification challenge or denied data request (403) pauses Python
   and the extension displays **!**. A denied background request can happen
   without a visible checkbox; the message now distinguishes these cases.
-  Complete the verification yourself in Chrome, then click **Resume**. The
-  program does not interact with verification controls. Verification waits use
-  `collection.browser.manual_wait_seconds` (120 by default); if this expires,
-  rerun the collection when ready. A browser/extension 403 creates no day-long
-  cooldown. An explicit 429 still pauses according to the shared rate-limit
-  ledger.
+  The extension passively watches for the browser's automatic clearance. Once
+  match controls return and remain ready for four seconds, one confirmation
+  request checks access. Successful clearance resumes collection automatically.
+  If access remains denied, collection stays paused without expiring; inspect
+  the tab and use **Resume** when ready, or **Disconnect** to stop. No challenge
+  controls are clicked. `manual_wait_seconds` still controls the initial
+  extension connection window and the separate Playwright verification wait;
+  extension verification itself does not time out. A 403 creates no day-long
+  cooldown. An explicit 429 retains its shared rate-limit wait.
 - **Disconnect** releases the chosen tab and pauses an active Python request.
   Saved responses/checkpoints remain. A subsequent Python run prints a new code.
 - Closing Chrome, closing the chosen tab, or leaving Sofascore causes a resumable
@@ -120,9 +123,9 @@ The extension waits for match controls to appear rather than waiting for all
 advertisements and background resources to finish loading. If match content
 does not appear, it reloads the intended match once. A transient page-script or
 network failure can reopen the intended match and retry the operation once.
-It does not browse random links or navigate unrelated pages. A 403 requires
-manual inspection/Resume, and a 429 retains its rate-limit wait; neither is
-automatically retried as a transient page error. After recovery is exhausted,
+It does not browse random links or navigate unrelated pages. A 403 waits for
+automatic clearance or manual Resume, and a 429 retains its rate-limit wait;
+neither is retried as a transient page error. After recovery is exhausted,
 Python saves the checkpoint and pauses rather than continuing with an unusable
 connection. Running the same command again resumes incomplete work.
 

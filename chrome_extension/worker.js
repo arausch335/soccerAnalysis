@@ -3,6 +3,8 @@ import {pageOperation} from './page.js';
 
 let polling = false;
 let controller;
+let verifying = false;
+let resolvingVerification = false;
 const state = () => chrome.storage.session.get(null);
 const save = values => chrome.storage.session.set(values);
 const badge = text => chrome.action.setBadgeText({text});
@@ -88,12 +90,11 @@ export async function execute(s, command) {
   }
   await selectedTab(s);
   if (command.action === 'verify') {
-    await save({verification: command, paused: true,
-      message: command.args.visible_challenge ?
-        'Complete verification yourself in the chosen Chrome tab, then click Resume.' :
-        'A data request was denied (403); a visible challenge may not appear. Inspect the chosen tab, then click Resume to retry once.'});
+    await save({verification: command, paused: true, verificationReadySince: null, verificationProbed: false,
+      message: 'Waiting for the browser to finish verification automatically. Collection remains paused; you can also inspect the tab and click Resume.'});
     await chrome.tabs.update(s.tabId, {active: true});
     await badge('!');
+    void watchVerification();
     return null;
   }
   if (command.action === 'navigate') return navigate(s, command.args.url);
@@ -113,6 +114,64 @@ export async function execute(s, command) {
     }
   }
   return result;
+}
+
+async function finishVerification(s, result, message) {
+  if (resolvingVerification) return false;
+  resolvingVerification = true;
+  try {
+    const current = await state();
+    if (!current.connected || current.verification?.id !== s.verification.id) return false;
+    await api(s, 'result', {id: s.verification.id, result});
+    await save({paused: false, verification: null, message});
+    await badge('ON');
+    void poll();
+    return true;
+  } finally { resolvingVerification = false; }
+}
+
+export async function checkVerification(s) {
+  if (!s.connected || !s.verification) return false;
+  await selectedTab(s);
+  const observed = await runPage(s, {operation: 'inspect'});
+  if (!observed.ok) return false; // Navigation can replace a challenge document.
+  if (observed.diagnostics?.visible_challenge || !observed.diagnostics?.match_controls) {
+    await save({verificationReadySince: null, verificationProbed: false});
+    return false;
+  }
+  if (!s.verificationReadySince) {
+    await save({verificationReadySince: Date.now()});return false;
+  }
+  if (Date.now() - s.verificationReadySince < 4000 || s.verificationProbed) return false;
+  // One confirmation read after the page has settled; never click a challenge.
+  const result = await runPage(s, {operation: 'read', endpoint: s.verification.args.endpoint,
+    timeout_ms: 15000});
+  const current = await state();
+  if (!current.connected || current.verification?.id !== s.verification.id) return false;
+  if (!result.ok || ![200, 404, 429].includes(result.status)) {
+    await save({verificationProbed: true,
+      message: 'The data request is still unavailable. Collection is waiting, not stopped. Inspect the tab and click Resume when ready.'});
+    return false;
+  }
+  return finishVerification(s, {ok: true, status: result.status,
+    retryAfter: result.retryAfter, source_url: result.source_url,
+    diagnostics: {...result.diagnostics, verification_resolution: 'automatic'}},
+    'Browser verification cleared automatically; collection resumed.');
+}
+
+async function watchVerification() {
+  if (verifying) return;
+  verifying = true;
+  try {
+    while (true) {
+      const s = await state();
+      if (!s.connected || !s.verification) break;
+      if (await checkVerification(s)) break;
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  } catch (error) {
+    await save({message: error.message + ' Collection remains paused; reconnect if the chosen tab was closed.'});
+  } finally { verifying = false; }
 }
 
 async function poll() {
@@ -182,7 +241,8 @@ async function message(msg, sender) {
     await selectedTab(s);
     await api(s, 'resume', {});
     if (s.verification) {
-      await api(s, 'result', {id: s.verification.id, result: {ok: true}});
+      await finishVerification(s, {ok: true, diagnostics: {verification_resolution: 'manual'}}, 'Resumed.');
+      return {ok: true};
     }
     await save({paused: false, verification: null, message: 'Resumed.'});
     await badge('ON');
@@ -209,4 +269,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   });
   return true;
 });
-chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'collector') void poll(); });
+chrome.alarms.onAlarm.addListener(async alarm => {
+  if (alarm.name === 'collector') {
+    const s = await state();
+    if (s.verification) void watchVerification();
+    else void poll();
+  }
+});

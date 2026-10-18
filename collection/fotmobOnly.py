@@ -107,6 +107,11 @@ class FotMobOnlyRunner:
             game_status='complete'
             identity=(f"FotMob {competition.name} {season_label(season)} | match {mid} | "
                       f"{event['homeTeam']['name']} vs {event['awayTeam']['name']}")
+            from .ensembleProgress import remote_done, record_complete
+            if not cached and remote_done('fotmob_players',competition.name,season,mid):
+                self.report(f'{identity}: recorded on another computer; raw data not present locally')
+                timing.finish_game(clients=(self.client,),status='elsewhere',cached=True)
+                continue
             try:
                 def fetch():
                     payload=without_incident_stream(self.client.match_details(mid))
@@ -114,6 +119,7 @@ class FotMobOnlyRunner:
                     return payload
                 payload=self.cache.fetch('fotmob',f'match/{mid}',fetch)
                 player_rows(payload,competition.name,season,event)
+                record_complete('fotmob_players',competition.name,season,mid)
                 self.report(f'{identity}: {index}/{len(selected)} saved')
             except (ProviderError,ValueError,KeyError,TypeError) as exc:
                 game_status='failed'
@@ -125,10 +131,12 @@ class FotMobOnlyRunner:
             if stop:break
         # Rebuild from every saved scheduled match, so --limit never truncates
         # previous successes. Invalid caches are excluded and reported.
-        rows=[];complete=0
+        rows=[];complete=0;elsewhere=0
         for event in events:
             mid=event['id'];path=self.cache.path('fotmob',f'match/{mid}')
-            if not path.exists():continue
+            if not path.exists():
+                if remote_done('fotmob_players',competition.name,season,mid):elsewhere+=1
+                continue
             try:
                 payload=self.cache.fetch('fotmob',f'match/{mid}',lambda:None)
                 rows.extend(player_rows(payload,competition.name,season,event));complete+=1
@@ -138,9 +146,9 @@ class FotMobOnlyRunner:
                    self.directory/'player_match_stats.csv')
         atomic_json(self.directory/'failures.json',failures)
         atomic_json(self.directory/'run_summary.json',dict(settings,
-            finished_matches_discovered=len(events),saved_matches=complete,failures=failures))
+            finished_matches_discovered=len(events),saved_matches=complete,elsewhere=elsewhere,failures=failures))
         self.report(f'FotMob {competition.name} {season_label(season)} player stats: {complete}/{len(events)} matches; {len(rows)} player rows')
-        code=0 if events and complete==len(events) and not failures else 2
+        code=0 if events and complete+elsewhere==len(events) and not failures else 2
         timing.end(code)
         return code
 

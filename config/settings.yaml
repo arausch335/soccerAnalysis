@@ -26,7 +26,7 @@ collection:
   show_timing: true            # Per-game duration, season ETA, full collection ETA
 
   # How Sofascore is accessed; this used to be called "transport".
-  sofascore_access: auto       # http, browser (visible), auto fallback, or extension (normal Chrome)
+  sofascore_access: extension  # http, browser (visible), auto fallback, or extension (normal Chrome)
   http:
     profiles: [chrome, chrome131]  # One coherent identity, saved across resumes
     languages: ["en-US,en;q=0.9"]

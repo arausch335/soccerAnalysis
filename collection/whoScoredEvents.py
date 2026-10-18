@@ -74,7 +74,7 @@ class WhoScoredEventRunner:
             events = events[:limit]
         failure_path = self.directory/'failures.json'
         failures = json.loads(failure_path.read_text(encoding='utf-8')) if failure_path.exists() else {}
-        complete = 0
+        complete = 0;elsewhere=0
         timing.schedule(events,completed=[e['id'] for e in events
             if self.cache.path('whoscored',f"match/{e['id']}").exists()],mode='http')
         for index,event in enumerate(events,1):
@@ -85,6 +85,12 @@ class WhoScoredEventRunner:
             identity=(f"WhoScored {competition.name} {season_label(season)} | match {mid} | "
                       f"{event['homeTeam']['name']} vs {event['awayTeam']['name']}")
             self.report(f'{identity}: {index}/{len(events)}',flush=True)
+            from .ensembleProgress import remote_done, record_complete
+            if not cached and remote_done('whoscored_events',competition.name,season,mid):
+                complete+=1;elsewhere+=1;failures.pop(str(mid),None)
+                self.report(f'{identity}: recorded on another computer; raw data not present locally')
+                timing.finish_game(clients=(self.client,),status='elsewhere',cached=True)
+                continue
             try:
                 def validate(payload):
                     data = payload['matchCentreData']
@@ -103,6 +109,7 @@ class WhoScoredEventRunner:
                     lambda:validate(self.client.match_details(mid)))
                 validate(payload)
                 complete += 1
+                record_complete('whoscored_events',competition.name,season,mid)
                 failures.pop(str(mid),None)
             except (ProviderError,ValueError,KeyError,TypeError) as exc:
                 game_status='failed'
@@ -114,7 +121,7 @@ class WhoScoredEventRunner:
             finally:
                 atomic_json(failure_path,failures)
                 timing.finish_game(clients=(self.client,),status=game_status)
-        self.report(f'WhoScored {competition.name} {season_label(season)} raw responses saved: {complete}/{len(events)}',flush=True)
+        self.report(f'WhoScored {competition.name} {season_label(season)} raw responses saved locally: {complete-elsewhere}/{len(events)}; {elsewhere} recorded on another computer',flush=True)
         code=0 if events and complete == len(events) else 2
         timing.end(code)
         return code

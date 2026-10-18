@@ -98,7 +98,20 @@ def coverage(root,competition,season,provider):
     directory=collection_directory(root,f'{slug}-{label}')
     own=Path(root)/'whoscored_events'/slug/label
     # Prefer the provider's own schedule, retaining independent ID namespaces.
-    if provider=='whoscored' and (own/'schedule.json').exists():
+    if provider=='fotmob':
+        from collection.fotmobOnly import player_rows
+        own=Path(root)/'fotmob_player_stats'/slug/label
+        schedule=own/'schedule.json'
+        if not schedule.exists():
+            return dict(complete=0,total=None,percent=None,schedule='',note='no saved FotMob schedule')
+        saved=read(schedule)
+        if saved.get('provider')!='fotmob':raise ValueError('FotMob schedule namespace mismatch')
+        events=finished(saved['events'])
+        def check(mid,event):
+            payload=raw_payload(own,'fotmob',f'match/{mid}')
+            if payload is None:return False
+            return bool(player_rows(payload,competition.name,season,event))
+    elif provider=='whoscored' and (own/'schedule.json').exists():
         schedule=own/'schedule.json';events=finished(read(schedule)['events'])
         def check(mid,event):
             payload=raw_payload(own,'whoscored',f'match/{mid}')
@@ -126,26 +139,40 @@ def coverage(root,competition,season,provider):
             if provider=='whoscored':return integrated_who(directory,mid)
             payload=raw_payload(directory,'sofascore',f'lineups/{mid}')
             return sofa_valid(payload) if payload is not None else checkpoint_sofa(directory,mid)
-    count=0;invalid=0
+    count=0;invalid=0;complete_ids=[]
     for mid,event in events.items():
-        try:count+=bool(check(mid,event))
+        try:
+            if check(mid,event):count+=1;complete_ids.append(str(mid))
         except (OSError,ValueError,KeyError,TypeError):invalid+=1
     total=len(events)
     note='coverage of saved finished fixtures; refresh schedule for current season coverage'
     if invalid:note+=f'; {invalid} invalid/unreadable matches excluded'
     return dict(complete=count,total=total,percent=100*count/total if total else None,
-                schedule=str(schedule),note=note)
+                schedule=str(schedule),note=note,_complete_ids=complete_ids)
 
 
-def build_report(root,competitions,seasons):
+def build_report(root,competitions,seasons,provenance=None):
+    portable={}
+    if provenance is not None and Path(provenance).exists():
+        from collection.ensembleProgress import FORMAT
+        saved=read(provenance)
+        if saved.get('format')!=FORMAT:raise ValueError('Unsupported portable provenance format')
+        portable=saved['records']
     rows=[]
     for name in competitions:
         competition=competition_by_name(name)
         for season in seasons:
-            for provider,dataset in (('whoscored','events'),('sofascore','player_match_stats')):
+            for provider,dataset in (('whoscored','events'),('sofascore','player_match_stats'),('fotmob','player_match_stats')):
                 try:result=coverage(root,competition,season,provider)
                 except (OSError,ValueError,KeyError,TypeError) as exc:
                     result=dict(complete=0,total=None,percent=None,schedule='',note=f'cannot audit: {exc}')
+                local=set(result.pop('_complete_ids',[]))
+                namespace={'whoscored':'whoscored_events','sofascore':'sofascore','fotmob':'fotmob_players'}[provider]
+                elsewhere={str(record['match_id']) for record in portable.values()
+                    if record.get('namespace')==namespace and record.get('competition')==competition.name
+                    and record.get('season')==season_label(season) and record.get('status')=='complete'
+                    and (provider!='sofascore' or 'provider:sofascore' in record.get('capabilities',[]))}-local
+                result['portable_elsewhere']=len(elsewhere)
                 rows.append(dict(competition=competition.name,season=season_label(season),
                                  provider=provider,dataset=dataset,**result))
     return pd.DataFrame(rows)
@@ -155,8 +182,9 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data-root',type=Path,default=config.DATA_ROOT)
     parser.add_argument('--output',type=Path,help='Optional CSV copy of the report')
+    parser.add_argument('--ensemble-root',type=Path,default=config.PROJECT_ROOT/'ensemble_data')
     args=parser.parse_args(argv)
-    frame=build_report(args.data_root,config.COMPETITIONS,config.SEASONS)
+    frame=build_report(args.data_root,config.COMPETITIONS,config.SEASONS,args.ensemble_root/'provenance.json')
     print('Coverage of saved finished fixtures (awarded games and qualification excluded).')
     print('Refresh saved schedules first; these percentages do not verify the fixture list is exhaustive.')
     for (competition,season),group in frame.groupby(['competition','season'],sort=False):
@@ -165,6 +193,7 @@ def main(argv=None):
             text=(f"{row['percent']:.0f}% complete ({row['complete']}/{int(row['total'])})"
                   if pd.notna(row['percent']) else 'N/A (no saved finished-fixture denominator)')
             parts.append(f"{row['provider']} {row['dataset']}: {text}")
+            if row['portable_elsewhere']:parts[-1]+=f"; {row['portable_elsewhere']} recorded elsewhere (not counted as local data)"
             if row['note'].startswith('cannot audit:'):print(row['note'])
         print(f"{competition} {season}: "+'; '.join(parts))
     if args.output:atomic_csv(frame,args.output)

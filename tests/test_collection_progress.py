@@ -134,7 +134,7 @@ class ProgressTests(unittest.TestCase):
             browser._capture(response)
             self.assertEqual(browser.event(1),{'event':event(1)})
             self.assertEqual(browser.network_requests,1)
-            transport=SofaScoreTransport(folder,http=SimpleNamespace(network_requests=2),browser=browser)
+            transport=SofaScoreTransport(folder,mode='auto',http=SimpleNamespace(network_requests=2),browser=browser)
             self.assertEqual(transport.network_requests,3)
             browser.close()
 

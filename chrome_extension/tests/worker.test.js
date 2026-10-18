@@ -12,7 +12,7 @@ globalThis.chrome={
   tabs:{query:async()=>[{id:1,url:'https://www.sofascore.com/event/1'}]}
 };
 globalThis.fetch=async()=>{requests++;return {ok:true,json:async()=>({phase:'closed'})};};
-const {execute, navigate}=await import('../worker.js');
+const {execute, navigate, checkVerification}=await import('../worker.js');
 const send=(message,sender={id,url:`chrome-extension://${id}/popup.html`})=>new Promise(resolve=>listener(message,sender,resolve));
 
 test('collector completion stops polling and reports a clear final status',async()=>{
@@ -112,4 +112,60 @@ test('reload readiness rejects the old document even when its match controls rem
   }};
   const result=await navigate({tabId:1},'https://www.sofascore.com/event/1');
   assert.equal(calls,3);assert.equal(result.diagnostics.document_id,'new');
+});
+
+function verificationState() {
+  matchTab();
+  store={connected:true,paused:true,tabId:1,base:'http://127.0.0.1:12345',token:'x'.repeat(43),
+    clientId:'a'.repeat(32),verification:{id:'verify',args:{endpoint:'event/1/lineups'}},
+    verificationReadySince:Date.now()-5000,verificationProbed:false};
+}
+
+test('verification resumes automatically after settled match controls and successful access',async()=>{
+  verificationState();const operations=[],posts=[];
+  chrome.scripting={executeScript:async({args:[args]})=>{
+    operations.push(args.operation);
+    return [{frameId:0,result:{ok:true,status:200,source_url:'https://www.sofascore.com/event/1',
+      diagnostics:{match_controls:true,visible_challenge:false}}}];
+  }};
+  globalThis.fetch=async(url,args)=>{posts.push({url,args});return {ok:true,json:async()=>({phase:'closed'})};};
+  assert.equal(await checkVerification({...store}),true);
+  assert.deepEqual(operations,['inspect','read']);
+  assert.equal(store.verification,null);
+  const result=JSON.parse(posts.find(p=>p.url.endsWith('/result')).args.body).result;
+  assert.equal(result.diagnostics.verification_resolution,'automatic');
+  await new Promise(r=>setTimeout(r,10));
+});
+
+test('visible verification is observed without clicks or data requests',async()=>{
+  verificationState();
+  chrome.scripting={executeScript:async({args:[args]})=>{
+    assert.equal(args.operation,'inspect');
+    return [{frameId:0,result:{ok:true,diagnostics:{visible_challenge:true}}}];
+  }};
+  assert.equal(await checkVerification({...store}),false);
+  assert.equal(store.paused,true);assert.equal(store.verificationReadySince,null);
+});
+
+test('a persistent denied request remains paused and is not repeatedly probed',async()=>{
+  verificationState();let reads=0;
+  chrome.scripting={executeScript:async({args:[args]})=>{
+    if(args.operation==='read')reads++;
+    return [{frameId:0,result:{ok:true,status:403,diagnostics:{match_controls:true,visible_challenge:false}}}];
+  }};
+  assert.equal(await checkVerification({...store}),false);
+  assert.equal(await checkVerification({...store}),false);
+  assert.equal(reads,1);assert.equal(store.paused,true);
+  assert.match(store.message,/waiting, not stopped/);
+  store.connected=false;store.verification=null;
+});
+
+test('manual Resume still completes a verification that did not clear automatically',async()=>{
+  verificationState();const posts=[];
+  globalThis.fetch=async(url,args)=>{posts.push({url,args});return {ok:true,json:async()=>({phase:'closed'})};};
+  assert.equal((await send({action:'resume'})).ok,true);
+  assert.equal(store.verification,null);
+  const result=JSON.parse(posts.find(p=>p.url.endsWith('/result')).args.body).result;
+  assert.equal(result.diagnostics.verification_resolution,'manual');
+  await new Promise(r=>setTimeout(r,10));
 });

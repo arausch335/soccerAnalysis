@@ -3,12 +3,19 @@ from pathlib import Path
 import csv
 import tempfile
 import unittest
+from contextlib import nullcontext
 from unittest.mock import call,patch
 import main
 from collection.paths import collection_directory
 
 
 class MainTests(unittest.TestCase):
+    def setUp(self):
+        patcher=patch('main.ensemble_session',side_effect=lambda *a,**k:nullcontext())
+        patcher.start();self.addCleanup(patcher.stop)
+        patcher=patch.dict(main.config.TRANSPORT,{'sofascore_mode':'auto'})
+        patcher.start();self.addCleanup(patcher.stop)
+
     def _job(self,root,name,summary=None):
         directory=collection_directory(root,name);directory.mkdir(parents=True)
         (directory/'job.json').write_text('{}')

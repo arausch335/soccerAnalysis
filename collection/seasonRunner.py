@@ -370,6 +370,15 @@ class SeasonRunner:
             self.report(f"{competition.name} {season_label(canonical)} | match {event['id']} | {event['homeTeam']['name']} vs {event['awayTeam']['name']}")
             timing.start_game(event['id'],clients=self.clients.values())
             mid=event['id'];store=PandasStore(self.directory/'match_checkpoints'/str(mid));entry=statuses[mid]
+            from .ensembleProgress import remote_done, record_match
+            required=['provider:'+provider for provider in self.providers]+['spatial:'+category for category in self.spatial]
+            if getattr(sofa,'uses_browser',False):required.append('browser_details')
+            if not store.exists and not self.refresh and remote_done('sofascore',competition.name,canonical,mid,required):
+                entry.update(status='elsewhere',error='Completed on another computer; raw data not present locally',updated_at=now())
+                atomic_csv(pd.DataFrame(statuses.values()),status_path)
+                self.report(f'[{index}/{len(selected)}] Recorded on another computer; skipped {mid}. Import its data folder to build locally.')
+                timing.finish_game(clients=self.clients.values(),status='elsewhere',cached=True,mode=timing_mode())
+                continue
             if store.exists and not self.refresh:
                 dataset=store.from_csv();match=dataset.matches[mid]
                 # Only a fully complete provider is terminal. Partial and failed
@@ -458,6 +467,7 @@ class SeasonRunner:
                 match.metadata['collection_transport']={key:value for key,value in sofa.audit.items()
                     if key==f'event/{mid}' or key.startswith(f'event/{mid}/')}
             store.to_csv(dataset)
+            record_match(match)
             entry.update(status='complete' if not errors else 'partial',error='; '.join(errors),
                          updated_at=now(),attempts=int(entry.get('attempts',0))+1)
             if str(mid) in self.browser_coverage:self._write_collection_coverage(match)
@@ -483,10 +493,11 @@ class SeasonRunner:
         atomic_json(self.directory/'run_summary.json',{'competition':competition.name,'season':canonical,
             'finished_matches_discovered':len(events),'selected_matches':len(selected),
             'complete':int(result.status.eq('complete').sum()),'partial':int(result.status.eq('partial').sum()),
+            'elsewhere':int(result.status.eq('elsewhere').sum()),
             'failed_or_pending':int(result.status.isin(['failed','pending']).sum()),
             'baseline_provider':self.baseline_provider,'providers':list(self.providers),
             'csvs_built':bool(build_csvs),'events_csv_compiled':bool(build_csvs and compile_events)})
-        timing.end(0 if len(result) and result.status.eq('complete').all() else 2)
+        timing.end(0 if len(result) and result.status.isin(('complete','elsewhere')).all() else 2)
         return result
 
     def _browser_match_details(self,sofa,event,match):

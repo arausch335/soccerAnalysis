@@ -79,14 +79,17 @@ class ExtensionBridgeTests(unittest.TestCase):
         self.assertFalse(self.bridge.connected.is_set())
         self.connect()
 
-    def test_verification_timeout_sets_no_persistent_cooldown(self):
+    def test_verification_does_not_expire_while_browser_clears_it(self):
         self.connect()
-        with self.assertRaises(ProviderRequestError) as caught:
-            self.bridge.request('verify',{},timeout=.01)
-        self.assertEqual(caught.exception.status_code,403)
+        with ThreadPoolExecutor() as pool:
+            future=pool.submit(self.bridge.request,'verify',{},timeout=.01)
+            _,body=self.http('/v1/command')
+            time.sleep(.05)
+            self.assertFalse(future.done())
+            self.http('/v1/result',{'id':body['command']['id'],'result':{'ok':True}})
+            self.assertTrue(future.result(timeout=1)['ok'])
         self.assertIsNone(self.bridge.pending)
-        with self.assertRaisesRegex(ProviderRequestError,'needs attention'):
-            self.bridge.request('page',{},timeout=.01)
+        self.assertFalse(self.bridge.unavailable)
         self.assertEqual(self.http('/v1/result',{'id':'expired','result':{'ok':True}})[0],409)
 
 
