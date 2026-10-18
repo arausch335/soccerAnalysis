@@ -1,0 +1,139 @@
+{
+  "format": "soccer-analysis-progress-v1",
+  "instance_id": "efc2939a438c4632a6395649a2edb672",
+  "note": "Validated data held by this worker. origins identifies its original collectors.",
+  "records": {
+    "sofascore|premier-league|2021-2022|9576081": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "msi"
+      ],
+      "match_id": "9576081",
+      "namespace": "sofascore",
+      "origins": [
+        "worker-837c0cfbf9e5"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:42:13.869643+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576149": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "msi"
+      ],
+      "match_id": "9576149",
+      "namespace": "sofascore",
+      "origins": [
+        "worker-837c0cfbf9e5"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:42:13.903632+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576151": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "msi"
+      ],
+      "match_id": "9576151",
+      "namespace": "sofascore",
+      "origins": [
+        "worker-837c0cfbf9e5"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:42:13.935829+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576160": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "msi"
+      ],
+      "match_id": "9576160",
+      "namespace": "sofascore",
+      "origins": [
+        "worker-837c0cfbf9e5"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:42:13.968800+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576162": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "msi"
+      ],
+      "match_id": "9576162",
+      "namespace": "sofascore",
+      "origins": [
+        "worker-837c0cfbf9e5"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:42:13.998796+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576259": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "msi"
+      ],
+      "match_id": "9576259",
+      "namespace": "sofascore",
+      "origins": [
+        "worker-837c0cfbf9e5"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:42:14.035413+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576403": {
+      "capabilities": [
+        "provider:sofascore"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "msi"
+      ],
+      "match_id": "9576403",
+      "namespace": "sofascore",
+      "origins": [
+        "worker-837c0cfbf9e5"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:42:14.068556+00:00"
+    }
+  },
+  "worker_id": "msi"
+}
