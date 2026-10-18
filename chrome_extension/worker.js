@@ -90,10 +90,22 @@ export async function execute(s, command) {
   }
   await selectedTab(s);
   if (command.action === 'verify') {
+    const before = await runPage(s, {operation: 'inspect'});
     await save({verification: command, paused: true, verificationReadySince: null, verificationProbed: false,
-      message: 'Waiting for the browser to finish verification automatically. Collection remains paused; you can also inspect the tab and click Resume.'});
+      verificationDocument: before.diagnostics?.document_id || null, verificationAwaitingDocument: true,
+      verificationStage: null,
+      message: 'Data request denied. Reloading this tab once, then waiting for browser verification to finish.'});
     await chrome.tabs.update(s.tabId, {active: true});
     await badge('!');
+    const recovery = {...s, verification: command};
+    await verificationDiagnostic(recovery, 'reload_started', before);
+    try {
+      await chrome.tabs.reload(s.tabId);
+    } catch (error) {
+      await save({verificationAwaitingDocument: false,
+        message: 'Could not reload the selected tab. Inspect it and click Resume when ready.'});
+      await verificationDiagnostic(recovery, 'reload_failed', {error: error.message});
+    }
     void watchVerification();
     return null;
   }
@@ -130,33 +142,73 @@ async function finishVerification(s, result, message) {
   } finally { resolvingVerification = false; }
 }
 
+async function verificationDiagnostic(s, stage, result = {}) {
+  // The bridge filters this metadata; page contents and credentials stay out.
+  try {
+    await api(s, 'diagnostic', {id: s.verification.id, result: {
+      endpoint: s.verification.args.endpoint, recovery_stage: stage,
+      ok: result.ok, status: result.status, error: result.error,
+      source_url: result.source_url, diagnostics: result.diagnostics}});
+  } catch (_) { /* Diagnostic delivery must not interrupt browser recovery. */ }
+}
+
+async function verificationStage(s, stage, observed) {
+  if (s.verificationStage === stage) return;
+  await save({verificationStage: stage});
+  await verificationDiagnostic(s, stage, observed);
+}
+
 export async function checkVerification(s) {
   if (!s.connected || !s.verification) return false;
   await selectedTab(s);
   const observed = await runPage(s, {operation: 'inspect'});
-  if (!observed.ok) return false; // Navigation can replace a challenge document.
-  if (observed.diagnostics?.visible_challenge || !observed.diagnostics?.match_controls) {
-    await save({verificationReadySince: null, verificationProbed: false});
+  if (!observed.ok) {
+    await verificationStage(s, 'document_unavailable', observed);
+    return false; // Navigation can replace a challenge document.
+  }
+  const doc = observed.diagnostics?.document_id;
+  if (s.verificationAwaitingDocument && s.verificationDocument && doc === s.verificationDocument) {
+    await verificationStage(s, 'waiting_for_reload', observed);
+    return false;
+  }
+  // A user reload is also a new opportunity for one confirmation read.
+  if (doc && doc !== s.verificationDocument) {
+    await save({verificationDocument: doc, verificationAwaitingDocument: false,
+      verificationReadySince: null, verificationProbed: false, verificationStage: null});
+    s = {...s, verificationDocument: doc, verificationAwaitingDocument: false,
+      verificationReadySince: null, verificationProbed: false, verificationStage: null};
+    await verificationDiagnostic(s, 'document_changed', observed);
+  }
+  const mid = Number(s.verification.args.endpoint?.match(/^event\/(\d+)/)?.[1]);
+  const ready = mid ? observed.diagnostics?.match_controls && matchId(observed.source_url) === mid :
+    ['interactive', 'complete'].includes(observed.diagnostics?.ready_state);
+  if (observed.diagnostics?.visible_challenge || !ready) {
+    await save({verificationReadySince: null, ...(observed.diagnostics?.visible_challenge &&
+      s.verificationStage !== 'visible_challenge' ? {verificationProbed: false} : {})});
+    await verificationStage(s, observed.diagnostics?.visible_challenge ? 'visible_challenge' : 'page_not_ready', observed);
     return false;
   }
   if (!s.verificationReadySince) {
-    await save({verificationReadySince: Date.now()});return false;
+    await save({verificationReadySince: Date.now()});
+    await verificationStage(s, 'settling', observed);
+    return false;
   }
   if (Date.now() - s.verificationReadySince < 4000 || s.verificationProbed) return false;
-  // One confirmation read after the page has settled; never click a challenge.
+  // Claim the one confirmation read before awaiting network work.
+  await save({verificationProbed: true});
   const result = await runPage(s, {operation: 'read', endpoint: s.verification.args.endpoint,
     timeout_ms: 15000});
   const current = await state();
   if (!current.connected || current.verification?.id !== s.verification.id) return false;
+  await verificationDiagnostic(s, 'confirmation_read', result);
   if (!result.ok || ![200, 404, 429].includes(result.status)) {
-    await save({verificationProbed: true,
-      message: 'The data request is still unavailable. Collection is waiting, not stopped. Inspect the tab and click Resume when ready.'});
+    await save({message: 'The data request is still denied or unavailable after one reload. Collection is waiting, not stopped. Inspect the tab and click Resume when ready.'});
     return false;
   }
   return finishVerification(s, {ok: true, status: result.status,
     retryAfter: result.retryAfter, source_url: result.source_url,
     diagnostics: {...result.diagnostics, verification_resolution: 'automatic'}},
-    'Browser verification cleared automatically; collection resumed.');
+    'Browser access restored; collection resumed.');
 }
 
 async function watchVerification() {

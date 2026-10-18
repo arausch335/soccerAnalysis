@@ -1,0 +1,1053 @@
+{
+  "format": "soccer-analysis-progress-v1",
+  "instance_id": "788a276b2c8143f2a2f2fb21634e994f",
+  "note": "Validated data held by this worker. origins identifies its original collectors.",
+  "records": {
+    "sofascore|la-liga|2022-2023|10408559": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "La Liga",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "10408559",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2022-2023",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.375439+00:00"
+    },
+    "sofascore|la-liga|2022-2023|10408645": {
+      "capabilities": [
+        "provider:sofascore"
+      ],
+      "competition": "La Liga",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "10408645",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2022-2023",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.411025+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576069": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576069",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.446953+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576075": {
+      "capabilities": [
+        "provider:sofascore"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576075",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.482833+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576076": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576076",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.520707+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576077": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576077",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.560821+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576081": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:rating_breakdown",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576081",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.598161+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576085": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576085",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.633538+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576087": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576087",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.672944+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576114": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576114",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.711884+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576132": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576132",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.750330+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576135": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576135",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.787206+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576143": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576143",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.825080+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576147": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576147",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.861710+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576148": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576148",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.896974+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576149": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576149",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.950504+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576150": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576150",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:27.986979+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576151": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:rating_breakdown",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576151",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.024672+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576152": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576152",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.062307+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576160": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576160",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.099365+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576162": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576162",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.136242+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576165": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576165",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.174115+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576166": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576166",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.211989+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576168": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576168",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.248049+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576170": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576170",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.282302+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576173": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576173",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.318866+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576184": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576184",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.356100+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576187": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576187",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.393974+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576188": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576188",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.430851+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576190": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576190",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.467533+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576193": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576193",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.504035+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576209": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576209",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.540224+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576240": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576240",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.576885+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576259": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576259",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.621346+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576260": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576260",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.660626+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576382": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576382",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.697217+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576383": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576383",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.733591+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576386": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576386",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.769087+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576389": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576389",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.805408+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576403": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576403",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.844007+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576408": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576408",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.883254+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576412": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576412",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.921128+00:00"
+    },
+    "sofascore|premier-league|2021-2022|9576414": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions",
+        "spatial:heatmap",
+        "spatial:shotmap"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "9576414",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2021-2022",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:28.957250+00:00"
+    },
+    "sofascore|premier-league|2022-2023|10385483": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "10385483",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2022-2023",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:29.013641+00:00"
+    },
+    "sofascore|premier-league|2022-2023|10385491": {
+      "capabilities": [
+        "provider:sofascore"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "10385491",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2022-2023",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:29.051396+00:00"
+    },
+    "sofascore|premier-league|2022-2023|10385498": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "10385498",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2022-2023",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:29.088777+00:00"
+    },
+    "sofascore|premier-league|2022-2023|10385501": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "10385501",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2022-2023",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:29.125687+00:00"
+    },
+    "sofascore|premier-league|2022-2023|10385502": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "10385502",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2022-2023",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:29.165555+00:00"
+    },
+    "sofascore|premier-league|2022-2023|10385509": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "10385509",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2022-2023",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:29.203428+00:00"
+    },
+    "sofascore|premier-league|2022-2023|10385518": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "10385518",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2022-2023",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:29.241302+00:00"
+    },
+    "sofascore|premier-league|2022-2023|10385741": {
+      "capabilities": [
+        "browser_details",
+        "provider:sofascore",
+        "spatial:average_positions"
+      ],
+      "competition": "Premier League",
+      "holders": [
+        "headless"
+      ],
+      "match_id": "10385741",
+      "namespace": "sofascore",
+      "origins": [
+        "headless"
+      ],
+      "season": "2022-2023",
+      "status": "complete",
+      "updated_at": "2026-10-18T05:35:29.279176+00:00"
+    }
+  },
+  "worker_id": "headless"
+}

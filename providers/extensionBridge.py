@@ -153,6 +153,17 @@ class ExtensionBridge:
                         bridge.pending['result'] = result
                         bridge.condition.notify_all()
                         self.reply(200, {'saved': True})
+                    elif self.path == '/v1/diagnostic':
+                        if (not bridge.pending or bridge.pending['action'] != 'verify' or
+                                bridge.pending['result'] is not None or value.get('id') != bridge.pending['id']):
+                            self.reply(409, {'error': 'No matching verification command'})
+                            return
+                        result = value.get('result')
+                        if not isinstance(result, dict):
+                            self.reply(400, {'error': 'Expected diagnostic object'})
+                            return
+                        bridge.record('verification_progress', action='verify', result=result)
+                        self.reply(200, {'saved': True})
                     elif self.path in ('/v1/pause', '/v1/resume'):
                         bridge.user_paused = self.path == '/v1/pause'
                         bridge.record('paused' if bridge.user_paused else 'resumed')
