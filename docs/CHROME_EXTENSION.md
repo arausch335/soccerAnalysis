@@ -141,7 +141,7 @@ its older API work too. No data migration or deletion is needed.
   failure. No other tab is selected automatically.
 
 Navigation, resource requests and UI clicks are paced with
-`collection.browser.delay_min_seconds` / `delay_max_seconds` (2–4 seconds by
+`collection.browser.delay_min_seconds` / `delay_max_seconds` (0.5–1 seconds by
 default). UI click spacing supports up to 60 seconds; unusually long delays may
 require increasing `timeout_seconds`. The additional verification window does
 not remove a provider's access restrictions.
