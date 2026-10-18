@@ -5,8 +5,13 @@ from contextvars import ContextVar
 import csv
 import json
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median
 import time
+
+def waiting_seconds(clients):
+    values=[getattr(client,'waiting_seconds',0) for client in clients]
+    return sum(value for value in values if type(value) in (int,float))
+
 
 _ACTIVE=ContextVar('collection_progress',default=None)
 
@@ -47,11 +52,11 @@ class CollectionProgress:
 
     def rate(self,kind,mode=None):
         specific=self.samples.get((kind,mode),()) if mode is not None else ()
-        if specific:return mean(specific),len(specific),False
+        if specific:return median(specific),len(specific),False
         same=[v for (k,_),values in self.samples.items() if k==kind for v in values]
-        if same:return mean(same),len(same),True
+        if same:return median(same),len(same),True
         all_values=[v for values in self.samples.values() for v in values]
-        return (mean(all_values),len(all_values),True) if all_values else (None,0,True)
+        return (median(all_values),len(all_values),True) if all_values else (None,0,True)
 
     def remaining(self):
         total=0;provisional=False
@@ -86,7 +91,7 @@ class JobProgress:
         self.owner=owner;self.key=key;self.kind=kind;self.competition=competition;self.season=season
         self.total=None;self.pending=None;self.mode=None;self.finished=False;self.paused=False
         self.setup_started=None;self.setup_seconds=None;self.game_start=None
-        self.current=None;self.before=None;self.known_cached=False;self.revisit_complete=False
+        self.current=None;self.before=None;self.wait_before=0;self.known_cached=False;self.revisit_complete=False
 
     @property
     def remaining(self):return len(self.pending) if self.pending is not None else None
@@ -106,16 +111,19 @@ class JobProgress:
     def start_game(self,mid,*,clients=(),cached=False):
         self.current=str(mid);self.game_start=self.owner.clock()
         self.before=network_count(clients);self.known_cached=cached
+        self.wait_before=waiting_seconds(clients)
 
     def finish_game(self,*,clients=(),status='complete',mode=None,cached=False):
         if self.game_start is None:return
         elapsed=max(0,self.owner.clock()-self.game_start)
+        excluded=min(elapsed,max(0,waiting_seconds(clients)-self.wait_before))
+        active=elapsed-excluded
         after=network_count(clients)
         is_cached=cached or (self.before is not None and after==self.before) or (self.before is None and self.known_cached)
         if self.pending is not None:self.pending.discard(self.current)
         if mode is not None:self.mode=mode
-        if status in ('complete','partial') and not is_cached:
-            self.owner.samples[(self.kind,self.mode)].append(elapsed)
+        if status=='complete' and not is_cached:
+            self.owner.samples[(self.kind,self.mode)].append(active)
         rate,count,rough=self.owner.rate(self.kind,self.mode)
         season_eta=(0 if self.remaining==0 else
                     rate*self.remaining if rate is not None and self.remaining is not None else None)
@@ -123,7 +131,8 @@ class JobProgress:
         calibration=f'calibrating {count}/3' if count<3 else f'{count} recent scraped games'
         paused=sum(j.paused for j in self.owner.jobs.values())
         self.owner.emit(f'[Timing] {self.competition} {self.season} | match {self.current} '
-            f'{status if status not in ("complete","partial") else "cached/skipped" if is_cached else status}: {duration(elapsed)} | '
+            f'{status if status not in ("complete","partial") else "cached/skipped" if is_cached else status}: {duration(elapsed)}'
+            +(f' (active {duration(active)}; waiting {duration(excluded)} excluded from ETA)' if excluded>=1 else '')+' | '
             f'season remaining {"~" if season_eta is not None else ""}{duration(season_eta)} | '
             f'collection remaining {"~" if total_eta is not None else ""}{duration(total_eta)}'
             f'{" (provisional)" if provisional or rough or count<3 else ""} | {calibration}'

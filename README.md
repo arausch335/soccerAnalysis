@@ -57,7 +57,9 @@ recent 12 games of the same type/access mode. Cache-only skips and failed
 attempts do not train the estimate. A browser fallback learns its own speed.
 Future schedules not yet discovered use approximate fixture counts and are
 marked **provisional**; known cached fixtures are subtracted. Paused seasons are
-reported separately and excluded from further ETA calculations. ETAs cover
+reported separately and excluded from further ETA calculations. Extension
+verification/connection waits are excluded from speed samples; partial matches do not train the estimate, and recent successful speeds use a median
+to limit the effect of one stuck match. ETAs cover
 scraping plus estimated season setup, excluding final CSV/dataset builds; the
 final elapsed run time includes those builds. Set `show_timing: false` to hide
 these additional lines.
@@ -104,10 +106,12 @@ python main.py --collection-types sofascore --sofascore-transport extension --co
 Python prints a connection code. Open the extension on your Sofascore tab,
 paste that code, and click **Connect this Sofascore tab**. Python keeps the
 existing checkpoints, schema, dataset building and timing; JavaScript handles
-the page. On the first 403, the extension reloads the selected tab once, waits
-for any browser verification to finish naturally, then checks the denied request
-once. It resumes automatically when access returns, including on the homepage.
-Reloads, page readiness and confirmation results appear in the diagnostic log. Persistent verification stays paused until you use
+the page. After a 403, the extension makes up to three full page reloads,
+after waits of 1 minute, then 5 minutes, then 30 minutes. Each bypasses the
+browser cache and confirms a new document before checking access. Verification
+finishes naturally; restored access resumes collection, including on the homepage.
+After the third unsuccessful attempt it waits for you to click Resume. The popup
+shows the attempt/countdown and version; the diagnostic log records each result. Persistent verification stays paused until you use
 **Resume** or **Disconnect**, without expiring the collection.
 For regular PyCharm runs set `collection.sofascore_access: extension` in YAML.
 Completed API checkpoints remain valid when switching transports; saved API
