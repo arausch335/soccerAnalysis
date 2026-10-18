@@ -426,9 +426,17 @@ class BrowserSofaScoreClient(SofaScoreClient):
     def collect_details(self,event,lineups):
         """Capture every played player's stats plus match-level detail payloads."""
         self.register_event(event);mid=int(event['id']);result=deepcopy(lineups)
-        coverage={};errors=[]
+        coverage={};errors=[];skipped={};reasons={};blocked=False
         for side in ('home','away'):
             for player in result[side]['players']:
+                key=f"player/{player['player']['id']}/statistics"
+                if player.get('substitute',False) and not (player.get('statistics',{}).get('minutesPlayed') or 0)>0:
+                    skipped[key]='not_played'
+                else:coverage[key]='not_attempted'
+        coverage.update({key:'not_attempted' for key in ('statistics','incidents','momentum')})
+        for side in ('home','away'):
+            for player in result[side]['players']:
+                if blocked:break
                 stats=player.get('statistics',{})
                 if player.get('substitute',False) and not (stats.get('minutesPlayed') or 0)>0:continue
                 pid=player['player']['id'];key=f'player/{pid}/statistics'
@@ -443,6 +451,7 @@ class BrowserSofaScoreClient(SofaScoreClient):
                     if not isinstance(values,dict):raise ValueError('Player statistics missing')
                     player['statistics']={**stats,**values};coverage[key]='complete'
                 except (ProviderRequestError,ValueError) as exc:
+                    reasons[key]=str(exc)
                     if self.active_mid==mid and self.active_player==pid and self.page is not None:
                         from .visibleStats import parse_visible_stats
                         panel=self.page.locator('[data-testid="sheet"]:visible')
@@ -455,17 +464,22 @@ class BrowserSofaScoreClient(SofaScoreClient):
                                 player['_visible_labels']=labels
                                 coverage[key]='visible_only'
                                 errors.append(f'{key}: visible fields saved; full structured data unavailable')
-                    if key not in coverage:coverage[key]='unavailable' if getattr(exc,'status_code',None)==404 else 'failed'
-                    if getattr(exc,'status_code',None)!=404:errors.append(str(exc))
-                    if getattr(exc,'status_code',None) in (401,403,429):raise
+                    if coverage[key]!='visible_only':coverage[key]='unavailable' if getattr(exc,'status_code',None)==404 else 'failed'
+                    if getattr(exc,'status_code',None)!=404:errors.append(f'{key}: {exc}')
+                    blocked=(getattr(exc,'status_code',None) in (401,403,429) or
+                             getattr(self,'requires_manual_attention',False) is True)
         for key,request in (('statistics',lambda:self.statistics(mid)),('incidents',lambda:self.incidents(mid)),
                             ('momentum',lambda:self.graph(mid))):
+            if blocked:break
             try:request();coverage[key]='complete'
             except ProviderRequestError as exc:
                 coverage[key]='unavailable' if getattr(exc,'status_code',None)==404 else 'failed'
-                if getattr(exc,'status_code',None)!=404:errors.append(str(exc))
-                if getattr(exc,'status_code',None) in (401,403,429):raise
+                reasons[key]=str(exc)
+                if getattr(exc,'status_code',None)!=404:errors.append(f'{key}: {exc}')
+                blocked=(getattr(exc,'status_code',None) in (401,403,429) or
+                         getattr(self,'requires_manual_attention',False) is True)
         self._save(f'event/{mid}/lineups',result,method='website_plus_player_statistics')
         self.observations[mid]={'transport':'browser','coverage':coverage,'errors':errors,
+            'skipped':skipped,'reasons':reasons,'blocked':blocked,
             'cache_directory':str(self.cache_dir.relative_to(self.root))}
         return result,self.observations[mid]

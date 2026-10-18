@@ -6,9 +6,20 @@ export async function pageOperation(args) {
   const challenge = /verif(?:y|ying) you are (?:a )?human|checking your browser|security verification|access denied/i;
   const source = () => ({source_url: location.href});
   const challenged = () => challenge.test(document.body?.innerText || '');
-  const verification = () => ({ok: true, status: 403, verification: true, ...source()});
+  const verification = () => ({ok: true, status: 403, verification: true,
+    challenge_evidence: 'visible_page', diagnostics: observe(), ...source()});
   const visible = el => !!el && el.getClientRects().length > 0 &&
     getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
+  const observe = () => ({
+    title: (document.title || '').slice(0, 160), ready_state: document.readyState,
+    visible_challenge: challenged(),
+    match_controls: !!document.querySelector('[data-testid="tab-lineups"], [data-testid="tab-statistics"], [data-testid="tab-details"]'),
+    player_panels: [...document.querySelectorAll('[data-testid="sheet"]')].filter(visible).length,
+    dialogs: [...document.querySelectorAll('[role="dialog"]')].filter(visible).slice(0, 5)
+      .map(el => ({label: (el.getAttribute('aria-label') || '').slice(0, 100),
+        players: el.querySelectorAll('img[src*="/player/"]').length}))
+  });
+  if (args.operation === 'inspect') return {ok: true, ...source(), diagnostics: observe()};
   if (challenged()) return verification();
   if (args.operation === 'read') {
     const allowed = /^(?:event\/\d+(?:\/(?:lineups|statistics|incidents|graph\/momentum|average-positions|shotmap|player\/\d+\/(?:statistics|heatmap|rating-breakdown)))?|unique-tournament\/\d+\/(?:seasons|season\/\d+\/events\/(?:last|next)\/\d+))$/;
@@ -27,9 +38,15 @@ export async function pageOperation(args) {
       const text = await response.text();
       let payload = null;
       try { payload = JSON.parse(text); } catch (_) { /* A challenge can be HTML. */ }
-      if (!payload && /cf-chl-|challenges\.cloudflare\.com|verify you are/i.test(text)) return verification();
+      if (!payload && /cf-chl-|challenges\.cloudflare\.com|verify you are/i.test(text)) {
+        return {...verification(), challenge_evidence: 'response_html', diagnostics: observe()};
+      }
       return {ok: true, status: response.status, payload,
-        retryAfter: response.headers.get('Retry-After'), ...source()};
+        verification: false, retryAfter: response.headers.get('Retry-After'), ...source(),
+        diagnostics: {...observe(), content_type: response.headers.get('Content-Type')}};
+    } catch (error) {
+      return {ok: false, error: `${error.name}: ${error.message}`, recoverable: true,
+        ...source(), diagnostics: observe()};
     } finally { clearTimeout(timer); }
   }
   if (args.operation !== 'prepare' || !['lineups', 'statistics', 'details'].includes(args.tab)) {
@@ -45,12 +62,18 @@ export async function pageOperation(args) {
   if (args.player_id != null && (!Number.isSafeInteger(args.player_id) || args.player_id < 1)) {
     throw new Error('Invalid player ID.');
   }
-  const pause = () => new Promise(resolve => setTimeout(resolve, (lo + Math.random() * (hi - lo)) * 1000));
+  const actions = [];
+  const pause = async () => {
+    const milliseconds = (lo + Math.random() * (hi - lo)) * 1000;
+    actions.push({action: 'wait', milliseconds: Math.round(milliseconds)});
+    await new Promise(resolve => setTimeout(resolve, milliseconds));
+  };
   const click = async el => {
     if (!visible(el)) return false;
     await pause();
     if (challenged()) return false;
     el.click();
+    actions.push({action: 'click', label: (el.getAttribute('aria-label') || el.innerText || '').trim().slice(0, 100)});
     await new Promise(resolve => setTimeout(resolve, 250));
     return true;
   };
@@ -70,13 +93,16 @@ export async function pageOperation(args) {
   const tab = document.querySelector(`[data-testid="tab-${args.tab}"]`);
   const tabOpened = await click(tab);
   let playerOpened = false;
+  let playerTarget = 'not_requested';
   if (args.player_id != null) {
     const images = [...document.querySelectorAll(`img[src*="/player/${args.player_id}/image"]`)];
     const image = images.find(visible);
-    if (image) {
-      playerOpened = await click(image.parentElement?.parentElement);
-    }
+    // Click the image itself so its nearest site handler receives the event.
+    // A fixed grandparent can instead be a substitution/player chooser.
+    playerTarget = image ? 'image' : 'not_visible';
+    if (image) playerOpened = await click(image);
   }
   if (challenged()) return verification();
-  return {ok: true, tab_opened: tabOpened, player_opened: playerOpened, ...source()};
+  return {ok: true, tab_opened: tabOpened, player_opened: playerOpened, ...source(),
+    diagnostics: {...observe(), player_target: playerTarget, actions}};
 }

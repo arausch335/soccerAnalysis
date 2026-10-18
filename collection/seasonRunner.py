@@ -380,6 +380,11 @@ class SeasonRunner:
                         and self._spatial_done(match)
                         and (not getattr(sofa,'uses_browser',False) or match.metadata.get('browser_details',{}).get('complete'))):
                     entry.update(status='complete',error='')
+                    if getattr(sofa,'uses_browser',False):
+                        self.browser_coverage[str(mid)]={**match.metadata['browser_details'],
+                            'competition':match.season.competition.name,'season':season_label(match.season.name),
+                            'home':match.home_team.name,'away':match.away_team.name}
+                        self._write_collection_coverage(match)
                     self.report(f'[{index}/{len(selected)}] Already complete: {mid}')
                     timing.finish_game(clients=self.clients.values(),cached=True,mode=timing_mode())
                     continue
@@ -453,15 +458,16 @@ class SeasonRunner:
                 match.metadata['collection_transport']={key:value for key,value in sofa.audit.items()
                     if key==f'event/{mid}' or key.startswith(f'event/{mid}/')}
             store.to_csv(dataset)
-            if self.browser_coverage:
-                atomic_json(self.directory/'browser_coverage.json',self.browser_coverage)
             entry.update(status='complete' if not errors else 'partial',error='; '.join(errors),
                          updated_at=now(),attempts=int(entry.get('attempts',0))+1)
+            if str(mid) in self.browser_coverage:self._write_collection_coverage(match)
             atomic_csv(pd.DataFrame(statuses.values()),status_path)
             self.report(f'[{index}/{len(selected)}] {event["homeTeam"]["name"]} vs {event["awayTeam"]["name"]}: {entry["status"]}'+(f' ({entry["error"]})' if errors else ''))
             timing.finish_game(clients=self.clients.values(),status=entry['status'],mode=timing_mode())
             if self._sofascore_blocked:
-                self.report('SofaScore request safety stop triggered; saved the current checkpoint and stopped collection.')
+                self.report('Chrome extension recovery could not finish; saved the current checkpoint. Inspect the extension diagnostic log and resume collection.'
+                    if getattr(sofa,'requires_manual_attention',False) is True else
+                    'SofaScore request safety stop triggered; saved the current checkpoint and stopped collection.')
                 break
         atomic_csv(pd.DataFrame(statuses.values(),columns=['match_id','competition','status','attempts','updated_at','error']),status_path)
         if build_csvs:
@@ -497,13 +503,66 @@ class SeasonRunner:
                     match.metadata.setdefault('raw_response_files',{})['sofascore_'+label]=str(self.cache.path('sofascore',key).relative_to(self.directory))
             match.metadata['browser_details']={**coverage,'complete':not coverage['errors']}
             errors=coverage['errors']
+            if coverage.get('blocked'):self._sofascore_blocked=True
         except DATA_ERRORS as exc:
             errors=[f'browser match details: {exc}']
             match.metadata['browser_details']={'complete':False,'errors':[str(exc)]}
             if isinstance(exc,ProviderRequestError) and exc.status_code in (401,403,429):self._sofascore_blocked=True
         if getattr(sofa,'requires_manual_attention',False) is True:self._sofascore_blocked=True
-        self.browser_coverage[str(mid)]=match.metadata['browser_details']
+        self.browser_coverage[str(mid)]={**match.metadata['browser_details'],
+            'competition':match.season.competition.name,'season':season_label(match.season.name),
+            'home':match.home_team.name,'away':match.away_team.name}
         return errors
+
+    def _write_collection_coverage(self, match):
+        """Human-readable resource coverage alongside the detailed checkpoint."""
+        from copy import deepcopy
+        current=self.browser_coverage[str(match.id)]
+        spatial=deepcopy(match.metadata.get('sofascore_spatial_status',{}))
+        for category in self.spatial:
+            if category in ('heatmap','rating_breakdown'):
+                for lineup in match.lineups:
+                    for appearance in lineup.players:
+                        if appearance.did_play:spatial.setdefault(str(appearance.player.id),{}).setdefault(category,'not_attempted')
+            else:spatial.setdefault(category,'not_attempted')
+        current['spatial_status']=spatial
+        rows=[]
+        for mid,record in self.browser_coverage.items():
+            resources={**record.get('coverage',{}),
+                **{key:'skipped_not_played' for key in record.get('skipped',{})}}
+            resources.setdefault('lineups','complete')
+            for resource,status in resources.items():
+                rows.append({'match_id':mid,'competition':record.get('competition',''),
+                    'season':record.get('season',''),'home':record.get('home',''),
+                    'away':record.get('away',''),'resource':resource,'status':status,
+                    'reason':record.get('reasons',{}).get(resource,
+                        'Player did not play' if status=='skipped_not_played' else
+                        'Collection paused before this request' if status=='not_attempted' else '')})
+        # Include spatial categories from every saved coverage record, not just
+        # the current match, so a resumed run retains earlier observations.
+        for mid,record in self.browser_coverage.items():
+            for key,value in record.get('spatial_status',{}).items():
+                if key.startswith('_'):continue
+                values=value.items() if isinstance(value,dict) else [(key,value)]
+                for category,status in values:
+                    if not isinstance(status,str):continue
+                    rows.append({'match_id':mid,'competition':record.get('competition',''),
+                        'season':record.get('season',''),'home':record.get('home',''),
+                        'away':record.get('away',''),'resource':f'player/{key}/{category}' if isinstance(value,dict) else category,
+                        'status':status,'reason':{
+                            'not_attempted':'Collection paused before this request',
+                            'unavailable':'Provider has no data for this resource',
+                            'failed':'See checkpoint and extension diagnostic log',
+                            'deferred':'Deferred by configured collection strategy'}.get(status,'')})
+        atomic_csv(pd.DataFrame(rows,columns=['match_id','competition','season','home','away','resource','status','reason']),
+                   self.directory/'collection_coverage.csv')
+        atomic_json(self.directory/'browser_coverage.json',self.browser_coverage)
+        counts={}
+        for row in rows:
+            if str(row['match_id'])==str(match.id):counts[row['status']]=counts.get(row['status'],0)+1
+        self.report(f"[Coverage] {match.season.competition.name} {season_label(match.season.name)} | match {match.id} | "+
+            ', '.join(f'{status}={count}' for status,count in sorted(counts.items())))
+        self.report(f'Coverage report: {self.directory/"collection_coverage.csv"}')
 
     @staticmethod
     def _apply_browser_details(match,lineups):
