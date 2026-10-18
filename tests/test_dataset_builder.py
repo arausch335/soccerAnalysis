@@ -72,6 +72,7 @@ class DatasetBuildTests(unittest.TestCase):
             source.mkdir(parents=True)
             (source / 'job.json').write_text('{}')
             with patch('main.COMPETITIONS', ['Bundesliga']), patch('main.SEASONS', ['2024/25']), \
+                    patch.dict(main.config.TRANSPORT,{'sofascore_mode':'auto'}), \
                     patch('main._collection_complete', return_value=True), \
                     patch('main.collect') as collect, \
                     patch('dataset_builder.build_dataset', return_value=0) as build:

@@ -33,3 +33,7 @@ Thumbs.db
 
 # Analysis-ready datasets remain local.
 dataset/
+
+# Transfers and the portable work map stay local; keep only its instructions.
+ensemble_data/*
+!ensemble_data/README.md

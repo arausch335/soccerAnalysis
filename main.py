@@ -15,6 +15,7 @@ from providers.extensionBridge import extension_scope
 from collection.progress import CollectionProgress, progress_scope, prime_job, get_job
 from collection.whoScoredEvents import main as collect_whoscored
 from collection.fotmobOnly import main as collect_fotmob
+from collection.ensemble import ensemble_session
 
 
 # Values loaded from config/settings.yaml; edit the YAML file, not this module.
@@ -290,7 +291,7 @@ def _standalone(kind,options,targets,action):
     return result
 
 
-def main(argv=None):
+def _main(argv=None):
     args=list(sys.argv[1:] if argv is None else argv)
     parser=argparse.ArgumentParser(add_help=False)
     parser.add_argument('--collection-types',nargs='+',choices=KINDS,default=COLLECTION_TYPES)
@@ -364,6 +365,22 @@ def main(argv=None):
         finally:
             progress.summary()
     return result
+
+
+def main(argv=None):
+    args=list(sys.argv[1:] if argv is None else argv)
+    parser=argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--ensemble-root',type=Path,default=config.PROJECT_ROOT/'ensemble_data')
+    parser.add_argument('--import-only',action='store_true')
+    parser.add_argument('--ignore-provenance',action='store_true')
+    transfer,args=parser.parse_known_args(args)
+    if '--help' in args or '-h' in args:return _main(args)
+    try:
+        with ensemble_session(_selection(args).data_root,transfer.ensemble_root,skip_remote=not transfer.ignore_provenance):
+            return 0 if transfer.import_only else _main(args)
+    except (OSError,ValueError) as exc:
+        print(f'Ensemble collection paused: {exc}. Staged copies are retained on an incomplete import.',flush=True)
+        return 2
 
 
 if __name__ == '__main__':

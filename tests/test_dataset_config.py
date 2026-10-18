@@ -94,6 +94,7 @@ class DatasetConfigTests(unittest.TestCase):
             self.source(root)
             with patch.multiple(dataset_config, DATA_ROOT=root / 'data', DATASET_ROOT=root / 'dataset'), \
                     patch.multiple(main, BUILD_DATASET=True, COMPETITIONS=['Bundesliga'], SEASONS=['2024/25']), \
+                    patch.dict(main.config.TRANSPORT,{'sofascore_mode':'auto'}), \
                     patch('main._collection_complete', return_value=True), \
                     patch('main.collect') as collect, \
                     patch('dataset_builder.build_dataset', return_value=0) as build:

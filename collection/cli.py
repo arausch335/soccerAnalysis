@@ -133,7 +133,7 @@ def main(argv=None):
             counts=result.status.value_counts().to_dict()
             print(f"Collection result: {len(result)} matches; " +
                   ', '.join(f'{name}={count}' for name,count in sorted(counts.items())))
-            return 0 if len(result) and result.status.eq('complete').all() else 2
+            return 0 if len(result) and result.status.isin(('complete','elsewhere')).all() else 2
     except Timeout:
         print('Another collector is using this data root; no requests were made.')
         return 2

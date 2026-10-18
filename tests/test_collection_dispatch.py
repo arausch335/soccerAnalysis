@@ -7,9 +7,14 @@ from unittest.mock import patch
 import config
 import main
 import yaml
+from contextlib import nullcontext
 
 
 class CollectionDispatchTests(unittest.TestCase):
+    def setUp(self):
+        patcher=patch('main.ensemble_session',side_effect=lambda *a,**k:nullcontext())
+        patcher.start();self.addCleanup(patcher.stop)
+
     def test_config_types_run_every_selected_season_through_main(self):
         with tempfile.TemporaryDirectory() as folder, \
                 patch('main.COLLECTION_TYPES',['combined','whoscored_events','fotmob_players']), \

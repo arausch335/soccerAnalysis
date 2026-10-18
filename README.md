@@ -32,7 +32,7 @@ collection:
   types: [combined, whoscored_events, fotmob_players]
   action: auto
   show_timing: true
-  sofascore_access: auto
+  sofascore_access: extension
 ```
 
 This is an excerpt; keep the other settings in the supplied file. Types:
@@ -84,7 +84,7 @@ running without arguments uses every configured competition and season.
 ## Standalone scrapers and coverage review
 
 The older shortcuts still work: `whoscored_events.py` for WhoScored events, `fotmob_player_stats.py` for
-FotMob-only player stats, and `review_data.py` for separate WhoScored/Sofascore
+FotMob-only player stats, and `review_data.py` for separate WhoScored/Sofascore/FotMob
 match coverage for every configured season. Both scrapers print the competition,
 season, match ID, and team names. FotMob output uses `fmb_` columns and IDs and
 keeps unavailable normal-schema columns as NA. All share `config/settings.yaml`.
@@ -104,10 +104,54 @@ python main.py --collection-types sofascore --sofascore-transport extension --co
 Python prints a connection code. Open the extension on your Sofascore tab,
 paste that code, and click **Connect this Sofascore tab**. Python keeps the
 existing checkpoints, schema, dataset building and timing; JavaScript handles
-the page. Complete verification yourself and click **Resume** if prompted.
+the page. The extension waits for automatic browser verification and resumes
+when access returns. Persistent verification stays paused until you use
+**Resume** or **Disconnect**, without expiring the collection.
 For regular PyCharm runs set `collection.sofascore_access: extension` in YAML.
 
 [Installation, first-match check, permissions and limitations](docs/CHROME_EXTENSION.md).
+
+To run every configured competition/season with one extension connection:
+
+```bash
+python main.py --collection-types sofascore --build-dataset
+```
+
+Omit competition/season/name overrides to use the YAML lists. `python main.py`
+also uses the configured collection types (the supplied default is `combined`).
+
+## Combine data from multiple computers
+
+Paste another computer's complete `data` folder into `ensemble_data/data/`, or
+use `ensemble_data/<computer>/data/` for several transfers. `main.py` imports
+these before scraping: provider raw responses, checkpoints, schedules, coverage
+and provenance enter the regular data root. Conflicting originals and machine
+state are preserved under `data/ensemble_imports/`; browser profiles/cookies and
+safety settings are archived rather than activated on the Mac. Successful
+imports are removed from the staging folder only after checksum verification.
+Invalid or interrupted transfers stay for review/retry. Stop copying before
+starting an import. To import without scraping:
+
+```bash
+python main.py --import-only
+```
+
+`ensemble_data/provenance.json` updates after each saved match. Copy just this
+file to another computer's `ensemble_data` folder to skip matching completed
+work without transferring raw data. Local files are rechecked at startup, so
+the copied map is merged with that computer's own work. Provider namespaces,
+competition/season and completed provider/spatial/browser coverage prevent a
+WhoScored event ID or a basic HTTP match from standing in for other requested
+data. Remote-only work is labeled `elsewhere`; it does not inflate local data
+coverage or create fake checkpoints. `review_data.py` reports these counts
+separately. Transfer the full folders to the Mac before building its complete
+dataset. A copied file is not live coordination: computers scraping at the same
+time should use different configured league/season selections.
+
+[Transfer-folder instructions](ensemble_data/README.md). `--ensemble-root`
+selects another staging folder; `--data-root` selects the receiving data root.
+Use `--ignore-provenance` to collect missing local data despite remote completion
+records, while retaining the usual local cache/checkpoint resume behavior.
 
 ## HTTP and visible-browser collection
 

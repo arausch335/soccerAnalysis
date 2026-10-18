@@ -221,14 +221,14 @@ class ExtensionBridge:
                 try:
                     remaining = float(timeout)
                     last = time.monotonic()
-                    was_paused = self.user_paused
+                    was_paused = self.user_paused or action == 'verify'
                     while item['result'] is None and not self.closed:
                         self.condition.wait(timeout=None if was_paused else max(0, remaining))
                         current = time.monotonic()
                         if not was_paused:
                             remaining -= current - last
                         last = current
-                        was_paused = self.user_paused
+                        was_paused = self.user_paused or action == 'verify'
                         if remaining <= 0 and not was_paused:
                             break
                     if item['result'] is None:

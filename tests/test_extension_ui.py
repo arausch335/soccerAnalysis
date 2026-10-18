@@ -34,7 +34,15 @@ class ExtensionUiTests(unittest.TestCase):
         <div onclick="show(7)"><div><img style="width:50px;height:50px" src="/api/v1/player/7/image"></div></div>
         <div onclick="show(8)"><div><img style="width:50px;height:50px" src="/api/v1/player/8/image"></div></div>
         <div data-testid="sheet" style="display:none"><button aria-label="Close" onclick="this.parentElement.style.display='none'">Close</button><span id="player"></span></div>
-        <script>function show(id){document.querySelector('[data-testid=sheet]').style.display='block';document.querySelector('#player').textContent='Player '+id;}</script>
+        <script>
+        function show(id){document.querySelector('[data-testid=sheet]').style.display='block';document.querySelector('#player').textContent='Player '+id;}
+        function challengeClicked(){sessionStorage.setItem('challengeClicks',String(Number(sessionStorage.getItem('challengeClicks')||0)+1));}
+        function automaticChallenge(){
+          const content=document.body.innerHTML;
+          document.body.innerHTML='<p>Verify you are human</p><button onclick="challengeClicked()">Verify</button>';
+          setTimeout(()=>{document.body.innerHTML=content;sessionStorage.setItem('automaticallyCleared','yes');},2000);
+        }
+        </script>
         </body></html>'''
         with tempfile.TemporaryDirectory() as folder,sync_playwright() as p:
             root=Path(folder);directory=prepare_extension(root/'load-this-extension')
@@ -51,6 +59,7 @@ class ExtensionUiTests(unittest.TestCase):
                     key=url.split('/api/v1/')[1];requests.append(key)
                     if key=='event/1/lineups' and not blocked:
                         blocked=True
+                        sofa.evaluate('automaticChallenge()')
                         r.fulfill(status=403,content_type='application/json',body='{}');return
                     if key=='event/1/player/8/statistics' and not interrupted:
                         interrupted=True;r.abort();return
@@ -90,12 +99,12 @@ class ExtensionUiTests(unittest.TestCase):
                     popup.locator('#resume').click()
                     deadline=time.monotonic()+45;resumed=False
                     while not future.done() and time.monotonic()<deadline:
-                        if 'data request was denied' in popup.locator('#status').inner_text():
-                            popup.locator('#resume').click();resumed=True
                         popup.wait_for_timeout(100)
                     if not future.done():bridge.close()
                     result=future.result(timeout=3)
-                self.assertTrue(resumed)
+                self.assertFalse(resumed)
+                self.assertEqual(sofa.evaluate("sessionStorage.getItem('automaticallyCleared')"),'yes')
+                self.assertEqual(sofa.evaluate("Number(sessionStorage.getItem('challengeClicks')||0)"),0)
                 self.assertTrue(interrupted)
                 trace=[json.loads(line) for line in bridge.diagnostics.path.read_text().splitlines()]
                 self.assertEqual(result.status.tolist(),['complete'],
@@ -110,6 +119,7 @@ class ExtensionUiTests(unittest.TestCase):
                 self.assertIn('event/1/player/8/statistics',requests)
                 self.assertFalse(client.request_gate.is_blocked)
                 self.assertTrue(any(row.get('result',{}).get('diagnostics',{}).get('recovery_attempts')==1 for row in trace))
+                self.assertTrue(any(row.get('result',{}).get('diagnostics',{}).get('verification_resolution')=='automatic' for row in trace))
                 self.assertNotIn(bridge.token,bridge.diagnostics.path.read_text())
                 popup.locator('#disconnect').click()
             finally:
