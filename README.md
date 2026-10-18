@@ -104,8 +104,10 @@ python main.py --collection-types sofascore --sofascore-transport extension --co
 Python prints a connection code. Open the extension on your Sofascore tab,
 paste that code, and click **Connect this Sofascore tab**. Python keeps the
 existing checkpoints, schema, dataset building and timing; JavaScript handles
-the page. The extension waits for automatic browser verification and resumes
-when access returns. Persistent verification stays paused until you use
+the page. On the first 403, the extension reloads the selected tab once, waits
+for any browser verification to finish naturally, then checks the denied request
+once. It resumes automatically when access returns, including on the homepage.
+Reloads, page readiness and confirmation results appear in the diagnostic log. Persistent verification stays paused until you use
 **Resume** or **Disconnect**, without expiring the collection.
 For regular PyCharm runs set `collection.sofascore_access: extension` in YAML.
 

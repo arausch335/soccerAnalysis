@@ -58,6 +58,23 @@ class ExtensionBridgeTests(unittest.TestCase):
             self.assertEqual(self.http('/v1/result',{'id':command['id'],'result':{'ok':True,'status':200,'payload':{'match':1}}})[0],200)
             self.assertEqual(future.result()['payload'],{'match':1})
 
+    def test_verification_progress_is_authenticated_filtered_and_does_not_complete_command(self):
+        from unittest.mock import patch
+        self.connect()
+        self.assertEqual(self.http('/v1/diagnostic', {'id': 'expired', 'result': {}})[0], 409)
+        with ThreadPoolExecutor() as pool, patch.object(self.bridge, 'record') as record:
+            future=pool.submit(self.bridge.request,'verify',{},timeout=.01)
+            _,body=self.http('/v1/command')
+            command=body['command']
+            value={'id':command['id'],'result':{'recovery_stage':'confirmation_read','status':403}}
+            self.assertEqual(self.http('/v1/diagnostic',value,token=False)[0],401)
+            self.assertEqual(self.http('/v1/diagnostic',value,client='b'*32)[0],409)
+            self.assertEqual(self.http('/v1/diagnostic',value)[0],200)
+            record.assert_any_call('verification_progress',action='verify',result=value['result'])
+            self.assertFalse(future.done())
+            self.http('/v1/result',{'id':command['id'],'result':{'ok':True}})
+            self.assertTrue(future.result(timeout=1)['ok'])
+
     def test_pause_freezes_command_deadline_until_resume(self):
         self.connect();self.http('/v1/pause',{})
         with ThreadPoolExecutor() as pool:
