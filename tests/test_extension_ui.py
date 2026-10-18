@@ -42,6 +42,10 @@ class ExtensionUiTests(unittest.TestCase):
           document.body.innerHTML='<p>Verify you are human</p><button onclick="challengeClicked()">Verify</button>';
           setTimeout(()=>{document.body.innerHTML=content;sessionStorage.setItem('automaticallyCleared','yes');},2000);
         }
+        if(sessionStorage.getItem('needsReloadClearance')){
+          sessionStorage.removeItem('needsReloadClearance');
+          sessionStorage.setItem('reloadedForClearance','yes');automaticChallenge();
+        }
         </script>
         </body></html>'''
         with tempfile.TemporaryDirectory() as folder,sync_playwright() as p:
@@ -59,7 +63,7 @@ class ExtensionUiTests(unittest.TestCase):
                     key=url.split('/api/v1/')[1];requests.append(key)
                     if key=='event/1/lineups' and not blocked:
                         blocked=True
-                        sofa.evaluate('automaticChallenge()')
+                        sofa.evaluate("sessionStorage.setItem('needsReloadClearance','yes')")
                         r.fulfill(status=403,content_type='application/json',body='{}');return
                     if key=='event/1/player/8/statistics' and not interrupted:
                         interrupted=True;r.abort();return
@@ -104,6 +108,7 @@ class ExtensionUiTests(unittest.TestCase):
                     result=future.result(timeout=3)
                 self.assertFalse(resumed)
                 self.assertEqual(sofa.evaluate("sessionStorage.getItem('automaticallyCleared')"),'yes')
+                self.assertEqual(sofa.evaluate("sessionStorage.getItem('reloadedForClearance')"),'yes')
                 self.assertEqual(sofa.evaluate("Number(sessionStorage.getItem('challengeClicks')||0)"),0)
                 self.assertTrue(interrupted)
                 trace=[json.loads(line) for line in bridge.diagnostics.path.read_text().splitlines()]
@@ -120,6 +125,8 @@ class ExtensionUiTests(unittest.TestCase):
                 self.assertFalse(client.request_gate.is_blocked)
                 self.assertTrue(any(row.get('result',{}).get('diagnostics',{}).get('recovery_attempts')==1 for row in trace))
                 self.assertTrue(any(row.get('result',{}).get('diagnostics',{}).get('verification_resolution')=='automatic' for row in trace))
+                self.assertTrue(any(row.get('result',{}).get('recovery_stage')=='reload_started' for row in trace))
+                self.assertTrue(any(row.get('result',{}).get('recovery_stage')=='confirmation_read' for row in trace))
                 self.assertNotIn(bridge.token,bridge.diagnostics.path.read_text())
                 popup.locator('#disconnect').click()
             finally:

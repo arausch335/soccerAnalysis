@@ -14,12 +14,13 @@ class ExtensionDiagnosticTests(unittest.TestCase):
                 'token':'secret-token'},result={'ok':True,'status':403,
                 'source_url':'https://www.sofascore.com/event/1?private=secret-query#id:1,tab:lineups',
                 'payload':{'secret':'raw-response'},'headers':{'Cookie':'secret-cookie'},
-                'diagnostics':{'visible_challenge':False,'player_panels':2,
+                'diagnostics':{'recovery_stage':'confirmation_read','visible_challenge':False,'player_panels':2,
                     'actions':[{'action':'wait','milliseconds':2714}]}},elapsed=1.25)
             raw=trace.path.read_text(encoding='utf-8');row=json.loads(raw)
             self.assertNotIn('secret',raw);self.assertNotIn('raw-response',raw)
             self.assertEqual(row['result']['source_url'],'https://www.sofascore.com/event/1#id:1')
             self.assertFalse(row['result']['diagnostics']['visible_challenge'])
+            self.assertEqual(row['result']['diagnostics']['recovery_stage'],'confirmation_read')
             self.assertEqual(row['result']['status'],403)
             self.assertEqual(row['args']['endpoint'],'event/1/player/7/statistics')
 

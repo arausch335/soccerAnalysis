@@ -82,7 +82,7 @@ test('an empty page result reopens the intended match and retries once',async()=
   assert.match(result.diagnostics.recovery_reason,/no collection data/);
 });
 
-test('HTTP denial and rate limit results are never automatically retried',async()=>{
+test('HTTP denial and rate limit reads are handed to Python without an immediate retry',async()=>{
   matchTab();
   for(const status of [403,429]) {
     let calls=0;
@@ -141,7 +141,7 @@ test('visible verification is observed without clicks or data requests',async()=
   verificationState();
   chrome.scripting={executeScript:async({args:[args]})=>{
     assert.equal(args.operation,'inspect');
-    return [{frameId:0,result:{ok:true,diagnostics:{visible_challenge:true}}}];
+    return [{frameId:0,result:{ok:true,source_url:'https://www.sofascore.com/event/1',diagnostics:{visible_challenge:true}}}];
   }};
   assert.equal(await checkVerification({...store}),false);
   assert.equal(store.paused,true);assert.equal(store.verificationReadySince,null);
@@ -151,7 +151,7 @@ test('a persistent denied request remains paused and is not repeatedly probed',a
   verificationState();let reads=0;
   chrome.scripting={executeScript:async({args:[args]})=>{
     if(args.operation==='read')reads++;
-    return [{frameId:0,result:{ok:true,status:403,diagnostics:{match_controls:true,visible_challenge:false}}}];
+    return [{frameId:0,result:{ok:true,status:403,source_url:'https://www.sofascore.com/event/1',diagnostics:{match_controls:true,visible_challenge:false}}}];
   }};
   assert.equal(await checkVerification({...store}),false);
   assert.equal(await checkVerification({...store}),false);
@@ -168,4 +168,57 @@ test('manual Resume still completes a verification that did not clear automatica
   const result=JSON.parse(posts.find(p=>p.url.endsWith('/result')).args.body).result;
   assert.equal(result.diagnostics.verification_resolution,'manual');
   await new Promise(r=>setTimeout(r,10));
+});
+
+
+test('first denial reloads once and rejects the previous document before checking access',async()=>{
+  verificationState();store.connected=false;store.verification=null;
+  let reloads=0,doc='old';const operations=[],posts=[];
+  chrome.tabs.reload=async()=>{reloads++;};
+  chrome.scripting={executeScript:async({args:[args]})=>{
+    operations.push(args.operation);
+    return [{frameId:0,documentId:doc,result:{ok:true,status:200,
+      source_url:'https://www.sofascore.com/event/1',diagnostics:{match_controls:true,visible_challenge:false}}}];
+  }};
+  globalThis.fetch=async(url,args)=>{posts.push({url,args});return {ok:true,json:async()=>({phase:'closed'})};};
+  assert.equal(await execute({...store},{id:'reload-verify',action:'verify',args:{endpoint:'event/1/lineups'}}),null);
+  await new Promise(r=>setTimeout(r,0));store.connected=true;
+  assert.equal(reloads,1);
+  await checkVerification({...store});
+  assert.equal(operations.includes('read'),false);
+  doc='new';await checkVerification({...store});
+  assert.equal(operations.includes('read'),false);
+  store.verificationReadySince=Date.now()-5000;
+  assert.equal(await checkVerification({...store}),true);
+  assert.equal(reloads,1);assert.equal(operations.filter(x=>x==='read').length,1);
+  const stages=posts.filter(p=>p.url.endsWith('/diagnostic')).map(p=>JSON.parse(p.args.body).result.recovery_stage);
+  assert.ok(stages.includes('reload_started'));assert.ok(stages.includes('waiting_for_reload'));
+  assert.ok(stages.includes('document_changed'));assert.ok(stages.includes('confirmation_read'));
+  await new Promise(r=>setTimeout(r,10));
+});
+
+test('schedule recovery accepts a ready homepage without match controls',async()=>{
+  verificationState();store.verification.args.endpoint='unique-tournament/8/season/42409/events/last/0';
+  chrome.tabs.get=async()=>({id:1,url:'https://www.sofascore.com/'});
+  chrome.scripting={executeScript:async()=>[{frameId:0,result:{ok:true,status:200,
+    source_url:'https://www.sofascore.com/',diagnostics:{match_controls:false,ready_state:'complete',visible_challenge:false}}}]};
+  assert.equal(await checkVerification({...store}),true);
+  await new Promise(r=>setTimeout(r,10));
+});
+
+test('match recovery never reads from the wrong match and a manual reload permits one fresh check',async()=>{
+  verificationState();store.verificationDocument='old';store.verificationProbed=true;
+  let mid=2,doc='old',reads=0;
+  chrome.scripting={executeScript:async({args:[args]})=>{
+    if(args.operation==='read')reads++;
+    return [{frameId:0,documentId:doc,result:{ok:true,status:403,
+      source_url:`https://www.sofascore.com/event/${mid}`,diagnostics:{match_controls:true,visible_challenge:false}}}];
+  }};
+  await checkVerification({...store});assert.equal(reads,0);
+  mid=1;doc='manual-reload';await checkVerification({...store});
+  assert.equal(store.verificationProbed,false);assert.equal(reads,0);
+  store.verificationReadySince=Date.now()-5000;
+  await checkVerification({...store});await checkVerification({...store});
+  assert.equal(reads,1);assert.equal(store.paused,true);
+  store.connected=false;store.verification=null;
 });

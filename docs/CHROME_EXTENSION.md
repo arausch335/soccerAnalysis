@@ -93,9 +93,12 @@ their own clients and settings.
 - A visible verification challenge or denied data request (403) pauses Python
   and the extension displays **!**. A denied background request can happen
   without a visible checkbox; the message now distinguishes these cases.
-  The extension passively watches for the browser's automatic clearance. Once
-  match controls return and remain ready for four seconds, one confirmation
-  request checks access. Successful clearance resumes collection automatically.
+  The extension reloads the selected tab once, then passively watches for the
+  browser's automatic clearance. It waits for the new document and four seconds
+  of stable readiness before one confirmation request checks access. Match
+  requests require the intended match controls; schedule requests also work
+  from a ready homepage. Successful clearance resumes collection automatically.
+  A manual page reload permits a fresh confirmation after the new page settles.
   If access remains denied, collection stays paused without expiring; inspect
   the tab and use **Resume** when ready, or **Disconnect** to stop. No challenge
   controls are clicked. `manual_wait_seconds` still controls the initial
@@ -123,8 +126,8 @@ The extension waits for match controls to appear rather than waiting for all
 advertisements and background resources to finish loading. If match content
 does not appear, it reloads the intended match once. A transient page-script or
 network failure can reopen the intended match and retry the operation once.
-It does not browse random links or navigate unrelated pages. A 403 waits for
-automatic clearance or manual Resume, and a 429 retains its rate-limit wait;
+It does not browse random links or navigate unrelated pages. A 403 gets one
+reload and waits for automatic clearance or manual Resume; a 429 retains its rate-limit wait;
 neither is retried as a transient page error. After recovery is exhausted,
 Python saves the checkpoint and pauses rather than continuing with an unusable
 connection. Running the same command again resumes incomplete work.
@@ -135,7 +138,8 @@ the configured data root). Each line is a JSON record containing a UTC timestamp
 and an operation/connection event. It records requested match/player IDs or
 endpoint, current match URL, page title/readiness, visible challenge evidence,
 player-panel/dialog counts, observed clicks/delays, HTTP status, recovery
-attempts, errors and elapsed time. Compare `command_started` and
+attempts, errors and elapsed time. `verification_progress` records reload starts,
+document changes, readiness/challenge transitions and confirmation statuses. Compare `command_started` and
 `command_finished`/`command_failed` to find the exact failing step. This is
 operational metadata, not a full page recording or screenshot; response bodies,
 cookies, request headers, connection codes and tokens are excluded. Logs stay

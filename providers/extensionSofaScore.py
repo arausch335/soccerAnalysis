@@ -56,7 +56,7 @@ class ExtensionSofaScoreClient(BrowserSofaScoreClient):
     def _verify(self, endpoint, result):
         visible = result.get('diagnostics', {}).get('visible_challenge', False)
         reason = 'visible verification detected' if visible else 'a data request was denied; a visible challenge may not appear'
-        self.report(f'Sofascore {endpoint}: {reason}. Waiting for automatic browser clearance; collection stays paused. If needed, inspect Chrome and click Resume. No timed browser cooldown applies.', flush=True)
+        self.report(f'Sofascore {endpoint}: {reason}. Reloading the selected tab once, then waiting for automatic browser clearance; collection stays paused. If needed, inspect Chrome and click Resume. No timed browser cooldown applies.', flush=True)
         resolved = self._step('verify', {'endpoint': endpoint, 'visible_challenge': visible,
             'challenge_evidence': result.get('challenge_evidence')}, timeout=self.settings['manual_wait_seconds'])
         if resolved.get('status') == 429:
