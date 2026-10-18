@@ -16,7 +16,7 @@ MAX_BODY = 16 * 1024 * 1024
 
 
 class ExtensionBridge:
-    def __init__(self, *, report=print, connect_timeout=120):
+    def __init__(self, *, report=print, connect_timeout=120, diagnostics_dir=None):
         self.report = report
         self.connect_timeout = connect_timeout
         self.token = secrets.token_urlsafe(32)
@@ -31,6 +31,11 @@ class ExtensionBridge:
         self.phase = 'waiting'
         self.user_paused = False
         self.unavailable = False
+        from .extensionDiagnostics import ExtensionDiagnostics
+        self.diagnostics = ExtensionDiagnostics(diagnostics_dir, report) if diagnostics_dir is not None else None
+
+    def record(self, event, **fields):
+        if self.diagnostics is not None:self.diagnostics.record(event, **fields)
 
     def start(self):
         if self.closed:
@@ -135,6 +140,7 @@ class ExtensionBridge:
                         bridge.user_paused = False
                         bridge.unavailable = False
                         bridge.phase = 'connected'
+                        bridge.record('connected')
                         self.reply(200, {'version': 1, 'message': 'Connected to Python'})
                     elif self.path == '/v1/result':
                         if not bridge.pending or value.get('id') != bridge.pending['id']:
@@ -149,6 +155,7 @@ class ExtensionBridge:
                         self.reply(200, {'saved': True})
                     elif self.path in ('/v1/pause', '/v1/resume'):
                         bridge.user_paused = self.path == '/v1/pause'
+                        bridge.record('paused' if bridge.user_paused else 'resumed')
                         bridge.condition.notify_all()
                         self.reply(200, {'paused': bridge.user_paused})
                     elif self.path == '/v1/disconnect':
@@ -156,6 +163,7 @@ class ExtensionBridge:
                         bridge.unavailable = True
                         bridge.client_id = None
                         bridge.phase = 'disconnected'
+                        bridge.record('disconnected')
                         if bridge.pending:
                             bridge.pending['result'] = {'ok': False, 'error': 'Extension disconnected; reconnect and resume collection'}
                         bridge.condition.notify_all()
@@ -171,10 +179,27 @@ class ExtensionBridge:
         self.address = f'127.0.0.1:{self.server.server_port}'
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
+        if self.diagnostics is not None:
+            self.record('started')
+            self.report(f'Extension diagnostic log: {self.diagnostics.path}', flush=True)
         self.report('Open Sofascore in your normal Chrome, open Soccer Collector, and paste this connection code:', flush=True)
         self.report(f'http://{self.address}/#{self.token}', flush=True)
 
     def request(self, action, args=None, *, timeout=45):
+        started = time.monotonic()
+        self.record('command_started', action=action, args=args or {})
+        try:
+            result = self._request(action, args, timeout=timeout)
+        except (ProviderError, ValueError) as exc:
+            self.record('command_failed', action=action, args=args or {},
+                        result={'error': str(exc), 'status': getattr(exc, 'status_code', None)},
+                        elapsed=time.monotonic()-started)
+            raise
+        self.record('command_finished', action=action, args=args or {}, result=result,
+                    elapsed=time.monotonic()-started)
+        return result
+
+    def _request(self, action, args=None, *, timeout=45):
         if action not in ('navigate', 'page', 'verify'):
             raise ValueError('Unknown extension action')
         self.start()
@@ -215,12 +240,14 @@ class ExtensionBridge:
                     self.pending = None
                     self.condition.notify_all()
             if not result.get('ok', False):
+                self.record('page_failure', action=action, args=args or {}, result=result)
                 self.unavailable = True
                 raise ProviderRequestError(str(result.get('error', 'Extension step failed')),
                                            status_code=result.get('status'), attempts=1)
             return result
 
     def close(self):
+        self.record('closed')
         with self.condition:
             self.closed = True
             self.phase = 'closed'
@@ -249,10 +276,10 @@ def extension_scope():
             bridge.close()
 
 
-def acquire_bridge(*, report=print, connect_timeout=120):
+def acquire_bridge(*, report=print, connect_timeout=120, diagnostics_dir=None):
     resources = _ACTIVE.get()
     if resources is None:
-        return ExtensionBridge(report=report, connect_timeout=connect_timeout), True
+        return ExtensionBridge(report=report, connect_timeout=connect_timeout, diagnostics_dir=diagnostics_dir), True
     if not resources:
-        resources.append(ExtensionBridge(report=report, connect_timeout=connect_timeout))
+        resources.append(ExtensionBridge(report=report, connect_timeout=connect_timeout, diagnostics_dir=diagnostics_dir))
     return resources[0], False

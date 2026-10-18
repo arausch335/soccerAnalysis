@@ -39,19 +39,21 @@ class ExtensionUiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder,sync_playwright() as p:
             root=Path(folder);directory=prepare_extension(root/'load-this-extension')
             self.assertFalse(any(p.name.startswith('_') for p in directory.rglob('*')))
-            bridge=ExtensionBridge(report=quiet,connect_timeout=5);bridge.start()
+            bridge=ExtensionBridge(report=quiet,connect_timeout=5,diagnostics_dir=root/'trace');bridge.start()
             settings={**browser_settings(),'timeout_seconds':5,'manual_wait_seconds':10}
             context=p.chromium.launch_persistent_context(str(root/'profile'),headless=False,
                 args=[f'--disable-extensions-except={directory}',f'--load-extension={directory}'])
-            fake=FakeBridge();blocked=False;requests=[]
+            fake=FakeBridge();blocked=False;interrupted=False;requests=[]
             def route(r):
-                nonlocal blocked
+                nonlocal blocked,interrupted
                 url=r.request.url
                 if '/api/v1/' in url:
                     key=url.split('/api/v1/')[1];requests.append(key)
                     if key=='event/1/lineups' and not blocked:
                         blocked=True
                         r.fulfill(status=403,content_type='application/json',body='{}');return
+                    if key=='event/1/player/8/statistics' and not interrupted:
+                        interrupted=True;r.abort();return
                     result=fake.request('page',{'operation':'read','endpoint':key})
                     r.fulfill(status=result['status'],content_type='application/json',body=json.dumps(result.get('payload',{})))
                 else:r.fulfill(status=200,content_type='text/html',body=html)
@@ -88,13 +90,17 @@ class ExtensionUiTests(unittest.TestCase):
                     popup.locator('#resume').click()
                     deadline=time.monotonic()+45;resumed=False
                     while not future.done() and time.monotonic()<deadline:
-                        if 'Complete verification' in popup.locator('#status').inner_text():
+                        if 'data request was denied' in popup.locator('#status').inner_text():
                             popup.locator('#resume').click();resumed=True
                         popup.wait_for_timeout(100)
                     if not future.done():bridge.close()
                     result=future.result(timeout=3)
                 self.assertTrue(resumed)
-                self.assertEqual(result.status.tolist(),['complete'])
+                self.assertTrue(interrupted)
+                trace=[json.loads(line) for line in bridge.diagnostics.path.read_text().splitlines()]
+                self.assertEqual(result.status.tolist(),['complete'],
+                    {'matches':result[['status','error']].to_dict('records'),
+                     'trace':trace[-8:]})
                 frame=pd.read_csv(root/'season'/'player_match_stats.csv')
                 self.assertEqual(tuple(frame.columns),PLAYER_MATCH_COLUMNS)
                 self.assertEqual(len(frame),2)
@@ -103,6 +109,8 @@ class ExtensionUiTests(unittest.TestCase):
                 self.assertIn('event/1/player/7/statistics',requests)
                 self.assertIn('event/1/player/8/statistics',requests)
                 self.assertFalse(client.request_gate.is_blocked)
+                self.assertTrue(any(row.get('result',{}).get('diagnostics',{}).get('recovery_attempts')==1 for row in trace))
+                self.assertNotIn(bridge.token,bridge.diagnostics.path.read_text())
                 popup.locator('#disconnect').click()
             finally:
                 bridge.close();context.close()

@@ -73,3 +73,31 @@ test('prepare handles only approved controls and paces each actual click', async
   const result=await pageOperation({operation:'prepare',tab:'lineups',match_id:1,delay_min_seconds:0,delay_max_seconds:0});
   assert.equal(result.tab_opened,true);assert.deepEqual(clicks,['Close ad','Lineups']);
 });
+
+test('player image receives the click rather than a substitution chooser ancestor', async () => {
+  page();let imageClicks=0;
+  const image={getClientRects:()=>[{}],getAttribute:()=>null,
+    click:()=>imageClicks++,parentElement:{parentElement:{click:()=>assert.fail('Wrong ancestor clicked')}}};
+  globalThis.getComputedStyle=()=>({visibility:'visible',display:'block'});
+  document.querySelectorAll=selector=>selector.startsWith('img[')?[image]:[];
+  const result=await pageOperation({operation:'prepare',tab:'lineups',match_id:1,player_id:7,
+    delay_min_seconds:0,delay_max_seconds:0});
+  assert.equal(imageClicks,1);assert.equal(result.diagnostics.player_target,'image');
+});
+
+test('each click samples its configured delay and reports the actual wait', async () => {
+  page();
+  const button=name=>({innerText:name,getAttribute:()=>null,getClientRects:()=>[{}],click:()=>{}});
+  document.querySelectorAll=selector=>selector==='button'?[button('Close ad')]:[];
+  document.querySelector=()=>button('Lineups');
+  globalThis.getComputedStyle=()=>({visibility:'visible',display:'block'});
+  const originalTimer=globalThis.setTimeout, originalRandom=Math.random;
+  const random=[0,0.5];
+  globalThis.setTimeout=fn=>{queueMicrotask(fn);return 0;};
+  Math.random=()=>random.shift();
+  try {
+    const result=await pageOperation({operation:'prepare',tab:'lineups',match_id:1,
+      delay_min_seconds:2,delay_max_seconds:4});
+    assert.deepEqual(result.diagnostics.actions.filter(a=>a.action==='wait').map(a=>a.milliseconds),[2000,3000]);
+  } finally {globalThis.setTimeout=originalTimer;Math.random=originalRandom;}
+});

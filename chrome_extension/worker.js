@@ -26,37 +26,92 @@ async function selectedTab(s) {
   return tab;
 }
 
-async function navigate(s, url) {
-  if (!matchUrl(url)) throw new Error('Only Sofascore match pages can be opened.');
-  await selectedTab(s);
-  await chrome.tabs.update(s.tabId, {url});
-  const deadline = Date.now() + 30000;
-  while (Date.now() < deadline) {
-    const tab = await selectedTab(s);
-    if (tab.status === 'complete' && matchId(tab.url) === matchId(url)) return {ok: true, source_url: tab.url};
-    await new Promise(resolve => setTimeout(resolve, 200));
+async function runPage(s, args) {
+  let results;
+  try {
+    results = await chrome.scripting.executeScript({target: {tabId: s.tabId},
+      world: 'MAIN', func: pageOperation, args: [args]});
+  } catch (error) {
+    return {ok: false, recoverable: true, error: `${error.name}: ${error.message}`};
   }
-  throw new Error('Match page did not finish loading.');
+  const frame = results.find(r => r.frameId === 0);
+  const result = frame?.result;
+  if (!result || typeof result !== 'object') {
+    return {ok: false, recoverable: true, error: 'Page returned no collection data.'};
+  }
+  result.diagnostics = {...result.diagnostics, document_id: frame.documentId};
+  return result;
 }
 
-async function execute(s, command) {
+export async function navigate(s, url) {
+  if (!matchUrl(url)) throw new Error('Only Sofascore match pages can be opened.');
+  const before = await selectedTab(s);
+  const previous = await runPage(s, {operation: 'inspect'});
+  // A same-document hash change can select another match without replacing
+  // the document. A reload/full navigation must replace the old document first.
+  const oldUrl = new URL(before.url), nextUrl = new URL(url);
+  const hashNavigation = oldUrl.pathname === nextUrl.pathname && oldUrl.hash !== nextUrl.hash;
+  let previousDocument = previous.diagnostics?.document_id;
+  let last;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt === 0) await chrome.tabs.update(s.tabId, {url});
+    else {
+      await save({message: 'Match content not ready. Reloading this match once…'});
+      await chrome.tabs.reload(s.tabId);
+    }
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      const tab = await selectedTab(s);
+      if (matchId(tab.url) === matchId(url)) {
+        try {
+          last = await runPage(s, {operation: 'inspect'});
+          if (last.diagnostics?.visible_challenge) return {...last, status: 403, verification: true};
+          const newDocument = !previousDocument || last.diagnostics?.document_id !== previousDocument;
+          if (last.ok && (newDocument || attempt === 0 && hashNavigation) &&
+              last.diagnostics?.match_controls && matchId(last.source_url) === matchId(url)) {
+            return {...last, diagnostics: {...last.diagnostics, browser_load_state: tab.status,
+              navigation_retries: attempt}};
+          }
+        } catch (_) { /* Document may be changing during navigation. */ }
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    previousDocument = last?.diagnostics?.document_id || previousDocument;
+  }
+  return {ok: false, error: 'Match content did not become ready after one reload.',
+    source_url: (await selectedTab(s)).url, diagnostics: {...last?.diagnostics, navigation_retries: 1}};
+}
+
+export async function execute(s, command) {
   if (!command || typeof command.id !== 'string' || !command.args || typeof command.args !== 'object') {
     throw new Error('Malformed collector command.');
   }
   await selectedTab(s);
   if (command.action === 'verify') {
     await save({verification: command, paused: true,
-      message: 'Complete verification yourself in the chosen Chrome tab, then click Resume.'});
+      message: command.args.visible_challenge ?
+        'Complete verification yourself in the chosen Chrome tab, then click Resume.' :
+        'A data request was denied (403); a visible challenge may not appear. Inspect the chosen tab, then click Resume to retry once.'});
     await chrome.tabs.update(s.tabId, {active: true});
     await badge('!');
     return null;
   }
   if (command.action === 'navigate') return navigate(s, command.args.url);
   if (command.action !== 'page') throw new Error('Unknown collector command.');
-  const results = await chrome.scripting.executeScript({target: {tabId: s.tabId},
-    world: 'MAIN', func: pageOperation, args: [command.args]});
-  const result = results.find(r => r.frameId === 0)?.result;
-  if (!result || typeof result !== 'object') throw new Error('Page returned no collection data.');
+  let result = await runPage(s, command.args);
+  if (!result.ok && result.recoverable) {
+    const mid = command.args.match_id || Number(command.args.endpoint?.match(/^event\/(\d+)/)?.[1]);
+    if (mid) {
+      await save({message: 'Page operation failed. Reopening the intended match and retrying once…'});
+      const tab = await selectedTab(s);
+      const recovery = await navigate(s, matchId(tab.url) === mid && matchUrl(tab.url) ?
+        tab.url : `https://www.sofascore.com/event/${mid}`);
+      if (!recovery.ok || recovery.verification) return recovery;
+      const original = result.error;
+      result = await runPage(s, command.args);
+      result.diagnostics = {...result.diagnostics, recovery_attempts: 1, recovery_reason: original};
+    }
+  }
   return result;
 }
 

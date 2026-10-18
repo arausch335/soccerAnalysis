@@ -90,7 +90,9 @@ their own clients and settings.
 - **Pause** stops after the current step. Its wait is excluded from command
   timeouts, so Python can wait until **Resume**. Per-game elapsed time includes
   human waits and can affect the ETA.
-- If verification appears, Python pauses and the extension displays **!**.
+- A visible verification challenge or denied data request (403) pauses Python
+  and the extension displays **!**. A denied background request can happen
+  without a visible checkbox; the message now distinguishes these cases.
   Complete the verification yourself in Chrome, then click **Resume**. The
   program does not interact with verification controls. Verification waits use
   `collection.browser.manual_wait_seconds` (120 by default); if this expires,
@@ -107,6 +109,48 @@ Navigation, resource requests and UI clicks are paced with
 default). UI click spacing supports up to 60 seconds; unusually long delays may
 require increasing `timeout_seconds`. The additional verification window does
 not remove a provider's access restrictions.
+
+## Recovery and diagnostic logs
+
+Click delays are sampled independently between the configured minimum and
+maximum for each click. Setting both values equal produces a fixed delay.
+The diagnostic trace includes the actual sampled click delays.
+
+The extension waits for match controls to appear rather than waiting for all
+advertisements and background resources to finish loading. If match content
+does not appear, it reloads the intended match once. A transient page-script or
+network failure can reopen the intended match and retry the operation once.
+It does not browse random links or navigate unrelated pages. A 403 requires
+manual inspection/Resume, and a 429 retains its rate-limit wait; neither is
+automatically retried as a transient page error. After recovery is exhausted,
+Python saves the checkpoint and pauses rather than continuing with an unusable
+connection. Running the same command again resumes incomplete work.
+
+Python prints the full diagnostic log path before the connection code:
+`data/extension_diagnostics/sofascore/<UTC timestamp>-<run id>.jsonl` (relative to
+the configured data root). Each line is a JSON record containing a UTC timestamp
+and an operation/connection event. It records requested match/player IDs or
+endpoint, current match URL, page title/readiness, visible challenge evidence,
+player-panel/dialog counts, observed clicks/delays, HTTP status, recovery
+attempts, errors and elapsed time. Compare `command_started` and
+`command_finished`/`command_failed` to find the exact failing step. This is
+operational metadata, not a full page recording or screenshot; response bodies,
+cookies, request headers, connection codes and tokens are excluded. Logs stay
+local and are ignored by Git. Share the log from a failed run when reporting
+an extension problem. Offline cache-only runs do not start a trace.
+
+Each attempted browser/extension match also prints a `[Coverage]` summary and
+updates `collection_coverage.csv` inside its competition/season collection
+folder. The report has competition, season, match/teams, resource, status and
+reason columns. Statuses distinguish `complete`, `unavailable` (such as 404),
+`failed`, `visible_only` (Playwright fallback fields), `skipped_not_played`,
+`not_attempted` after a pause, and spatial `deferred` requests. Details already
+collected before a later failure are preserved. `browser_coverage.json` keeps
+the same resource evidence with structured errors. The report describes
+requested resources, not a guarantee that every statistical field exists;
+unavailable fields remain NA in the normal exports. Resources outside the
+selected spatial configuration are not requested. Matches not reached yet
+remain `pending` in `collection.csv`.
 
 ## Data and limits
 

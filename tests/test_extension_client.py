@@ -80,6 +80,8 @@ class ExtensionClientTests(unittest.TestCase):
             client=ExtensionSofaScoreClient(folder,browser_settings(),bridge=bridge,report=quiet)
             self.assertEqual(client.event(1),{'event':event(1)})
             self.assertEqual(sum(action=='verify' for action,_ in bridge.calls),1)
+            verify=next(args for action,args in bridge.calls if action=='verify')
+            self.assertFalse(verify['visible_challenge'])
             bridge.denied=2;client.refresh_cache=True
             with self.assertRaises(ProviderRequestError) as caught:client.event(1)
             self.assertEqual(caught.exception.status_code,403)
@@ -111,6 +113,12 @@ class ExtensionClientTests(unittest.TestCase):
             self.assertIn('event/1/player/7/statistics',bridge.reads)
             self.assertIn('event/1/player/8/statistics',bridge.reads)
             self.assertTrue(actual.ball_carries.isna().all())
+            report=root/'extension-season'/'collection_coverage.csv'
+            report.unlink();before=len(bridge.calls)
+            self.assertEqual(runner.run('EPL','2024/25').status.tolist(),['complete'])
+            self.assertEqual(len(bridge.calls),before)
+            self.assertTrue(report.exists())
+            self.assertEqual(set(pd.read_csv(report).status),{'complete'})
 
     def test_disconnect_stops_remaining_games_without_repeated_requests(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -128,6 +136,33 @@ class ExtensionClientTests(unittest.TestCase):
             result=SeasonRunner({'sofascore':client},root/'season',providers=['sofascore'],
                 spatial=(),report=quiet).run('EPL','2024/25',build_csvs=False)
             self.assertEqual(result.status.tolist(),['failed','pending'])
+
+    def test_detail_connection_failure_produces_one_error_and_keeps_checkpoint(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);bridge=FakeBridge();original=bridge.request;failed=[];messages=[]
+            def request(action,args,**kwargs):
+                if action=='page' and args.get('endpoint')=='event/1/player/7/statistics':
+                    failed.append(args['endpoint']);bridge.unavailable=True
+                    raise ProviderRequestError('Recovery exhausted')
+                result=original(action,args,**kwargs)
+                if action=='page' and '/events/' in args.get('endpoint',''):
+                    result['payload']['events']=[event(1),event(2)]
+                return result
+            bridge.request=request
+            client=ExtensionSofaScoreClient(root,browser_settings(),bridge=bridge,report=quiet)
+            result=SeasonRunner({'sofascore':client},root/'season',providers=['sofascore'],
+                spatial=('average_positions',),report=messages.append).run('EPL','2024/25',build_csvs=False)
+            self.assertEqual(result.status.tolist(),['partial','pending'])
+            self.assertEqual(failed,['event/1/player/7/statistics'])
+            self.assertEqual(result.iloc[0]['error'],'player/7/statistics: Recovery exhausted')
+            self.assertTrue((root/'season'/'match_checkpoints'/'1').is_dir())
+            self.assertNotIn('event/1/player/8/statistics',bridge.reads)
+            self.assertTrue(any('diagnostic log' in message for message in messages))
+            coverage=pd.read_csv(root/'season'/'collection_coverage.csv').set_index('resource')
+            self.assertEqual(coverage.loc['player/7/statistics','status'],'failed')
+            self.assertEqual(coverage.loc['player/8/statistics','status'],'not_attempted')
+            self.assertEqual(coverage.loc['average_positions','status'],'not_attempted')
+            self.assertEqual(coverage.loc['player/7/statistics','competition'],'Premier League')
             self.assertTrue(result.attrs['sofascore_blocked'])
             self.assertNotIn('event/2/lineups',bridge.reads)
 
@@ -139,6 +174,32 @@ class ExtensionClientTests(unittest.TestCase):
             self.assertIs(first.bridge,second.bridge)
             first.close();self.assertFalse(second.bridge.closed)
         self.assertTrue(second.bridge.closed)
+
+    def test_partial_details_preserve_prior_success_and_record_missing_and_skipped(self):
+        with tempfile.TemporaryDirectory() as folder:
+            bridge=FakeBridge();original=bridge.request
+            def request(action,args,**kwargs):
+                if action=='page' and args.get('endpoint')=='event/1/player/8/statistics':
+                    bridge.unavailable=True
+                    raise ProviderRequestError('Connection interrupted after recovery')
+                result=original(action,args,**kwargs)
+                if action=='page' and args.get('endpoint')=='event/1/player/7/statistics':
+                    result['payload']['statistics']['totalPass']=77
+                return result
+            bridge.request=request
+            client=ExtensionSofaScoreClient(folder,browser_settings(),bridge=bridge,report=quiet)
+            source=lineup()
+            source['home']['players'].append({'player':{'id':99,'name':'Unused substitute'},
+                'substitute':True,'statistics':{}})
+            detailed,coverage=client.collect_details(event(1),source)
+            self.assertEqual(detailed['home']['players'][0]['statistics']['totalPass'],77)
+            self.assertEqual(coverage['coverage']['player/7/statistics'],'complete')
+            self.assertEqual(coverage['coverage']['player/8/statistics'],'failed')
+            self.assertEqual(coverage['coverage']['statistics'],'not_attempted')
+            self.assertEqual(coverage['skipped']['player/99/statistics'],'not_played')
+            self.assertEqual(len(coverage['errors']),1)
+            saved=json.loads(client._cache_path('event/1/lineups').read_text())
+            self.assertEqual(saved['payload']['home']['players'][0]['statistics']['totalPass'],77)
 
     def test_config_accepts_extension_access(self):
         import yaml

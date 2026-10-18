@@ -22,7 +22,8 @@ class ExtensionSofaScoreClient(BrowserSofaScoreClient):
         super().__init__(root, settings, offline=offline, report=report)
         self.cache_dir = self.root/'extension_cache'/'sofascore'
         self.bridge, self._owns_bridge = ((bridge, False) if bridge is not None else
-            acquire_bridge(report=report, connect_timeout=settings['manual_wait_seconds']))
+            acquire_bridge(report=report, connect_timeout=settings['manual_wait_seconds'],
+                           diagnostics_dir=self.root/'extension_diagnostics'/'sofascore'))
         self.last_transport = 'extension'
         self.audit = {}
         self.source_url = None
@@ -40,7 +41,10 @@ class ExtensionSofaScoreClient(BrowserSofaScoreClient):
         if self.requires_manual_attention:
             raise ProviderRequestError('Extension needs attention; reconnect and resume collection', attempts=0)
         self.request_gate.wait('extension '+action)
-        result = self.bridge.request(action, args, timeout=timeout or self.settings['timeout_seconds'] + 20)
+        # A transient read can reopen the match and retry once in Chrome.
+        limit = (2*self.settings['timeout_seconds'] + 45 if action == 'page' else
+                 max(40, self.settings['timeout_seconds'] + 20))
+        result = self.bridge.request(action, args, timeout=timeout or limit)
         url = result.get('source_url')
         if url and (urlsplit(url).scheme != 'https' or urlsplit(url).hostname != 'www.sofascore.com' or
                     urlsplit(url).username or urlsplit(url).password or urlsplit(url).port):
@@ -49,9 +53,13 @@ class ExtensionSofaScoreClient(BrowserSofaScoreClient):
             self.source_url = url
         return result
 
-    def _verify(self, endpoint):
-        self.report(f'Sofascore {endpoint}: complete verification yourself in Chrome, then click Resume in Soccer Collector. No 24-hour browser cooldown applies.', flush=True)
-        self._step('verify', {'endpoint': endpoint}, timeout=self.settings['manual_wait_seconds'])
+    def _verify(self, endpoint, result):
+        visible = result.get('diagnostics', {}).get('visible_challenge', False)
+        reason = ('visible verification detected; complete it yourself in Chrome' if visible else
+                  'a data request was denied; a visible verification challenge may not appear. Inspect the Chrome tab')
+        self.report(f'Sofascore {endpoint}: {reason}, then click Resume in Soccer Collector to retry once. No 24-hour browser cooldown applies.', flush=True)
+        self._step('verify', {'endpoint': endpoint, 'visible_challenge': visible,
+            'challenge_evidence': result.get('challenge_evidence')}, timeout=self.settings['manual_wait_seconds'])
         # Manual navigation can change the selected page or open panel.
         self.active_mid = self.active_player = None
 
@@ -110,14 +118,14 @@ class ExtensionSofaScoreClient(BrowserSofaScoreClient):
         prepared = self._prepare(endpoint)
         verified = prepared.get('status') == 403
         if verified:
-            self._verify(endpoint)
+            self._verify(endpoint, prepared)
             prepared = self._prepare(endpoint)
             if prepared.get('status') == 403:
                 self._fail_status(endpoint, 403)
         result = self._read(endpoint, params)
         self.network_requests += 1
         if result.get('status') == 403 and not verified:
-            self._verify(endpoint)
+            self._verify(endpoint, result)
             prepared = self._prepare(endpoint)
             if prepared.get('status') == 403:
                 self._fail_status(endpoint, 403)

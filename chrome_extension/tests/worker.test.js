@@ -12,7 +12,7 @@ globalThis.chrome={
   tabs:{query:async()=>[{id:1,url:'https://www.sofascore.com/event/1'}]}
 };
 globalThis.fetch=async()=>{requests++;return {ok:true,json:async()=>({phase:'closed'})};};
-await import('../worker.js');
+const {execute, navigate}=await import('../worker.js');
 const send=(message,sender={id,url:`chrome-extension://${id}/popup.html`})=>new Promise(resolve=>listener(message,sender,resolve));
 
 test('collector completion stops polling and reports a clear final status',async()=>{
@@ -49,4 +49,67 @@ test('pause and resume tell Python to suspend and restore the command deadline',
   assert.ok(paths.some(p=>p.endsWith('/v1/pause')));
   assert.ok(paths.some(p=>p.endsWith('/v1/resume')));
   await new Promise(r=>setTimeout(r,10));
+});
+
+function matchTab() {
+  let url='https://www.sofascore.com/event/1';
+  chrome.tabs.get=async()=>({id:1,url,status:'loading'});
+  chrome.tabs.update=async(_id, changes)=>{url=changes.url || url;};
+  chrome.tabs.reload=async()=>{};
+}
+
+test('navigation accepts usable match content while background resources still load',async()=>{
+  matchTab();
+  chrome.scripting={executeScript:async()=>[{frameId:0,result:{ok:true,
+    source_url:'https://www.sofascore.com/event/1',diagnostics:{match_controls:true}}}]};
+  const result=await navigate({tabId:1},'https://www.sofascore.com/event/1');
+  assert.equal(result.ok,true);assert.equal(result.diagnostics.browser_load_state,'loading');
+});
+
+test('an empty page result reopens the intended match and retries once',async()=>{
+  matchTab();let reads=0, inspections=0;
+  chrome.scripting={executeScript:async({args:[args]})=>{
+    if(args.operation==='inspect') {
+      inspections++;
+      return [{frameId:0,result:{ok:true,source_url:'https://www.sofascore.com/event/1',diagnostics:{match_controls:true}}}];
+    }
+    reads++;
+    return [{frameId:0,result:reads===1 ? undefined : {ok:true,status:200,payload:{statistics:{}}}}];
+  }};
+  const result=await execute({tabId:1},{id:'read',action:'page',args:{operation:'read',endpoint:'event/1/player/7/statistics'}});
+  assert.equal(reads,2);assert.equal(inspections,2);
+  assert.equal(result.status,200);assert.equal(result.diagnostics.recovery_attempts,1);
+  assert.match(result.diagnostics.recovery_reason,/no collection data/);
+});
+
+test('HTTP denial and rate limit results are never automatically retried',async()=>{
+  matchTab();
+  for(const status of [403,429]) {
+    let calls=0;
+    chrome.scripting={executeScript:async()=>{calls++;return [{frameId:0,result:{ok:true,status}}];}};
+    const result=await execute({tabId:1},{id:'denied',action:'page',args:{operation:'read',endpoint:'event/1'}});
+    assert.equal(result.status,status);assert.equal(calls,1);
+  }
+});
+
+test('a second empty page result ends recovery instead of looping',async()=>{
+  matchTab();let reads=0;
+  chrome.scripting={executeScript:async({args:[args]})=>{
+    if(args.operation==='inspect') return [{frameId:0,result:{ok:true,
+      source_url:'https://www.sofascore.com/event/1',diagnostics:{match_controls:true}}}];
+    reads++;return [{frameId:0}];
+  }};
+  const result=await execute({tabId:1},{id:'empty',action:'page',args:{operation:'read',endpoint:'event/1'}});
+  assert.equal(reads,2);assert.equal(result.ok,false);assert.equal(result.diagnostics.recovery_attempts,1);
+});
+
+test('reload readiness rejects the old document even when its match controls remain visible',async()=>{
+  matchTab();let calls=0;
+  chrome.scripting={executeScript:async()=>{
+    calls++;
+    return [{frameId:0,documentId:calls<3?'old':'new',result:{ok:true,
+      source_url:'https://www.sofascore.com/event/1',diagnostics:{match_controls:true}}}];
+  }};
+  const result=await navigate({tabId:1},'https://www.sofascore.com/event/1');
+  assert.equal(calls,3);assert.equal(result.diagnostics.document_id,'new');
 });
