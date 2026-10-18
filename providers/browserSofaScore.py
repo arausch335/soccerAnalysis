@@ -160,7 +160,43 @@ class BrowserSofaScoreClient(SofaScoreClient):
         key=json.dumps([endpoint,params],sort_keys=True)
         return self.cache_dir/(hashlib.sha256(key.encode()).hexdigest()+'.json')
 
+    def _cached_response(self, endpoint, params=None):
+        """Reuse validated successful responses across HTTP/browser/extension runs."""
+        own=self._cache_path(endpoint,params)
+        digest=own.name
+        candidates=[(own,None)]
+        candidates.extend((self.root/name/'sofascore'/digest,None)
+                          for name in ('browser_cache','extension_cache')
+                          if self.root/name/'sofascore'/digest != own)
+        for base in ('https://api.sofascore.com/api/v1','https://www.sofascore.com/api/v1'):
+            identity=json.dumps([base,endpoint,params,'json'],sort_keys=True)
+            path=self.root/'http_cache'/'sofascore'/(hashlib.sha256(identity.encode()).hexdigest()+'.json')
+            candidates.append((path,identity))
+        for path,identity in candidates:
+            if not path.exists():continue
+            saved=json.loads(path.read_text(encoding='utf-8'))
+            if identity is not None:
+                if saved.get('identity')!=identity:raise ValueError('HTTP cache identity mismatch')
+            elif saved.get('endpoint')!=endpoint or saved.get('params')!=params:
+                raise ValueError('Sofascore cache identity mismatch')
+            status=saved.get('status',200)
+            # Only the selected transport's own negative cache is authoritative.
+            if status==404 and path==own:
+                raise ProviderRequestError('Saved Sofascore HTTP 404',endpoint=endpoint,status_code=404)
+            if status!=200:continue
+            payload=validate_payload(endpoint,saved['payload'])
+            record={**saved,'endpoint':endpoint,'params':params,'payload':payload,'status':200}
+            self.responses[(endpoint,urlencode(params or {},doseq=True))]=record
+            transport=saved.get('transport','http' if identity is not None else path.parent.parent.name.removesuffix('_cache'))
+            self.last_transport=transport+'_cache'
+            if hasattr(self,'audit'):
+                self.audit[endpoint]={'transport':self.last_transport,'method':'saved_response',
+                                      'cache_file':str(path.relative_to(self.root))}
+            return record
+        return None
+
     def _save(self,endpoint,payload,*,method,params=None,status=200):
+        self.last_transport='browser'
         record={'endpoint':endpoint,'params':params,'status':status,'transport':'browser',
             'method':method,'fetched_at':datetime.now(timezone.utc).isoformat(),
             'source_url':str(self.page.url) if self.page is not None else None,'payload':payload}
@@ -322,12 +358,9 @@ class BrowserSofaScoreClient(SofaScoreClient):
         endpoint=endpoint.lstrip('/')
         if not re.fullmatch(r'(event|unique-tournament|team|player|sport)/[a-zA-Z0-9_./-]+',endpoint) or '..' in endpoint:
             raise ValueError('Use a known Sofascore-relative endpoint')
-        path=self._cache_path(endpoint,params)
-        if path.exists() and not self.refresh_cache:
-            saved=json.loads(path.read_text(encoding='utf-8'))
-            if saved.get('endpoint')!=endpoint or saved.get('params')!=params:raise ValueError('Browser cache identity mismatch')
-            if saved.get('status')==404:raise ProviderRequestError('Saved Sofascore browser HTTP 404',endpoint=endpoint,status_code=404)
-            return validate_payload(endpoint,saved['payload'])
+        if not self.refresh_cache:
+            saved=self._cached_response(endpoint,params)
+            if saved is not None:return saved['payload']
         if self.offline:raise ProviderRequestError('Offline browser cache miss: '+endpoint,endpoint=endpoint)
         self.request_gate.wait(endpoint);self._start()
         try:
@@ -422,6 +455,19 @@ class BrowserSofaScoreClient(SofaScoreClient):
         except Exception:pass
 
     def graph(self,mid):return self._get(f'event/{mid}/graph/momentum')
+
+    def match_payloads(self, mid):
+        result = {}
+        for label, suffix in (('statistics','statistics'),('incidents','incidents'),('momentum','graph/momentum')):
+            endpoint = f'event/{mid}/{suffix}'
+            saved = self.responses.get((endpoint, ''))
+            if saved is None:
+                try:saved = self._cached_response(endpoint)
+                except ProviderRequestError as exc:
+                    if exc.status_code != 404:raise
+            if saved is not None and saved.get('status') == 200:
+                result[label] = saved['payload']
+        return result
 
     def collect_details(self,event,lineups):
         """Capture every played player's stats plus match-level detail payloads."""

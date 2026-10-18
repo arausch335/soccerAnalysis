@@ -27,6 +27,7 @@ from .fotmobExports import match_payload, source_rows
 from .sofascoreTeams import team_stat_rows as sofascore_team_rows, TEAM_STAT_COLUMNS
 from .playerStatsSchema import PLAYER_MATCH_COLUMNS
 from .progress import get_job, network_count
+from .completion import sofascore_stats_complete
 from .jsonFiles import clear_json_cache, read_json
 from .whoScoredExports import event_rows as whoscored_event_rows, match_payload as whoscored_match_payload, EVENT_COLUMNS
 
@@ -360,8 +361,7 @@ class SeasonRunner:
             statuses.setdefault(event['id'],{'match_id':event['id'],'competition':competition.name,
                 'status':'pending','attempts':0,'updated_at':'','error':''})
         timing.schedule(selected,completed=[mid for mid,row in statuses.items()
-            if row['status']=='complete' and not self.refresh and not timing.revisit_complete
-            and not getattr(sofa,'uses_browser',False)],
+            if row['status']=='complete' and not self.refresh and not timing.revisit_complete],
             mode=timing_mode())
         loaders={'fotmob':FotMobLoader(identity_resolver=self.identity_resolver),
                  'whoscored':WhoScoredLoader(identity_resolver=self.identity_resolver)}
@@ -372,14 +372,15 @@ class SeasonRunner:
             mid=event['id'];store=PandasStore(self.directory/'match_checkpoints'/str(mid));entry=statuses[mid]
             from .ensembleProgress import remote_done, record_match
             required=['provider:'+provider for provider in self.providers]+['spatial:'+category for category in self.spatial]
-            if getattr(sofa,'uses_browser',False):required.append('browser_details')
+            if self.baseline_provider=='sofascore':required.append('sofascore_match_stats')
             if not store.exists and not self.refresh and remote_done('sofascore',competition.name,canonical,mid,required):
                 entry.update(status='elsewhere',error='Completed on another computer; raw data not present locally',updated_at=now())
                 atomic_csv(pd.DataFrame(statuses.values()),status_path)
                 self.report(f'[{index}/{len(selected)}] Recorded on another computer; skipped {mid}. Import its data folder to build locally.')
                 timing.finish_game(clients=self.clients.values(),status='elsewhere',cached=True,mode=timing_mode())
                 continue
-            if store.exists and not self.refresh:
+            resuming=store.exists and not self.refresh
+            if resuming:
                 dataset=store.from_csv();match=dataset.matches[mid]
                 # Only a fully complete provider is terminal. Partial and failed
                 # enrichments are deliberately revisited on resume so identity
@@ -387,9 +388,9 @@ class SeasonRunner:
                 # backfill the checkpoint from cached or newly fetched data.
                 if (all(match.metadata.get('provider_status',{}).get(p)=='complete' for p in self.providers)
                         and self._spatial_done(match)
-                        and (not getattr(sofa,'uses_browser',False) or match.metadata.get('browser_details',{}).get('complete'))):
+                        and (self.baseline_provider!='sofascore' or sofascore_stats_complete(match))):
                     entry.update(status='complete',error='')
-                    if getattr(sofa,'uses_browser',False):
+                    if match.metadata.get('browser_details') is not None:
                         self.browser_coverage[str(mid)]={**match.metadata['browser_details'],
                             'competition':match.season.competition.name,'season':season_label(match.season.name),
                             'home':match.home_team.name,'away':match.away_team.name}
@@ -433,8 +434,8 @@ class SeasonRunner:
                         break
                     continue
             errors=[]
-            browser_done=False
-            if self.baseline_provider=='sofascore' and getattr(sofa,'uses_browser',False):
+            browser_done=resuming and sofascore_stats_complete(match)
+            if self.baseline_provider=='sofascore' and getattr(sofa,'uses_browser',False) and not browser_done:
                 errors.extend(self._browser_match_details(sofa,event,match));browser_done=True
             if self.baseline_provider=='sofascore' and not self._sofascore_blocked:
                 errors.extend(self._collect_spatial(match,event,sofa))

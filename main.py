@@ -337,10 +337,7 @@ def _main(argv=None):
                 limits,_=limit_parser.parse_known_args(args)
                 if kind in ('combined','sofascore'):
                     requirements=args+(['--providers','sofascore'] if kind=='sofascore' else [])
-                    access_parser=argparse.ArgumentParser(add_help=False)
-                    access_parser.add_argument('--sofascore-transport',default=config.TRANSPORT['sofascore_mode'])
-                    access,_=access_parser.parse_known_args(args)
-                    job.revisit_complete=_normal_requirements(directory,requirements)[0] or access.sofascore_transport in ('browser','extension')
+                    job.revisit_complete=_normal_requirements(directory,requirements)[0]
                 prime_job(job,directory,limit=limits.limit)
                 targets[kind].append((job,directory,competition,season))
     result=0

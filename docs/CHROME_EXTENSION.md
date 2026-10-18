@@ -85,6 +85,24 @@ across all the competitions/seasons in that `main.py` run. `combined` is also
 supported: only Sofascore uses the extension, while FotMob/WhoScored retain
 their own clients and settings.
 
+## Existing API data
+
+Changing the transport does not invalidate completed API checkpoints. A match
+already complete for the requested providers and spatial categories prints
+`Already complete` and is skipped without connecting Chrome. Missing requested
+spatial resources are filled separately. Explicitly incomplete browser attempts
+remain eligible for retry. `--refresh` intentionally revisits saved work.
+
+The extension and visible browser can also read validated successful responses
+from `data/http_cache/sofascore`, `data/browser_cache/sofascore` and
+`data/extension_cache/sofascore`. Existing files retain their original source;
+no browser visit is claimed just because an API response was reused. The
+browser coverage report continues to distinguish actual browser collection.
+
+After updating, run `python main.py --inventory` to refresh your worker's Git
+inventory, then commit/push that worker file so other computers can recognize
+its older API work too. No data migration or deletion is needed.
+
 ## Pause, verification, disconnect
 
 - **Pause** stops after the current step. Its wait is excluded from command
