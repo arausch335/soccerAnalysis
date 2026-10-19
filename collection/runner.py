@@ -12,7 +12,7 @@ import pandas as pd
 
 from providers import SofaScoreError, SofaScoreRequestError, SofaScoreLoader
 from storage import PandasStore
-from storage.pandasStore import atomic_json
+from storage.pandasStore import atomic_json, atomic_replace
 
 
 def now():
@@ -28,7 +28,7 @@ def atomic_csv(frame, path):
             frame.to_csv(stream, index=False)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temp, path)
+        atomic_replace(temp, path)
     finally:
         temp.unlink(missing_ok=True)
 

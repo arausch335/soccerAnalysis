@@ -144,6 +144,29 @@ exists locally. Live reports do not reserve work: the shared plan continues to
 reject overlapping assignments. Transfer/import the actual dataset folders
 separately when needed.
 
+## Missing worker updates
+
+On a worker, run this read-only check in its normal Python environment:
+
+```bash
+python -m collection.reporting status
+```
+
+It prints the configured Main address, worker state, queued message count and
+connection result without printing any token. It distinguishes an unreachable
+receiver, a rejected token and an original data-folder/queue conflict. Main’s
+address must be its actual Tailscale IPv4 address, including port 8766
+(e.g. `http://100.106.146.82:8766`). Updated clients default plain HTTP to
+8766 when the port is omitted. Never delete an identity or
+queue to hide a conflict; preserve them and restore the correct originals.
+
+“Direct reporting enabled” means the local configuration loaded. The separate
+“Connected to Main” console message confirms successful report delivery.
+Progress/log uploads run independently from downloads of other workers’
+inventories, so a slow inventory download cannot prevent reporting. Inventory
+responses are compressed when both computers support the updated protocol.
+After pulling code, restart Main and workers to load the changes.
+
 ## Shared controls and safe code updates
 
 ```yaml
@@ -180,6 +203,16 @@ Assign Main work and use `--worker` if you want it to scrape. Configuration
 addresses/tokens and queue/database files are machine state: imports archive
 another computer’s copies instead of activating them on the receiving computer.
 Do not copy Main’s reporting config onto a worker.
+
+## Windows save conflicts
+
+Atomic JSON, collection CSV and imported-file replacements retry brief Windows
+access/sharing errors for about two seconds. The destination is never deleted
+to force a replacement; persistent permission errors still pause collection.
+An error saving provenance does not erase the match checkpoint saved before
+it. Restart the worker after updating to resume from its checkpoints and caches.
+If the same file remains inaccessible, close any program holding it open and
+check the file’s write permissions; do not delete identity or provenance files.
 
 ## Coverage and current jobs
 

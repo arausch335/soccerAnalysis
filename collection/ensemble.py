@@ -12,7 +12,7 @@ import uuid
 
 from filelock import FileLock
 import pandas as pd
-from storage.pandasStore import PandasStore, SCHEMA, KEYS, atomic_json, clean
+from storage.pandasStore import PandasStore, SCHEMA, KEYS, atomic_json, atomic_replace, clean
 from .ensembleProgress import PortableProgress, progress_session
 from .selection import season_key, competition_by_name
 from .workerIdentity import ensure_identity, read_worker_id, read_origins, save_origins
@@ -70,7 +70,7 @@ def atomic_copy(source, target):
     try:
         shutil.copyfile(source,temporary)
         if digest(source)!=digest(temporary):raise OSError('Imported file failed its copy checksum')
-        os.replace(temporary,target)
+        atomic_replace(temporary,target)
     finally:temporary.unlink(missing_ok=True)
 
 

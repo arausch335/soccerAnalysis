@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import time
 from uuid import uuid4
 
 import pandas as pd
@@ -49,6 +50,22 @@ KEYS = {'competitions': ['id'], 'seasons': ['competition_id', 'id'], 'teams': ['
 CATEGORIES = ('pace', 'physicality', 'passing', 'dribbling', 'shooting', 'defense')
 
 
+def atomic_replace(source, target):
+    """Replace atomically, tolerating brief Windows access/sharing conflicts.
+
+    Never unlink the destination as a workaround. Persistent permissions errors
+    still propagate after roughly two seconds, leaving the previous file intact.
+    """
+    for attempt in range(12):
+        try:
+            os.replace(source, target)
+            return
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) not in (5, 32, 33) or attempt == 11:
+                raise
+            time.sleep(min(0.02 * 2**attempt, 0.25))
+
+
 def atomic_json(path, value, *, indent=None, sort_keys=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,7 +75,7 @@ def atomic_json(path, value, *, indent=None, sort_keys=False):
             json.dump(value, stream, ensure_ascii=False, allow_nan=False, indent=indent, sort_keys=sort_keys)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        atomic_replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 

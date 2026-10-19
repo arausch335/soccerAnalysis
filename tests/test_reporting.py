@@ -153,6 +153,7 @@ class ReportingTests(unittest.TestCase):
 
     def test_private_address_and_local_configuration_validation(self):
         self.assertEqual(validate_url('http://100.80.12.3:8766'),'http://100.80.12.3:8766')
+        self.assertEqual(validate_url('http://100.106.146.82'),'http://100.106.146.82:8766')
         for url in ('http://public.example','http://8.8.8.8','http://user:secret@127.0.0.1:8766','http://127.0.0.1:8766/path','http://127.0.0.1:bad'):
             with self.subTest(url=url),self.assertRaises(ValueError):validate_url(url)
         atomic_json(self.root/'reporting.json',{'mode':'server','bind':'0.0.0.0','port':8766,'tokens':{'msi':self.token}})
@@ -186,3 +187,63 @@ class ReportingTests(unittest.TestCase):
                 client.enqueue();client.log('next saved match')
                 with client.connect() as db:self.assertGreaterEqual(db.execute('SELECT COUNT(*) FROM queue').fetchone()[0],3)
             finally:release.set();client.close()
+
+    def test_slow_inventory_download_cannot_block_progress_upload(self):
+        self.receiver();client=self.reporter();entered=threading.Event();release=threading.Event();delivered=threading.Event()
+        original=client.request
+        def request(path,payload=None,headers=None):
+            if path=='/v1/inventories':
+                entered.set();release.wait(4);return {'inventories':{},'versions':{}}
+            value=original(path,payload,headers);return value
+        original_flush=client.flush
+        def flushed():
+            result=original_flush()
+            if result:delivered.set()
+            return result
+        with patch.object(client,'request',side_effect=request),patch.object(client,'flush',side_effect=flushed):
+            client.start()
+            try:
+                self.assertTrue(entered.wait(1));self.assertTrue(delivered.wait(2),'Upload waited for the blocked inventory download')
+                self.assertEqual(client.status['state'],'connected')
+            finally:release.set();client.close()
+
+    def test_failed_inventory_download_does_not_stop_uploads(self):
+        self.receiver();client=self.reporter();delivered=threading.Event();original=client.request
+        def request(path,payload=None,headers=None):
+            if path=='/v1/inventories':raise TimeoutError('slow download')
+            value=original(path,payload,headers);return value
+        original_flush=client.flush
+        def flushed():
+            result=original_flush()
+            if result:delivered.set()
+            return result
+        with patch.object(client,'request',side_effect=request),patch.object(client,'flush',side_effect=flushed):
+            client.start()
+            try:self.assertTrue(delivered.wait(2));self.assertEqual(client.status['state'],'connected')
+            finally:client.close()
+
+    def test_diagnostics_print_no_token_and_identify_wrong_identity(self):
+        from collection.reporting import diagnose
+        self.receiver();client=self.reporter();client.enqueue(reset=True);client.flush()
+        atomic_json(self.root/'reporting.json',self.options)
+        output=io.StringIO()
+        with patch('sys.stdout',output):self.assertEqual(diagnose(self.root),0)
+        self.assertIn('Connection OK',output.getvalue());self.assertNotIn(self.token,output.getvalue())
+        atomic_json(self.root/'identity.json',{'worker_id':'msi','instance_id':'different-folder'})
+        output=io.StringIO()
+        with patch('sys.stdout',output):self.assertEqual(diagnose(self.root),2)
+        self.assertIn('IDENTITY CONFLICT',output.getvalue())
+        self.assertNotIn(self.token,output.getvalue())
+
+    def test_large_inventory_response_is_compressed_and_client_decodes_it(self):
+        from urllib.request import Request
+        historical={**self.saved,'worker_id':'headless','instance_id':'other',
+            'records':{str(i):{**self.saved['records']['one'],'match_id':str(i)} for i in range(40)}}
+        atomic_json(self.main_ensemble/'workers/headless.json',historical)
+        self.receiver();client=self.reporter()
+        request=Request(self.options['url']+'/v1/inventories',headers={'Authorization':'Bearer '+self.token,'Accept-Encoding':'gzip'})
+        with client.opener.open(request,timeout=5) as response:
+            self.assertEqual(response.headers.get('Content-Encoding'),'gzip');response.read()
+        client.pull()
+        received=json.loads((self.ensemble/'reporting/workers/headless.json').read_text())
+        self.assertEqual(len(received['records']),40)

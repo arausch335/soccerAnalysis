@@ -7,6 +7,8 @@ from contextlib import contextmanager, closing
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import argparse
+import gzip
+import io
 import hashlib
 import hmac
 import ipaddress
@@ -20,6 +22,7 @@ import sys
 import threading
 import time
 from urllib.parse import urlsplit
+from urllib.error import HTTPError
 from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
 from uuid import uuid4
 
@@ -57,7 +60,8 @@ def validate_url(value):
         if not allowed:
             raise ValueError('Plain HTTP reporting requires a private IPv4 address; use the Main Tailscale IP')
     # Force validation of a malformed port now, before a worker starts.
-    url.port
+    port=url.port
+    if url.scheme=='http' and port is None:return f'http://{url.hostname}:8766'
     return value.rstrip('/')
 
 
@@ -249,7 +253,10 @@ class ReportingServer:
 
             def reply(self, code, value):
                 data = encode(value).encode()
+                compressed='gzip' in self.headers.get('Accept-Encoding','') and len(data)>1024
+                if compressed:data=gzip.compress(data,compresslevel=1)
                 self.send_response(code)
+                if compressed:self.send_header('Content-Encoding','gzip')
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Cache-Control', 'no-store')
                 self.send_header('Content-Length', str(len(data)))
@@ -266,6 +273,14 @@ class ReportingServer:
                 worker = self.authorized()
                 if not worker:
                     self.reply(401, {'error': 'Worker authentication required'}); return
+                if self.path=='/v1/health':
+                    with store.lock,store.connect() as db:
+                        row=db.execute('SELECT instance,stream FROM workers WHERE worker=?',(worker,)).fetchone()
+                    instance=self.headers.get('X-Worker-Instance')
+                    stream=self.headers.get('X-Reporting-Stream')
+                    self.reply(200,{'worker_id':worker,'identity_matches':not row or not row['instance'] or not instance or row['instance']==instance,
+                                    'queue_matches':not row or not row['stream'] or not stream or row['stream']==stream})
+                    return
                 if self.path != '/v1/inventories':
                     self.reply(404, {'error': 'Unknown endpoint'}); return
                 try:
@@ -323,7 +338,7 @@ class Reporter:
             raise ValueError('Reporting token is configured for a different worker')
         self.path = self.root / 'worker_runtime' / 'reporting-outbox.sqlite'
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.lock = threading.RLock(); self.wake = threading.Event(); self.stop = threading.Event(); self.thread = None
+        self.lock = threading.RLock(); self.wake = threading.Event(); self.stop = threading.Event(); self.thread = None; self.peer_thread = None
         self.opener = build_opener(ProxyHandler({}), NoRedirect())
         self.status = {'state': 'connecting' if self.url else 'unconfigured', 'message': 'Connecting to Main; reports are saved locally.' if self.url else 'Reporting setup pending. Progress and logs are saved in the local queue.'}
         self.versions = {}
@@ -382,11 +397,14 @@ class Reporter:
 
     def request(self, path, payload=None, headers=None):
         request = Request(self.url + path, data=encode(payload).encode() if payload is not None else None,
-                          headers={'Authorization': 'Bearer ' + self.options['token'], 'Content-Type': 'application/json', **(headers or {})})
-        with self.opener.open(request, timeout=5) as response:
+                          headers={'Authorization': 'Bearer ' + self.options['token'], 'Content-Type': 'application/json', 'Accept-Encoding':'gzip', **(headers or {})})
+        with self.opener.open(request, timeout=15 if path=='/v1/inventories' else 5) as response:
             data = response.read(MAX_BODY + 1)
             if len(data) > MAX_BODY:
                 raise ValueError('Reporting response exceeds size limit')
+            if response.headers.get('Content-Encoding')=='gzip':
+                with gzip.GzipFile(fileobj=io.BytesIO(data)) as compressed:data=compressed.read(MAX_BODY+1)
+                if len(data)>MAX_BODY:raise ValueError('Reporting response exceeds size limit')
             return json.loads(data)
 
     def flush(self):
@@ -405,6 +423,7 @@ class Reporter:
             raise ValueError('Reporting acknowledgement differs')
         with self.lock, self.connect() as db:
             db.execute('DELETE FROM queue WHERE id<=?', (result['ack'],))
+        if self.status.get('state')!='connected':print('[Reporting] Connected to Main. Progress and logs are being delivered.',flush=True)
         self.status = {'state': 'connected', 'message': 'Connected to Main. Saved matches and logs report in the background.', 'last_sent_at': now()}
         return True
 
@@ -433,27 +452,90 @@ class Reporter:
                 try:
                     if current >= next_heartbeat:
                         self.enqueue(inventory=False)
-                        self.pull()
                         next_heartbeat = current + self.heartbeat
                     # A bounded batch yields to shutdown and heartbeat checks during catch-up.
                     if current >= retry_at and self.flush():
                         self.wake.set()
                     retry_at = 0
-                except (OSError, ValueError, KeyError, sqlite3.Error):
-                    self.status = {'state': 'offline', 'message': 'Main unavailable or report rejected. Collection continues; reports and logs remain queued.'}
+                except (OSError, ValueError, KeyError, sqlite3.Error) as exc:
+                    message=connection_error(exc)
+                    if self.status.get('message')!=message:print('[Reporting] '+message,flush=True)
+                    self.status = {'state': 'offline', 'message': message}
                     retry_at = time.monotonic() + 10
                     next_heartbeat = max(next_heartbeat, retry_at)
                 delay = max(0.1, retry_at - time.monotonic()) if retry_at else max(0.1, min(5, next_heartbeat - time.monotonic()))
                 self.wake.wait(delay)
+        def receive_inventories():
+            warned=False
+            while not self.stop.is_set():
+                try:
+                    self.pull()
+                    warned=False
+                except (OSError,ValueError,KeyError,sqlite3.Error):
+                    if not warned:print('[Reporting] Other-worker inventory download delayed. Progress and logs use a separate connection.',flush=True)
+                    warned=True
+                self.stop.wait(self.heartbeat)
         self.thread = threading.Thread(target=send, name='worker-reporter', daemon=True)
-        self.thread.start()
+        self.peer_thread=threading.Thread(target=receive_inventories,name='worker-inventory-receiver',daemon=True)
+        self.thread.start();self.peer_thread.start()
         return self
 
     def close(self):
         # No synchronous network drain: an offline Main must not hold up stopping.
         self.stop.set(); self.wake.set()
-        if self.thread:
-            self.thread.join(timeout=12)
+        if self.thread:self.thread.join(timeout=6)
+        if self.peer_thread:self.peer_thread.join(timeout=16)
+
+
+def connection_error(exc):
+    if isinstance(exc,HTTPError):
+        if exc.code==401:return 'Main rejected the worker token (HTTP 401). Reconfigure this worker with its matching token. Reports remain queued.'
+        if exc.code==409:return 'Main rejected the worker identity or reporting queue (HTTP 409). Run python -m collection.reporting status. Reports remain queued.'
+        return f'Main returned HTTP {exc.code}. Collection continues; reports and logs remain queued.'
+    return 'Cannot deliver reports to Main. Check its configured address, Tailscale connection and receiver. Collection continues; reports remain queued.'
+
+
+def diagnose(root):
+    """Read-only local/network checks; never display a token or submit a report."""
+    root=Path(root);options=load_local(root)
+    if not options:
+        print('Reporting is not configured. Run the client/server setup command first.');return 2
+    identity_path=root/'identity.json'
+    identity=json.loads(identity_path.read_text()) if identity_path.exists() else {}
+    worker=identity.get('worker_id',options.get('worker_id','main'))
+    print('Worker:',worker)
+    if options['mode']=='server':
+        url=f"http://{options['bind']}:{options['port']}";token=options['tokens'].get(worker,'')
+    else:url=options['url'];token=options['token']
+    print('Main address:',url)
+    state_path=root/'worker_runtime'/(worker+'.json')
+    if state_path.exists():
+        state=json.loads(state_path.read_text())
+        print('Local worker state:',state.get('state'))
+        print('Last reporting status:',state.get('reporting',{}).get('message','Not reported yet'))
+    outbox=root/'worker_runtime/reporting-outbox.sqlite';stream=None
+    if outbox.exists():
+        with closing(sqlite3.connect(outbox.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+            print('Queued reports/log batches:',db.execute('SELECT COUNT(*) FROM queue').fetchone()[0])
+            row=db.execute("SELECT value FROM meta WHERE key='stream'").fetchone();stream=row[0] if row else None
+    headers={'Authorization':'Bearer '+token,'X-Worker-Instance':identity.get('instance_id','')}
+    if stream:headers['X-Reporting-Stream']=stream
+    try:
+        request=Request(url+'/v1/health',headers=headers)
+        with build_opener(ProxyHandler({}),NoRedirect()).open(request,timeout=8) as response:value=json.load(response)
+        if value['worker_id']!=worker:
+            print('TOKEN MISMATCH: token belongs to a different worker. Use this worker’s matching token from Main.');return 2
+        if not value['identity_matches']:
+            print('IDENTITY CONFLICT: Main has a different original data folder registered for this worker. Preserve both identities and queues; do not delete them.');return 2
+        if not value['queue_matches']:
+            print('QUEUE CONFLICT: Main has a different original reporting queue registered. Restore the original queue; do not delete it.');return 2
+        print('Connection OK: Main is reachable, token accepted, worker identity and queue match.');return 0
+    except HTTPError as exc:
+        if exc.code==404:
+            print('Main is reachable and accepted the token. Restart Main with the latest code for full diagnostics.');return 0
+        print(connection_error(exc));return 2
+    except (OSError,ValueError,KeyError) as exc:
+        print(connection_error(exc));return 2
 
 
 def redact(message, *secrets_to_hide):
@@ -512,6 +594,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='Configure private worker reporting; settings stay in ignored local data')
     parser.add_argument('--data-root', type=Path, default=config.DATA_ROOT)
     commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('status',help='Check reporting connection and queue without printing tokens')
     server = commands.add_parser('server', help='Configure Main’s receiver (does not start scraping)')
     server.add_argument('--bind', required=True, help='Main Tailscale IPv4 address')
     server.add_argument('--port', type=int, default=8766)
@@ -519,6 +602,7 @@ def main(argv=None):
     client.add_argument('--worker-id', required=True)
     client.add_argument('--url', required=True)
     args = parser.parse_args(argv)
+    if args.command=='status':return diagnose(args.data_root)
     path = args.data_root / 'reporting.json'
     if args.command == 'server':
         if not private_ip(args.bind) or not 1024 <= args.port <= 65535:
@@ -555,4 +639,4 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
