@@ -81,7 +81,7 @@ class PortableProgress:
         if 'browser_details' in capabilities:capabilities.add('sofascore_match_stats')
         return row.get('status')=='complete' and set(required)<=capabilities
 
-    def record(self, namespace, competition, season, mid, capabilities=(), *, collected_here=False, resources=None):
+    def record(self, namespace, competition, season, mid, capabilities=(), *, collected_here=False, resources=None, provider_match_ids=None):
         key=job_key(namespace,competition,season,mid)
         old=self.local_records.get(key,{})
         origins=set(self.origins.get(key,[]))
@@ -95,6 +95,14 @@ class PortableProgress:
             'updated_at':datetime.now(timezone.utc).isoformat()}
         native={'whoscored_events':'whoscored_events','fotmob_players':'fotmob_stats'}.get(namespace)
         row['resources']={**old.get('resources',{}),**(resources or ({native:'complete'} if native else {}))}
+        if provider_match_ids:row['provider_match_ids']={str(k):str(v) for k,v in provider_match_ids.items() if v is not None}
+        prior={**self.previous_local.get(key,{}),**old}
+        owners={}
+        for name,state in row['resources'].items():
+            known=prior.get('resource_origins',{}).get(name)
+            if collected_here and state=='complete' and prior.get('resources',{}).get(name)!='complete':known=[self.origin]
+            owners[name]=known or sorted(origins)
+        row['resource_origins']=owners
         previous=self.previous_local.get(key,{})
         if all(previous.get(field)==value for field,value in row.items() if field!='updated_at'):
             row['updated_at']=previous['updated_at']
@@ -210,7 +218,8 @@ class PortableProgress:
         for category in ('heatmap','rating_breakdown'):
             if played and all(spatial.get(str(p.player.id),{}).get(category) in terminal for p in played):
                 capabilities.append('spatial:'+category)
-        resources={}
+        resources={name:'not_attempted' for name in ('sofascore_stats','sofascore_details','match_statistics','incidents',
+            'momentum','average_positions','heatmaps','shotmaps','action_maps','whoscored_stats','fotmob_enrichment')}
         if 'sofascore_match_stats' in capabilities:resources['sofascore_stats']='complete'
         detail=match.metadata.get('browser_details',{})
         coverage=detail.get('coverage',{})
@@ -231,7 +240,7 @@ class PortableProgress:
             if state:resources[name]=state
         if capabilities:
             self.record('sofascore',match.season.competition.name,match.season.name,match.id,capabilities,
-                        collected_here=collected_here,resources=resources)
+                        collected_here=collected_here,resources=resources,provider_match_ids=match.metadata.get('provider_match_ids',{}))
         self._integrated_events(match,collected_here)
 
 

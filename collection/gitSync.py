@@ -2,7 +2,9 @@
 from contextlib import contextmanager
 from pathlib import Path
 import os
+import json
 import subprocess
+import tempfile
 import threading
 
 from filelock import FileLock
@@ -20,9 +22,9 @@ class GitSync:
         self.stop=threading.Event();self.mutex=threading.RLock();self.thread=None
         self.lock=FileLock(str(self.repository/'.git'/'scraper-sync.lock'),timeout=0)
 
-    def git(self,*args,check=True):
+    def git(self,*args,check=True,input=None,env=None):
         result=subprocess.run(['git',*args],cwd=self.repository,text=True,capture_output=True,
-            timeout=90,env={**os.environ,'GIT_TERMINAL_PROMPT':'0','GIT_EDITOR':'true','GIT_SEQUENCE_EDITOR':'true'})
+            input=input,timeout=90,env={**os.environ,'GIT_TERMINAL_PROMPT':'0','GIT_EDITOR':'true','GIT_SEQUENCE_EDITOR':'true',**(env or {})})
         if check and result.returncode:
             # Git errors can include credential-bearing URLs. Keep them out of shared status.
             raise SyncPaused('Git '+args[0]+' failed; inspect Git locally. No user files were replaced.')
@@ -96,6 +98,70 @@ class GitSync:
             if not paths or paths-set(self.owned):return False
         return True
 
+    @property
+    def receipts(self):return self.repository/'.git'/('scraper-published-'+self.worker+'.json')
+
+    def _receipt_ids(self):
+        try:return json.loads(self.receipts.read_text(encoding='utf-8'))
+        except (OSError,ValueError):return []
+
+    def _remember(self,commit):
+        values=[v for v in self._receipt_ids() if v!=commit]+[commit]
+        temporary=self.receipts.with_suffix('.tmp')
+        temporary.write_text(json.dumps(values[-10:]),encoding='utf-8');os.replace(temporary,self.receipts)
+
+    def _owned_changes_allowed(self,pending):
+        names=set(pending)&set(self.owned)
+        if not names:return True
+        def blob(ref,name):
+            result=self.git('rev-parse','--verify',ref+':'+name,check=False)
+            return result.stdout.strip() if not result.returncode else None
+        for commit in self._receipt_ids():
+            if all(blob(commit,name)==blob(self.remote_ref,name) for name in names):
+                self._remember(commit);return True
+        return False
+
+    def publish(self):
+        """Publish saved snapshots through a private Git index. Never switch running code."""
+        if not self.options['enabled'] or not self.options['publish_inventory']:return False
+        with self.mutex:
+            try:
+                with self.lock:
+                    self._check_clean()
+                    for attempt in range(3):
+                        self.git('fetch','--no-tags',self.options['remote'],
+                            '+refs/heads/'+self.options['branch']+':refs/remotes/'+self.remote_ref)
+                        ahead=int(self.git('rev-list','--count',self.remote_ref+'..HEAD'))
+                        if ahead and not self._only_generated_commits():raise SyncPaused('Local source commits need review before snapshot publication.')
+                        pending=self.git('diff','--name-only','HEAD...'+self.remote_ref).splitlines()
+                        if not self._owned_changes_allowed(pending):raise SyncPaused('Another checkout changed this worker’s snapshots; check its unique worker ID.')
+                        base=self.git('rev-parse',self.remote_ref)
+                        with tempfile.TemporaryDirectory(prefix='snapshot-',dir=self.repository/'.git') as folder:
+                            env={'GIT_INDEX_FILE':str(Path(folder)/'index')}
+                            self.git('read-tree',base,env=env)
+                            for name in self.owned:
+                                path=self.repository/name
+                                if not path.exists():continue
+                                if path.is_symlink() or any(p.is_symlink() for p in path.parents if p!=self.repository.parent):
+                                    raise SyncPaused('Snapshot paths must be regular local files.')
+                                saved=json.loads(path.read_text(encoding='utf-8'))
+                                if saved.get('worker_id')!=self.worker:raise SyncPaused('Snapshot worker identity differs.')
+                                blob=self.git('hash-object','-w','--stdin',input=path.read_text(encoding='utf-8'))
+                                self.git('update-index','--add','--cacheinfo','100644',blob,name,env=env)
+                            tree=self.git('write-tree',env=env)
+                            if tree==self.git('rev-parse',base+'^{tree}'):return True
+                            commit=self.git('commit-tree',tree,'-p',base,input=f'Scraper snapshot: {self.worker}\n')
+                        # Record before push so an interrupted response is recoverable on restart.
+                        self._remember(commit)
+                        result=self.git('push',self.options['remote'],commit+':refs/heads/'+self.options['branch'],check=False)
+                        if not result.returncode:
+                            self.status={'state':'published','message':'Progress published. Running code is unchanged.'}
+                            return True
+                        if '[rejected]' not in result.stderr or attempt==2:raise SyncPaused('Snapshot push failed; progress stays saved locally.')
+            except (SyncPaused,OSError,ValueError,subprocess.SubprocessError,TimeoutError) as exc:
+                self.status={'state':'attention','message':str(exc) if isinstance(exc,SyncPaused) else 'Snapshot publication unavailable; progress stays saved locally.'}
+        return False
+
     def boundary(self):
         """Return changed code/config paths. A failure leaves local edits and data intact."""
         if not self.options['enabled']:return []
@@ -106,7 +172,7 @@ class GitSync:
                     self.git('rev-parse','--verify',self.remote_ref)
                     before=self.git('rev-parse','HEAD')
                     pending=set(self.git('diff','--name-only','HEAD...'+self.remote_ref).splitlines())
-                    if pending&set(self.owned):
+                    if not self._owned_changes_allowed(pending):
                         raise SyncPaused('Another checkout changed this worker’s snapshots. Confirm that each computer has a unique worker ID.')
                     with self._saved_generated_files():
                         ahead=int(self.git('rev-list','--count',self.remote_ref+'..HEAD'))

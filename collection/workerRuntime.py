@@ -16,7 +16,9 @@ class Runtime:
         previous=json.loads(self.path.read_text()) if self.path.exists() else {}
         self._saved_payload=None
         self.value={'format':'soccer-worker-runtime-v1','worker_id':worker,'state':'starting',
-                    'jobs':previous.get('jobs',{}),'activity':previous.get('activity',[])[-40:]}
+                    'jobs':previous.get('jobs',{}),'activity':previous.get('activity',[])[-40:],
+                    'schedules':previous.get('schedules',{}),
+                    **{key:previous[key] for key in ('job','job_started_at','job_ended_at','phase_stats') if key in previous}}
 
     def save(self,**values):
         self.value.update(values)
@@ -25,7 +27,17 @@ class Runtime:
         self._saved_payload=payload;self.value['updated_at']=now()
         atomic_json(self.path,self.value);atomic_json(self.public,self.value)
 
+    def begin_job(self,job):
+        self.save(state='scraping',job=job,job_started_at=now(),job_ended_at=None,phase_stats={},current=None)
+
     def event(self,value):
+        value=dict(value)
+        selected=value.pop('selected_match_ids',None)
+        key='|'.join(str(value.get(k,'')) for k in ('competition','season','kind'))
+        if selected is not None:
+            self.value.setdefault('schedules',{})[key]={'competition':value['competition'],'season':value['season'],
+                'kind':value['kind'],'match_ids':selected}
+        self.value.setdefault('phase_stats',{})[key]=value
         self.value['activity']=(self.value['activity']+[{**value,'at':now()}])[-40:]
         self.save(current=value)
 

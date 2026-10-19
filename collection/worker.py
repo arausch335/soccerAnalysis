@@ -19,18 +19,21 @@ from .progress import observe_progress
 from .workerIdentity import read_worker_id, ensure_identity
 from .ensembleProgress import shared_progress, read_progress
 from storage.pandasStore import atomic_json
-from .workerRuntime import Runtime
+from .workerRuntime import Runtime, now
 
 RESTART=75
 
 
 def fingerprint(job,settings):
-    return hashlib.sha256(settings+json.dumps(job.as_dict(),sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(b'worker-reporting-v2\0'+settings+json.dumps(job.as_dict(),sort_keys=True).encode()).hexdigest()
 
 
-def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,stop=None):
+def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,stop=None,clock=time.monotonic):
     parser=argparse.ArgumentParser(description='Shared worker plan and collection dashboard')
-    parser.add_argument('--worker',action='store_true',help='Run only this computer’s shared assignments (the default)')
+    modes=parser.add_mutually_exclusive_group()
+    modes.add_argument('--worker',action='store_true',help='Scrape this computer’s assignments')
+    modes.add_argument('--monitor',action='store_true',help='Synchronize progress without scraping')
+    parser.add_argument('--with-dashboard',action='store_true',help='Show a dashboard on a worker')
     parser.add_argument('--worker-id',help='Use an ID defined in config/workers.yaml; saved with local data')
     parser.add_argument('--plan',type=Path,default=config.PROJECT_ROOT/'config/workers.yaml')
     parser.add_argument('--data-root',type=Path,default=config.DATA_ROOT)
@@ -42,10 +45,12 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,st
     options=parser.parse_args(argv);plan=load_plan(options.plan)
     root=options.data_root.resolve();ensemble=options.ensemble_root.resolve()
     worker=options.worker_id or read_worker_id(root)
-    if not options.dashboard:plan.for_worker(worker)  # Validate before creating an identity or any collection directories.
+    if not options.dashboard:plan.for_worker(worker)
+    info=plan.workers.get(worker,{})
+    monitor=options.monitor or (not options.worker and info.get('role')=='monitor')
     stop=stop or threading.Event()
     with ExitStack() as stack:
-        if (plan.dashboard['enabled'] and not options.no_dashboard) or options.dashboard:
+        if ((plan.dashboard['enabled'] and info.get('dashboard',False) or options.with_dashboard) and not options.no_dashboard) or options.dashboard:
             from dashboard.server import start_server
             server=start_server(root,ensemble,options.plan,worker,plan.dashboard['port'])
             stack.callback(server.close)
@@ -71,9 +76,9 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,st
         state=Runtime(root,ensemble,worker)
         if options.retry:state.value['jobs']={}
         sync=sync_factory(config.PROJECT_ROOT,worker,plan.git).start();stack.callback(sync.close)
-        initialized=False;progress=None;last_boundary=0
+        initialized=False;progress=None;last_boundary=0;last_publication=clock()
         settings=config.CONFIG_FILE.read_bytes()
-        state.save(state='starting',plan_revision=plan.revision,git=sync.status)
+        state.save(state='starting',role='monitor' if monitor else 'worker',plan_revision=plan.revision,git=sync.status)
         if runner is None:
             from main import _main
             runner=_main
@@ -81,8 +86,8 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,st
             while not stop.is_set():
                 # A completed job is the only place source files may change.
                 changed=[]
-                if time.monotonic()-last_boundary>=plan.git['poll_seconds'] or state.value['state'] in ('starting','between_jobs') or sync.status.get('state')=='update_pending':
-                    changed=sync.boundary();last_boundary=time.monotonic()
+                if clock()-last_boundary>=plan.git['poll_seconds'] or state.value['state'] in ('starting','between_jobs') or sync.status.get('state')=='update_pending':
+                    changed=sync.boundary();last_boundary=clock()
                     if progress is not None:progress.records=shared_progress(progress.path)
                 if changed:
                     state.save(state='restart_required',git=sync.status,current=None)
@@ -91,10 +96,10 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,st
                 if current_plan.revision!=plan.revision or config.CONFIG_FILE.read_bytes()!=settings:
                     state.save(state='restart_required',current=None)
                     return RESTART if current_plan.git['auto_restart'] else 3
-                pending=[job for job in plan.for_worker(worker)
+                pending=[job for job in ([] if monitor else plan.for_worker(worker))
                          if state.value['jobs'].get(job.id,{}).get('fingerprint')!=fingerprint(job,settings)]
                 if not pending:
-                    state.save(state='idle' if plan.for_worker(worker) else 'unassigned',current=None,git=sync.status)
+                    state.save(state='monitoring' if monitor else 'paused' if any(state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in plan.for_worker(worker)) else 'idle' if plan.for_worker(worker) else 'unassigned',current=None,git=sync.status)
                     if options.once:return max((state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in plan.for_worker(worker)),default=0)
                     stop.wait(min(5,plan.git['poll_seconds']));continue
                 if not initialized:
@@ -105,19 +110,30 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,st
                     # An inventory audit can be long. Recheck the plan before starting work.
                     continue
                 job=pending[0]
-                state.save(state='scraping',job=job.as_dict(),current=None,git=sync.status)
+                state.begin_job(job.as_dict())
+                if hasattr(sync,'publish'):sync.publish()
+                last_publication=clock()
                 def observe(value):
+                    nonlocal last_publication
                     state.value['git']=sync.status
                     state.event(value)
+                    force=value['event']=='job_finished'
+                    if value['event'] in ('match_saved','job_finished') and (force or clock()-last_publication>=plan.git['publish_seconds']):
+                        if hasattr(sync,'publish'):sync.publish()
+                        last_publication=clock()
+                        state.save(git=sync.status)
                 with observe_progress(observe):code=runner(job.args(root))
                 state.value['jobs'][job.id]={'fingerprint':fingerprint(job,settings),'exit_code':code,
                                              'state':'finished' if code==0 else 'paused'}
-                state.save(state='between_jobs',current=None,git=sync.status)
+                state.save(state='between_jobs',job_ended_at=now(),current=None,git=sync.status)
                 if code==130:return 130
         except KeyboardInterrupt:
-            state.save(state='stopped',current=None,git=sync.status);return 130
+            state.save(state='stopped',job_ended_at=state.value.get('job_ended_at') or now(),current=None,git=sync.status)
+            if hasattr(sync,'publish'):sync.publish()
+            return 130
         except BaseException:
-            state.save(state='paused',current=None,git=sync.status)
+            state.save(state='paused',job_ended_at=state.value.get('job_ended_at') or now(),current=None,git=sync.status)
+            if hasattr(sync,'publish'):sync.publish()
             raise
         finally:
             state.save(state=state.value['state'],git=sync.status)

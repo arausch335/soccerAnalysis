@@ -26,6 +26,10 @@ class WorkerTests(unittest.TestCase):
         self.plan=self.base/'workers.yaml'
         self.document=yaml.safe_load((config.PROJECT_ROOT/'config/workers.yaml').read_text())
         self.document['dashboard']['enabled']=False;self.document['git']['enabled']=False
+        from copy import deepcopy
+        self.document['workers']['main']['assignments']=deepcopy(self.document['workers']['msi']['assignments'])
+        self.document['workers']['msi']['assignments']=[]
+        self.document['workers']['main']['role']='worker'
         self.document['workers']['main']['assignments'][0]['competitions']=['La Liga','Bundesliga']
         self.save();self.args=['--plan',str(self.plan),'--worker-id','main','--data-root',str(self.root),
                               '--ensemble-root',str(self.ensemble),'--once','--no-dashboard']
@@ -113,3 +117,39 @@ class WorkerTests(unittest.TestCase):
         runtime.save(state='idle',git={'state':'current'})
         self.assertEqual(before,runtime.public.read_bytes())
         self.assertNotIn(str(self.root),runtime.public.read_text())
+
+    def test_hourly_publication_waits_for_saved_match_and_sends_finish(self):
+        self.document['workers']['main']['assignments'][0]['competitions']=['La Liga'];self.save()
+        time=[0];published=[]
+        class Sync(NoSync):
+            def publish(self):published.append(time[0]);return True
+        def runner(args):
+            job=CollectionProgress(enabled=False,clock=lambda:time[0]).job('/private/path','combined','La Liga','2021-2022')
+            job.begin();job.schedule([{'id':1},{'id':2}]);job.start_game(1)
+            time[0]=3599;job.finish_game()
+            job.start_game(2);time[0]=3610
+            self.assertEqual(published,[0])
+            job.finish_game();self.assertEqual(published,[0,3610])
+            time[0]=3620;job.end();return 0
+        self.assertEqual(run(self.args,runner=runner,session=self.session,sync_factory=Sync,clock=lambda:time[0]),0)
+        self.assertEqual(published,[0,3610,3620])
+        state=json.loads((self.root/'worker_runtime/main.json').read_text())
+        self.assertEqual(next(iter(state['schedules'].values()))['match_ids'],['1','2'])
+        phase=next(iter(state['phase_stats'].values()))
+        self.assertEqual(phase['scraped'],2);self.assertIn('eta_seconds',phase)
+
+    def test_monitor_never_scrapes_even_with_assignments(self):
+        calls=[]
+        self.assertEqual(run(self.args+['--monitor'],runner=lambda args:calls.append(args) or 0,
+            session=self.session,sync_factory=NoSync),0)
+        self.assertEqual(calls,[]);self.assertEqual(self.sessions,0)
+        state=json.loads((self.root/'worker_runtime/main.json').read_text())
+        self.assertEqual(state['role'],'monitor');self.assertEqual(state['state'],'monitoring')
+
+    def test_runtime_retains_targets_and_finished_job_timing_across_restart(self):
+        state=Runtime(self.root,self.ensemble,'main')
+        state.save(schedules={'one':{'match_ids':['1','2']}},job={'id':'one'},
+            job_started_at='2026-10-19T10:00:00+00:00',job_ended_at='2026-10-19T11:00:00+00:00')
+        restarted=Runtime(self.root,self.ensemble,'main')
+        self.assertEqual(restarted.value['schedules']['one']['match_ids'],['1','2'])
+        self.assertEqual(restarted.value['job_ended_at'],'2026-10-19T11:00:00+00:00')

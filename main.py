@@ -403,7 +403,7 @@ def main(argv=None):
 def entrypoint(argv=None):
     """No-argument launches use the shared plan; explicit scrape commands stay compatible."""
     args=list(sys.argv[1:] if argv is None else argv)
-    shared_flags=('--worker','--dashboard','--no-dashboard','--once','--retry','--plan')
+    shared_flags=('--worker','--monitor','--with-dashboard','--dashboard','--no-dashboard','--once','--retry','--plan')
     explicit=any(a in ('start','resume','export','status','probe','--help','-h','--inventory',
                       '--import-only','--ignore-provenance','--competition','--season','--name',
                       '--collection-types','--limit','--offline') or

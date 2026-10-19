@@ -89,7 +89,9 @@ def load_plan(path=None):
         raise config.ConfigError(f'Cannot load worker plan: {exc}') from exc
     section(document,('version','coordinator','git','dashboard','workers'),'workers plan')
     if type(document['version']) is not int or document['version']!=1:raise config.ConfigError('workers plan version must be 1')
-    git=section(document['git'],('enabled','remote','branch','poll_seconds','publish_inventory','auto_restart'),'workers.git')
+    if isinstance(document.get('git'),dict):document['git'].setdefault('publish_seconds',3600)
+    git=section(document['git'],('enabled','remote','branch','poll_seconds','publish_seconds','publish_inventory','auto_restart'),'workers.git')
+    if type(git['publish_seconds']) is not int or git['publish_seconds']<60:raise config.ConfigError('Publication interval must be at least 60 seconds')
     for field in ('enabled','publish_inventory','auto_restart'):config._boolean(git[field],'workers.git.'+field)
     if not isinstance(git['remote'],str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*',git['remote']):raise config.ConfigError('Invalid Git remote')
     if (not isinstance(git['branch'],str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]*',git['branch'])
@@ -101,7 +103,13 @@ def load_plan(path=None):
     if not isinstance(document['workers'],dict) or not document['workers']:raise config.ConfigError('Define at least one worker')
     workers={};jobs=[];seen={}
     for worker,value in document['workers'].items():
-        valid_worker_id(worker);section(value,('label','color','enabled','assignments'),'worker '+worker)
+        valid_worker_id(worker)
+        if isinstance(value,dict):
+            value.setdefault('role','monitor' if worker==document['coordinator'] else 'worker')
+            value.setdefault('dashboard',worker==document['coordinator'])
+        section(value,('label','color','enabled','assignments','role','dashboard'),'worker '+worker)
+        if value['role'] not in ('monitor','worker'):raise config.ConfigError('Worker role must be monitor or worker')
+        config._boolean(value['dashboard'],'worker dashboard')
         config._boolean(value['enabled'],'worker enabled')
         if not isinstance(value['label'],str) or not value['label'].strip():raise config.ConfigError('Worker labels must be nonempty')
         if not isinstance(value['color'],str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',value['color']):raise config.ConfigError('Worker colors must be #RRGGBB')

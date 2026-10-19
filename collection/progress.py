@@ -27,7 +27,11 @@ def observe_progress(callback):
 def notify(job,event,**values):
     callback=_OBSERVER.get()
     if callback:
-        callback({'event':event,'kind':job.kind,'competition':job.competition,'season':job.season,
+        rate,samples,rough=job.owner.rate(job.kind,job.mode)
+        eta=rate*job.remaining if rate is not None and job.remaining is not None and not job.paused else None
+        callback({'elapsed_seconds':max(0,job.owner.clock()-(job.setup_started if job.setup_started is not None else job.owner.started)),
+                  'scraped':job.scraped,'cached':job.cached,'failed':job.failed,'partial':job.partial,'elsewhere':job.elsewhere,
+                  'eta_seconds':eta,'eta_provisional':rough or samples<3,'rate_samples':samples,'event':event,'kind':job.kind,'competition':job.competition,'season':job.season,
                   'match_id':job.current,'total':job.total,'remaining':job.remaining,**values})
 
 
@@ -105,6 +109,7 @@ class JobProgress:
     def __init__(self,owner,key,kind,competition,season):
         self.owner=owner;self.key=key;self.kind=kind;self.competition=competition;self.season=season
         self.total=None;self.pending=None;self.mode=None;self.finished=False;self.paused=False
+        self.scraped=0;self.cached=0;self.failed=0;self.partial=0;self.elsewhere=0
         self.setup_started=None;self.setup_seconds=None;self.game_start=None
         self.current=None;self.before=None;self.wait_before=0;self.known_cached=False;self.revisit_complete=False
 
@@ -122,7 +127,7 @@ class JobProgress:
             self.owner.setups[self.kind].append(self.setup_seconds)
         self.owner.emit(f'[Timing] {self.competition} {self.season} | {self.total} selected games; '
                         f'{len(self.pending)} remaining | season setup {duration(self.setup_seconds)}')
-        notify(self,'schedule')
+        notify(self,'schedule',selected_match_ids=sorted(ids))
 
     def start_game(self,mid,*,clients=(),cached=False):
         self.current=str(mid);self.game_start=self.owner.clock()
@@ -154,6 +159,11 @@ class JobProgress:
             f'collection remaining {"~" if total_eta is not None else ""}{duration(total_eta)}'
             f'{" (provisional)" if provisional or rough or count<3 else ""} | {calibration}'
             +(f'; excludes {paused} paused season job(s)' if paused else ''))
+        if status=='elsewhere':self.elsewhere+=1
+        elif status=='failed':self.failed+=1
+        elif status=='partial':self.partial+=1
+        elif is_cached:self.cached+=1
+        else:self.scraped+=1
         self.game_start=None
         notify(self,'match_saved',status=status,cached=is_cached)
 

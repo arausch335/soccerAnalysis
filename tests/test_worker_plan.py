@@ -10,7 +10,11 @@ import main
 
 
 class WorkerPlanTests(unittest.TestCase):
-    def setUp(self):self.document=yaml.safe_load((config.PROJECT_ROOT/'config/workers.yaml').read_text())
+    def setUp(self):
+        self.document=yaml.safe_load((config.PROJECT_ROOT/'config/workers.yaml').read_text())
+        self.document['workers']['main']['assignments']=deepcopy(self.document['workers']['msi']['assignments'])
+        self.document['workers']['main']['assignments'][0]['seasons']=['2023/24']
+        self.document['workers']['msi']['assignments']=[]
 
     def load(self,document):
         with tempfile.TemporaryDirectory() as folder:

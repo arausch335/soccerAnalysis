@@ -82,3 +82,42 @@ class GitSyncTests(unittest.TestCase):
         local=self.snapshot();before=local.read_bytes();self.sync.fetch();self.sync.boundary()
         self.assertIn('unique worker ID',self.sync.status['message']);self.assertEqual(local.read_bytes(),before)
 
+
+    def test_hourly_publication_keeps_running_code_head_and_index_unchanged(self):
+        self.remote_change();path=self.snapshot()
+        before_head=self.git(self.worker,'rev-parse','HEAD')
+        before_index=self.git(self.worker,'write-tree')
+        self.assertTrue(self.sync.publish(),self.sync.status)
+        self.assertEqual(self.git(self.worker,'rev-parse','HEAD'),before_head)
+        self.assertEqual(self.git(self.worker,'write-tree'),before_index)
+        self.assertFalse((self.worker/'main.py').exists())
+        published=self.git(self.remote,'rev-parse','main')
+        paths=self.git(self.remote,'diff-tree','--no-commit-id','--name-only','-r',published)
+        self.assertEqual(paths,'ensemble_data/workers/msi.json')
+        # The next saved season boundary can safely consume this process's own publication.
+        sync=GitSync(self.worker,'msi',self.sync.options)
+        sync.fetch();changed=sync.boundary()
+        self.assertIn('main.py',changed)
+        self.assertTrue((self.worker/'main.py').exists())
+        self.assertEqual(json.loads(path.read_text())['worker_id'],'msi')
+
+    def test_publication_does_not_touch_staged_edits_or_publish_source(self):
+        self.snapshot();settings=self.worker/'config/settings.yaml';settings.write_text('keep: local\n')
+        self.git(self.worker,'add','config/settings.yaml')
+        before=self.git(self.remote,'rev-parse','main')
+        self.assertFalse(self.sync.publish())
+        self.assertEqual(settings.read_text(),'keep: local\n')
+        self.assertEqual(self.git(self.worker,'diff','--cached','--name-only'),'config/settings.yaml')
+        self.assertEqual(before,self.git(self.remote,'rev-parse','main'))
+
+    def test_two_workers_publish_without_overwriting_each_other(self):
+        self.snapshot();self.assertTrue(self.sync.publish())
+        second=GitSync(self.main,'main',self.sync.options)
+        target=self.main/'ensemble_data/runtime/main.json';target.parent.mkdir(parents=True)
+        target.write_text(json.dumps({'worker_id':'main','state':'monitoring'}))
+        self.assertTrue(second.publish(),second.status)
+        snapshot=self.worker/'ensemble_data/workers/msi.json'
+        snapshot.write_text(json.dumps({'worker_id':'msi','records':{'new':{}}}))
+        self.assertTrue(self.sync.publish(),self.sync.status)
+        self.assertIn('main',self.git(self.remote,'show','main:ensemble_data/runtime/main.json'))
+        self.assertIn('new',self.git(self.remote,'show','main:ensemble_data/workers/msi.json'))

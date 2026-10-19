@@ -13,32 +13,35 @@ Python 3.12 is recommended. Install the collection dependencies if needed:
 python -m pip install -r requirements.txt
 ```
 
-Edit **[`config/workers.yaml`](config/workers.yaml)** on the main computer to
-assign competitions, seasons and data types to each worker. Common provider
-access, delays and dataset preferences live in
-**[`config/settings.yaml`](config/settings.yaml)**. Press **Run** on `main.py`;
-no arguments are needed. It runs only this computer’s assignments and opens the
-browser dashboard at `http://127.0.0.1:8765`.
+Edit **[`config/workers.yaml`](config/workers.yaml)** on Main to assign work.
+Shared provider access, delays and dataset preferences live in
+**[`config/settings.yaml`](config/settings.yaml)**.
 
-The initial plan preserves Main Mac’s seven competitions for 2023/24 with
-`combined` and fast spatial capture. MSI remains unassigned. Worker identity
-stays in ignored `data/identity.json`. Shared settings are consistent across
-computers; machine identity, raw data and browser sessions remain local.
+Run **`main.py`** without arguments on each computer. Main defaults to a monitor
+with the browser dashboard; MSI and Headless default to scraping their
+assignments without a dashboard. The current plan gives MSI 2021/22 and Headless
+2022/23 across the seven configured competitions. Main has no scraping jobs.
 
-Workers check Git while running, then update between saved season jobs and
-restart for changed code/configuration. The dashboard shows collected data,
-original collectors, copies held elsewhere, data-type coverage and colored
-assignments. **[Worker setup, dashboard and safe update behavior](docs/WORKERS.md).**
+Workers publish saved progress hourly after the current match, and at job
+start/finish/pause. Main checks Git every two minutes. Code/config changes apply
+between saved season jobs with a controlled restart. The coverage grid groups
+player stats, events, spatial maps and other data into aligned season columns,
+with worker colors for completed and planned portions. Current jobs include
+elapsed time, scraped/skipped counts and ETA.
 
 ```bash
-python main.py --worker-id msi   # MSI uses its original local data folder
-python main.py --dashboard       # Read-only view; no collection or Git actions
+python main.py                         # Main monitor or this computer's worker role
+python main.py --worker-id msi          # First launch on the original MSI data folder
+python main.py --worker-id headless     # First launch on Headless
+python main.py --with-dashboard         # Optional worker dashboard
+python main.py --dashboard              # Read-only view; no Git sync
 ```
 
-Checkpoints, caches and cooldowns stay under `paths.data`. The plan records
-attempted jobs; use `--retry` to revisit a paused or completed assignment with
-its saved checkpoints. Explicit CLI selections and standalone launchers retain
-the previous behavior and use the manual defaults in `settings.yaml`.
+**[Worker setup, identity, dashboard and safe updates](docs/WORKERS.md).**
+Local identity stays in ignored `data/identity.json`; raw data, credentials and
+browser sessions stay local. Saved checkpoints are reused. Explicit CLI scrape
+selections retain the previous behavior; use `--retry` to revisit attempted
+assignments through the shared supervisor.
 
 ## Choose collection types and see timing
 
@@ -194,7 +197,7 @@ git push origin main
 after every saved match. Re-run `--inventory` to refresh the snapshot after
 transfers or filesystem changes. Inventories describe data held on a worker;
 their record `origins` preserve the original collectors. The shared worker
-supervisor automatically fetches and shares snapshots between season jobs;
+supervisor automatically fetches and publishes snapshots hourly after a saved match;
 manual CLI commands do not run Git. The older ignored `ensemble_data/provenance.json`
 remains a compatible aggregate map you can manually copy between computers.
 Local files are rechecked at startup. Provider namespaces,

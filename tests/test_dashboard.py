@@ -15,7 +15,13 @@ class DashboardTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.base=Path(self.temp.name);self.root=self.base/'data';self.ensemble=self.base/'ensemble_data'
-        self.plan=config.PROJECT_ROOT/'config/workers.yaml'
+        self.plan=self.base/'workers.yaml'
+        document=yaml.safe_load((config.PROJECT_ROOT/'config/workers.yaml').read_text())
+        from copy import deepcopy
+        document['workers']['main']['assignments']=deepcopy(document['workers']['msi']['assignments'])
+        document['workers']['main']['assignments'][0]['seasons']=['2023/24']
+        document['workers']['msi']['assignments']=[]
+        self.plan.write_text(yaml.safe_dump(document))
 
     def inventory(self,worker,rows):
         atomic_json(self.ensemble/'workers'/(worker+'.json'),{'format':'soccer-analysis-progress-v1','worker_id':worker,'records':rows})
@@ -30,6 +36,8 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(resource_states(self.row())['average_positions'],'unknown')
         self.assertEqual(resource_states(self.row({'average_positions':'unavailable'}))['average_positions'],'unavailable')
         self.assertEqual(resource_states(self.row(namespace='whoscored_events'))['whoscored_events'],'complete')
+        self.assertEqual(resource_states(self.row({'sofascore_stats':'complete'}))['fotmob_enrichment'],'not_attempted')
+        self.assertEqual(resource_states(self.row())['fotmob_enrichment'],'pending')
 
     def test_deduplicated_total_preserves_each_holder_and_collector(self):
         row=self.row();self.inventory('main',{'one':row});self.inventory('msi',{'one':row})
@@ -44,7 +52,7 @@ class DashboardTests(unittest.TestCase):
         self.inventory('main',{'one':self.row({'average_positions':'unavailable'})})
         atomic_json(self.root/'la-liga/2023-2024/schedule.json',{'events':[{'id':1},{'id':2}]})
         model=DashboardModel(self.root,self.ensemble,self.plan,'main');status=model.status()
-        row=next(c for c in status['coverage'] if c['competition']=='La Liga' and c['resource']=='average_positions')
+        row=next(c for c in status['coverage'] if c['worker']=='main' and c['competition']=='La Liga' and c['season']=='2023-2024' and c['resource']=='average_positions')
         self.assertEqual(row['total'],2);self.assertEqual(row['counts'],{'unavailable':1,'missing':1});self.assertTrue(row['planned'])
         unknown=next(c for c in status['coverage'] if c['competition']=='Premier League')
         self.assertIsNone(unknown['total'])

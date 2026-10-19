@@ -9,6 +9,7 @@ import time
 
 from config.workerPlan import RESOURCES, load_plan
 from collection.ensembleProgress import read_progress
+from .coverage import build_grid
 
 NAMESPACE_RESOURCES={
  'sofascore':['sofascore_stats','sofascore_details','match_statistics','incidents','momentum','average_positions','heatmaps','shotmaps','action_maps','whoscored_stats','fotmob_enrichment'],
@@ -16,8 +17,17 @@ NAMESPACE_RESOURCES={
 
 
 def resource_states(row):
-    states={name:'unknown' for name in NAMESPACE_RESOURCES.get(row.get('namespace'),[])}
+    states={name:'pending' for name in NAMESPACE_RESOURCES.get(row.get('namespace'),[])}
+    explicit=row.get('resources',{})
+    # A resource-aware local audit records evidence; omitted optional fields were not collected.
+    # Truly legacy inventories without this map remain uncertain until their next audit.
+    if isinstance(explicit,dict) and explicit:states={key:'not_attempted' for key in states}
     caps=set(row.get('capabilities',[]))
+    if not isinstance(explicit,dict) or not explicit:
+        for old,new in (('average_positions','average_positions'),('heatmap','heatmaps'),('shotmap','shotmaps'),('rating_breakdown','action_maps')):
+            if 'spatial:'+old in caps:states[new]='unknown'
+        if 'browser_details' in caps:
+            for name in ('sofascore_details','match_statistics','incidents','momentum'):states[name]='unknown'
     # Older terminal spatial flags include unavailable/deferred. Their availability is unknown.
     if row.get('status')=='complete':
         if row.get('namespace')=='whoscored_events':states['whoscored_events']='complete'
@@ -59,7 +69,7 @@ class DashboardModel:
         plan=load_plan(self.plan_path);warnings=[];rows=[];groups={};all_keys=set();workers={}
         for worker,info in plan.workers.items():
             workers[worker]={'id':worker,'label':info['label'],'color':info['color'],'enabled':info['enabled'],
-                             'configured':True,'jobs':[j.as_dict() for j in plan.for_worker(worker)],'records':0,'collected':0,'runtime':None}
+                             'configured':True,'role':info['role'],'jobs':[j.as_dict() for j in plan.for_worker(worker)],'records':0,'collected':0,'runtime':None}
         for path in sorted((self.ensemble/'workers').glob('*.json')):
             try:
                 saved=read_progress(path)
@@ -107,11 +117,17 @@ class DashboardModel:
             if total is not None:counts['missing']=max(0,total-sum(counts.values()))
             coverage.append({'worker':worker,'competition':competition,'season':season,'resource':resource,
                              'counts':counts,'recorded':len(value['ids']),'total':total,'planned':value['planned']})
+        def get_schedule(comp,season,namespace):
+            key=(comp,season,namespace)
+            if key not in schedules:schedules[key]=self._schedule(comp,season,namespace,warnings)
+            return schedules[key]
+        grid=build_grid(rows,plan,get_schedule,workers)
         self.rows=rows
         return {'updated_at':datetime.now(timezone.utc).isoformat(),'local_worker':self.worker,
                 'coordinator':plan.coordinator,'plan_revision':plan.revision[:10],
                 'resources':{key:label for key,(label,_) in RESOURCES.items()},'workers':list(workers.values()),
                 'jobs':[j.as_dict() for j in plan.jobs if plan.workers[j.worker]['enabled']],
+                'grid':grid,'publish_seconds':plan.git['publish_seconds'],'poll_seconds':plan.git['poll_seconds'],
                 'coverage':coverage,'unique_records':len(all_keys),
                 'competitions':sorted({r['competition'] for r in rows}|{j.competition for j in plan.jobs}),
                 'seasons':sorted({r['season'] for r in rows}|{j.as_dict()['season'] for j in plan.jobs},reverse=True),
@@ -125,7 +141,9 @@ class DashboardModel:
                 value=filters.get(field,[''])[0]
                 if value:rows=[r for r in rows if r[field]==value]
             resource=filters.get('resource',[''])[0]
-            if resource:rows=[r for r in rows if resource in r['resources']]
+            if resource:
+                wanted=set(resource.split(','))
+                rows=[r for r in rows if wanted.intersection(r['resources'])]
             try:offset=max(0,int(filters.get('offset',['0'])[0]));limit=min(100,max(1,int(filters.get('limit',['40'])[0])))
             except ValueError:offset=0;limit=40
             return {'total':len(rows),'offset':offset,'rows':[

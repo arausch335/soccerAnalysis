@@ -32,9 +32,9 @@ data, or simply collect through `main.py` to update the local snapshot. This
 command makes no scraper requests; it also performs any pending data imports.
 Manual collection commands write inventories locally. The shared worker
 supervisor (`python main.py` without scrape-selection arguments) automatically
-shares this worker’s inventory and sanitized runtime status between saved season
-jobs when enabled in `config/workers.yaml`. It fetches while running, updates
-between jobs, and restarts for code/configuration changes. Uncommitted user
+shares this worker’s inventory and sanitized runtime status hourly after a saved
+match, and at job start/finish, when enabled in `config/workers.yaml`. It fetches while running, applies code/config updates
+between season jobs, and restarts for code/configuration changes. Uncommitted user
 edits pause sync and stay intact. See [worker setup](../../docs/WORKERS.md). Raw data, local identity, detailed logs, transfer payloads and
 the legacy aggregate `ensemble_data/provenance.json` remain ignored by Git.
 

@@ -6,6 +6,7 @@ git:
   remote: origin
   branch: main
   poll_seconds: 120
+  publish_seconds: 3600
   publish_inventory: true
   auto_restart: true
 dashboard:
@@ -14,17 +15,33 @@ dashboard:
   open_browser: true
 workers:
   main:
-    label: Main Mac
+    role: monitor
+    dashboard: true
+    label: Main
     color: '#169f91'
+    enabled: true
+    assignments: []
+  msi:
+    role: worker
+    dashboard: false
+    label: MSI
+    color: '#587bec'
     enabled: true
     assignments:
       - id: current-season
         competitions: [Premier League, Bundesliga, La Liga, Champions League, Europa League, Serie A, Ligue 1]
-        seasons: ['2023/24']
+        seasons: ['2021/22']
         collection_types: [combined]
         spatial_capture: fast
-  msi:
-    label: MSI
-    color: '#587bec'
+  headless:
+    role: worker
+    dashboard: false
+    label: Headless
+    color: '#000000'
     enabled: true
-    assignments: []
+    assignments:
+      - id: current-season
+        competitions: [ Premier League, Bundesliga, La Liga, Champions League, Europa League, Serie A, Ligue 1 ]
+        seasons: [ '2022/23' ]
+        collection_types: [ combined ]
+        spatial_capture: fast

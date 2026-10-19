@@ -1,144 +1,171 @@
-# Shared worker plan and collection dashboard
+# Main monitor, worker collection and progress publishing
 
-Run `main.py` in PyCharm with no arguments, or run `python main.py`. It starts
-only the assignments belonging to this computer and opens
-`http://127.0.0.1:8765` in your browser. It remains running after its plan has
-been attempted, waiting for changes. Use Ctrl+C to stop it.
+The shared plan in `config/workers.yaml` controls all computers. Its current
+assignments are preserved:
 
-The initial plan preserves Main Mac (`main`): the seven existing competitions,
-2023/24, `combined`, and `fast` spatial capture. MSI (`msi`) has no assignments
-and waits without making scraper requests. Historical inventories for other
-worker IDs remain visible as “Inventory only.”
+| Computer | Default role | Work | Dashboard |
+| --- | --- | --- | --- |
+| Main (`main`) | Monitor | No scraping | Opens automatically |
+| MSI (`msi`) | Worker | Seven competitions, 2021/22, combined, fast spatial | Off |
+| Headless (`headless`) | Worker | Seven competitions, 2022/23, combined, fast spatial | Off |
 
-## The two shared files
+## Update and start each worker
 
-- `config/settings.yaml`: common provider access, delays, dataset options and
-  paths. These preferences are shared by Git on every computer. Its competition,
-  season, type and spatial selections are defaults for manual commands and the
-  standalone launchers; worker assignments override those four selections.
-- `config/workers.yaml`: the coordinator, named computers, colors, assignments,
-  dashboard preferences and Git update policy. Edit this file on Main Mac,
-  commit, and push it. Each worker reads the same plan.
+1. Stop its old Python scraper with Ctrl+C or PyCharm’s Stop button. Keep its
+   original data directory, browser profile and `data/identity.json` in place.
+2. In that computer’s existing repository and Python environment, run:
 
-The only computer-specific identity is `data/identity.json`, which stays out of
-Git. Existing identities are reused. On the original MSI data folder, launch:
+   ```bash
+   git status --short
+   git pull --ff-only origin main
+   python main.py --worker-id msi
+   ```
+
+   Use `--worker-id headless` on Headless. The identity is saved, so subsequent
+   launches can simply use `python main.py` or PyCharm Run with no arguments.
+3. Ensure Git has a commit name/email and is authenticated for both fetch and
+   push without interactive prompts. Workers disable Git prompts so a login
+   request cannot hang a scrape. Configure missing Git identity normally with
+   `git config user.name` and `git config user.email`; use your own values.
+4. Connect the existing scraper Chrome extension as usual if the common settings
+   use extension access. No dashboard opens on workers. This does not turn off
+   the browser/extension used to collect data. FotMob continues through HTTP JSON
+   endpoints; its transport has not changed.
+
+No new package dependency was added. If creating an environment for the first
+time, install `python -m pip install -r requirements.txt` and follow the browser
+setup in [BROWSER_COLLECTION.md](BROWSER_COLLECTION.md).
+
+The reporting upgrade revisits assigned jobs once using their existing
+checkpoints, so earlier attempted jobs gain current coverage and timing reports.
+A first pending job audits saved local files before scraping. This can take
+several minutes for a large historical archive. Existing matches are resumed;
+raw data is not deleted or overwritten by Git updates. If Git reports local
+changes or divergence, stop and review them. Do not use a hard reset or force
+push. Older machine-specific selections should be moved into the shared plan,
+with common collection preferences preserved in `config/settings.yaml`.
+
+Each worker ID belongs to one original data folder. The program refuses a
+conflicting ID before changing local identity. Data copied for import belongs
+in `ensemble_data`, where the receiving computer keeps its identity and run
+state. Never resolve an identity conflict by copying another computer’s
+`identity.json` over your own.
+
+## Main computer
 
 ```bash
-python main.py --worker-id msi
+python main.py
 ```
 
-The ID must appear in the shared plan. Each ID belongs to exactly one data
-folder, identified by its existing `instance_id`. Do not create another folder
-with an ID already represented by a worker inventory. Copies intended for
-import go in `ensemble_data`, where imports preserve the receiving identity.
+Main defaults to monitor mode: it opens `http://127.0.0.1:8765`, checks Git every
+120 seconds and receives workers’ published progress. It does not start
+scraping, even if an assignment is accidentally added while its role remains
+`monitor`. Keep this program running; the separate `--dashboard` view does not
+synchronize Git.
 
-An assignment expands each competition × season into a saved season job:
+Both roles retain both capabilities:
+
+```bash
+python main.py --monitor --no-dashboard  # Monitor without a browser
+python main.py --with-dashboard          # Worker plus optional dashboard
+python main.py --worker                 # Explicitly execute this computer’s assignments
+python main.py --dashboard              # Read-only view; no scraping or Git sync
+python main.py --retry --once           # Revisit assigned work using checkpoints
+```
+
+To make Main scrape, assign it work and either change its role to `worker` or
+launch with `--worker`. Avoid overlapping assignments; the plan validates
+competition, season and requested data types before collection starts.
+
+## Hourly snapshots, safe code updates
+
+Shared settings:
 
 ```yaml
-assignments:
-  - id: premier-events
-    competitions: [Premier League]
-    seasons: ['2022/23']
-    collection_types: [whoscored_events]
-    spatial_capture: fast
+git:
+  poll_seconds: 120
+  publish_seconds: 3600
+  publish_inventory: true
+  auto_restart: true
 ```
 
-Types are `combined`, `sofascore`, `whoscored_events`, and `fotmob_players`.
-`combined` includes Sofascore plus WhoScored/FotMob enrichment and the saved
-WhoScored event responses. Standalone FotMob statistics are a separate type.
-`fast` collects average positions; `all` requests every supported spatial
-endpoint. Overlapping data-type assignments for the same competition/season
-are rejected before collection. Disabled workers do not receive jobs.
+Workers fetch Git refs while scraping. Once an hour has elapsed, they publish
+progress immediately **after the current match is saved**. They also publish
+when a job starts, finishes, pauses, fails or is stopped normally. No match is
+interrupted merely to meet the hourly deadline. A verification wait or very
+long match can delay publication beyond an hour. Failed publication keeps local
+progress and appears in Git status; the next scheduled attempt retries it.
 
-## What the dashboard means
+Mid-season publishing uses an isolated Git index and creates a snapshot on top
+of the latest remote branch. It changes only this worker’s inventory and
+sanitized runtime files. It does not change the running checkout, HEAD or user
+index. Concurrent worker pushes are retried without force pushing; successful
+publication receipts allow the worker to consume its own commits safely later.
 
-Overview shows distinct **provider match records**, deduplicated across worker
-inventories. Sofascore and WhoScored IDs remain separate; these totals are not
-a count of unique real-world fixtures. Each computer’s card distinguishes
-records held locally from records originally collected there. Match origins
-are historical match-level evidence, not proof that every field came from the
-same original computer.
+Source/configuration updates still apply **between season jobs**. The worker
+closes the saved job, updates its checkout and restarts Python before another
+job begins. It also rechecks updates after a long startup audit. Local source
+edits, staged files, unrelated commits or another checkout claiming the same
+worker snapshots pause automatic sync and remain intact. Raw data, cookies,
+profiles, local identity and detailed errors stay out of Git. Only these files
+are eligible for automatic publication:
 
-Worker plan shows colored assignment bars and all requested data types for
-each computer. Coverage distinguishes player statistics, team match statistics,
-incidents, momentum, average positions, heatmaps, shots, action maps, provider
-enrichment, native WhoScored events and standalone FotMob statistics. It shows
-saved, partial, unavailable, deferred, failed, unknown, and missing states.
+- `ensemble_data/workers/<id>.json`
+- `ensemble_data/runtime/<id>.json`
 
-Coverage targets use saved schedules on the computer serving the dashboard,
-including any extra inventoried matches. An absent schedule means “unknown,”
-not zero or 100%. Old inventories cannot distinguish successful spatial data
-from terminal unavailable/deferred attempts; the dashboard shows those as
-unknown. Before its first pending assigned job, a worker audits its local files
-and adds explicit resource availability. Unassigned workers remain idle. `python main.py --inventory` can also perform that audit
-without scraping; stop that worker before running a manual audit. The dashboard
-itself only reads snapshots and schedules.
+With the default hourly publication and two-minute monitor polling, Main
+normally sees progress within approximately an hour plus two minutes. The
+browser refreshes its local view every five seconds. Git snapshots are not a
+live connection; the dashboard always shows their age and flags overdue
+running-job updates.
 
-Other computers’ activity is explicitly a **last published snapshot**, not a
-live connection. New snapshots are published between season jobs. Local
-activity updates after schedules and individual saved matches. Raw data still
-needs a folder transfer before a different computer can build datasets from it.
+## Coverage grid and current jobs
+
+The main view aligns equal-width season columns across all competitions. Rows
+are grouped into player match stats (Sofascore, FotMob, WhoScored), WhoScored
+events, Sofascore spatial maps and other match data. Spatial rows expand into
+average positions, heatmaps, shots and action maps.
+
+Solid worker colors mean complete; worker-colored hatching means assigned but
+unfinished; light grey means missing and unassigned. Unavailable responses and
+records that need verification have distinct patterns. Spatial summaries count
+match × map-type sets, so one available map never implies every map is saved.
+Hover for exact counts and click a season for provider IDs and stored evidence.
+Filter competitions, categories and seasons, or highlight a worker without
+changing the underlying coverage totals.
+
+Transfers do not count as new collection. Copies are deduplicated; multiple
+collectors for the same saved unit count once. New records retain resource-level
+collection credit. Older ambiguous origins are neutral mixed credit instead of
+an invented worker split. Linked FotMob native and combined player statistics
+count once; old unlinked provider identities may require an audit before exact
+cross-provider deduplication is possible. Provider records in the summary remain
+separate IDs, not a unique real-world fixture count.
+
+Saved local schedules and workers’ published selected-fixture lists supply
+season targets. Combined event targets can use the baseline fixture target,
+explicitly labelled in the tooltip. If a total has not been discovered, the
+bar says “saved” and “target pending”; it does not claim the season is complete.
+
+Current jobs show elapsed time since the reported start, games scraped this
+run, cached/skipped matches, failures/partial matches, remaining attempts and
+ETA. ETAs use recent successful active scrape times, exclude cache-only work
+and verification waits, and are provisional while calibrating. Remote counts
+and ETA stay tied to their last report even while the elapsed clock advances.
+A stopped/paused job freezes elapsed time at its saved snapshot.
+
+New collections and audits record explicit availability for every supported
+resource. An audited optional resource with no collection evidence is treated
+as not attempted, not unknown. Truly legacy inventories without resource
+availability need an offline audit, normally done before the worker’s first
+pending job. Stop a worker before a separate manual audit:
 
 ```bash
-python main.py --dashboard       # View only: no scraping, migration or Git sync
-python main.py --once            # Attempt pending assigned jobs, then exit
-python main.py --retry --once    # Revisit the plan using resumable checkpoints
-python main.py --no-dashboard    # Worker without a browser dashboard
+python main.py --inventory
 ```
 
-A job is recorded as attempted, with its exit code. Paused jobs stay visible
-and require `--retry` to revisit; failed provider requests are not retried in an
-endless loop. Adding assignments or changing shared settings makes affected
-jobs eligible again. Manual explicit commands such as `--competition`,
-`--season`, `--collection-types`, `status`, `--inventory`, and `--import-only`
-retain the previous CLI behavior. They do not start automatic Git sync.
-
-## Automatic Git updates
-
-The shared plan defaults to checking `origin/main` every 120 seconds.
-
-1. A background thread only **fetches** refs while a season job runs.
-2. After the job saves and returns, the worker updates its checkout. It uses a
-   fast-forward update; it never stashes, resets, or overwrites user edits.
-3. Changes to code or shared configuration close the worker and dashboard, then
-   restart Python before another job begins. Saved checkpoints and attempted
-   job state survive. A removed assignment cannot continue into another job.
-4. Only this worker’s `ensemble_data/workers/<id>.json` inventory and sanitized
-   `ensemble_data/runtime/<id>.json` status may be committed and pushed
-   automatically. These contain football IDs, worker labels, statuses and
-   timestamps. Raw data, identity, profiles, cookies and detailed errors remain
-   ignored. Configure normal Git credentials and commit identity beforehand.
-
-Git must be on the configured branch. Uncommitted source/settings changes,
-staged files, unrelated local commits or an unfinished Git operation pause
-automatic synchronization and appear in worker status; local collection can
-continue with its loaded configuration. Only the worker’s own generated
-snapshot commits may be rebased after a competing push. A conflicting snapshot
-rebase is aborted. No force pushes or automatic source commits are used.
-If another checkout changes this worker’s snapshots, sync pauses for an identity
-check. Snapshot backups are retained under ignored `data/worker_runtime/git-backup`.
-
-Set `git.enabled: false` to disable Git actions, `publish_inventory: false` for
-pull-only synchronization, or `auto_restart: false` to stop after applying a
-code/config update and restart manually. New package dependencies still need a
-normal environment installation; the updater does not run package installers.
-An already running older version needs one manual pull and restart to gain this
-supervisor. The local dashboard binds only to loopback and has a read-only API.
-
-## First update on another computer
-
-Keep data and local identity in place. Check changes before pulling:
-
-```bash
-git status --short
-git pull --ff-only origin main
-python main.py --worker-id msi
-```
-
-If `settings.yaml` has older machine-specific selections, back it up outside
-Git first. Move work selections into `workers.yaml` on Main Mac, preserve any
-common preferences in the shared `settings.yaml`, and commit those changes.
-Git intentionally refuses to overwrite uncommitted conflicting settings.
-Keep credentials in environment variables and browser profiles in ignored data
-folders. Use relative paths in the common settings to avoid machine-specific
-absolute paths.
+Unassigned/monitor computers do not start a full archive audit automatically.
+Use `--retry` for attempted/paused assignments; they are not retried in an endless
+loop. Edit assignments on Main and commit/push the common plan to distribute
+new work. Explicit CLI selections and standalone launchers retain their
+previous behavior, without the shared supervisor’s automatic Git actions.
