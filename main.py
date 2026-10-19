@@ -1,4 +1,4 @@
-"""Run the collection workflow selected in config/settings.yaml."""
+"""Run shared worker assignments, manual collection commands and the dashboard."""
 import argparse
 import csv
 import json
@@ -384,6 +384,7 @@ def main(argv=None):
     parser.add_argument('--worker-id',help='Unique name for this computer, such as main-mac or laptop')
     transfer,args=parser.parse_known_args(args)
     if '--help' in args or '-h' in args:
+        print('Shared worker: run without arguments; --worker --help; --dashboard for a read-only view.')
         print('Worker inventory: --inventory --worker-id main-mac; transfers: --ensemble-root PATH --import-only --ignore-provenance')
         return _main(args)
     try:
@@ -399,5 +400,19 @@ def main(argv=None):
         return 2
 
 
+def entrypoint(argv=None):
+    """No-argument launches use the shared plan; explicit scrape commands stay compatible."""
+    args=list(sys.argv[1:] if argv is None else argv)
+    shared_flags=('--worker','--dashboard','--no-dashboard','--once','--retry','--plan')
+    explicit=any(a in ('start','resume','export','status','probe','--help','-h','--inventory',
+                      '--import-only','--ignore-provenance','--competition','--season','--name',
+                      '--collection-types','--limit','--offline') or
+                 a.startswith(('--competition=','--season=','--name=','--collection-types=','--limit=')) for a in args)
+    if not explicit or any(a.split('=')[0] in shared_flags for a in args):
+        from collection.worker import entrypoint as worker_entrypoint
+        return worker_entrypoint(args)
+    return main(args)
+
+
 if __name__ == '__main__':
-    raise SystemExit(main())
+    raise SystemExit(entrypoint())

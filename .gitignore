@@ -41,3 +41,8 @@ ensemble_data/*
 ensemble_data/workers/*
 !ensemble_data/workers/README.md
 !ensemble_data/workers/*.json
+
+# Only sanitized worker snapshots are shared, never detailed runtime state.
+!ensemble_data/runtime/
+ensemble_data/runtime/*
+!ensemble_data/runtime/*.json

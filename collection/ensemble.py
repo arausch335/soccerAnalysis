@@ -17,7 +17,7 @@ from .ensembleProgress import PortableProgress, progress_session
 from .selection import season_key, competition_by_name
 from .workerIdentity import ensure_identity, read_worker_id, read_origins, save_origins
 
-MACHINE_STATE={'safety','browser_profiles','http_sessions','.ensemble-computer.json','identity.json'}
+MACHINE_STATE={'safety','browser_profiles','http_sessions','.ensemble-computer.json','identity.json','worker_runtime'}
 STATUS={'not_attempted':0,'pending':0,'elsewhere':0,'failed':1,'partial':2,'visible_only':2,
         'deferred':3,'unavailable':3,'complete':4}
 

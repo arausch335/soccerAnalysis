@@ -13,19 +13,38 @@ Python 3.12 is recommended. Install the collection dependencies if needed:
 python -m pip install -r requirements.txt
 ```
 
-Edit **[`config/settings.yaml`](config/settings.yaml)** for both workflows.
-Under `collection`, choose `types`, `action`, `competitions`, `seasons`, and
-`spatial_capture`. Set `build_dataset: true` to package combined/Sofascore dataset
-outputs after collection. Press **Run** on `main.py` in PyCharm; no arguments
-are needed.
+Edit **[`config/workers.yaml`](config/workers.yaml)** on the main computer to
+assign competitions, seasons and data types to each worker. Common provider
+access, delays and dataset preferences live in
+**[`config/settings.yaml`](config/settings.yaml)**. Press **Run** on `main.py`;
+no arguments are needed. It runs only this computer’s assignments and opens the
+browser dashboard at `http://127.0.0.1:8765`.
 
-`auto` starts missing collections and resumes unfinished ones. Checkpoints,
-caches, and cooldowns stay under `paths.data`. Completed seasons are skipped
-during collection but included when dataset building is enabled.
+The initial plan preserves Main Mac’s seven competitions for 2023/24 with
+`combined` and fast spatial capture. MSI remains unassigned. Worker identity
+stays in ignored `data/identity.json`. Shared settings are consistent across
+computers; machine identity, raw data and browser sessions remain local.
+
+Workers check Git while running, then update between saved season jobs and
+restart for changed code/configuration. The dashboard shows collected data,
+original collectors, copies held elsewhere, data-type coverage and colored
+assignments. **[Worker setup, dashboard and safe update behavior](docs/WORKERS.md).**
+
+```bash
+python main.py --worker-id msi   # MSI uses its original local data folder
+python main.py --dashboard       # Read-only view; no collection or Git actions
+```
+
+Checkpoints, caches and cooldowns stay under `paths.data`. The plan records
+attempted jobs; use `--retry` to revisit a paused or completed assignment with
+its saved checkpoints. Explicit CLI selections and standalone launchers retain
+the previous behavior and use the manual defaults in `settings.yaml`.
 
 ## Choose collection types and see timing
 
-All match collectors can run from **`main.py`**. Edit this selection in the YAML:
+All match collectors can run from **`main.py`**. In worker mode, set
+`collection_types` on an assignment in `workers.yaml`. For manual commands and
+standalone launchers, this selection in `settings.yaml` provides the defaults:
 
 ```yaml
 collection:
@@ -148,13 +167,14 @@ Give each computer a unique identity and inventory its existing data without
 scraping. On the main Mac:
 
 ```bash
-python main.py --inventory --worker-id main-mac
+python main.py --inventory --worker-id main
 python review_data.py
 ```
 
 This saves `data/identity.json` and builds
-`ensemble_data/workers/main-mac.json` from validated local artifacts. On other
-computers choose names such as `laptop` or `desktop`. You can also edit the
+`ensemble_data/workers/main.json` from validated local artifacts. On other
+computers use their configured ID (`msi` in the initial plan). Add new IDs to
+`config/workers.yaml` before using the shared supervisor. You can also edit the
 `worker_id` in `data/identity.json`; keep the other generated fields. That file
 travels inside transferred data folders, while imports retain the receiving
 computer's identity. Collection origins stay with the imported records.
@@ -164,8 +184,8 @@ ignored. Commit/push only your worker's file, then pull other workers' updates
 before starting collection:
 
 ```bash
-git add ensemble_data/workers/main-mac.json
-git commit -m "Update main-mac inventory"
+git add ensemble_data/workers/main.json
+git commit -m "Update main inventory"
 git pull --rebase origin main
 git push origin main
 ```
@@ -173,8 +193,9 @@ git push origin main
 `main.py` reads all shared worker files and updates only its own inventory
 after every saved match. Re-run `--inventory` to refresh the snapshot after
 transfers or filesystem changes. Inventories describe data held on a worker;
-their record `origins` preserve the original collectors. The program does not
-automatically run Git commands. The older ignored `ensemble_data/provenance.json`
+their record `origins` preserve the original collectors. The shared worker
+supervisor automatically fetches and shares snapshots between season jobs;
+manual CLI commands do not run Git. The older ignored `ensemble_data/provenance.json`
 remains a compatible aggregate map you can manually copy between computers.
 Local files are rechecked at startup. Provider namespaces,
 competition/season and completed provider/spatial/browser coverage prevent a
@@ -182,8 +203,8 @@ WhoScored event ID or a basic HTTP match from standing in for other requested
 data. Remote-only work is labeled `elsewhere`; it does not inflate local data
 coverage or create fake checkpoints. `review_data.py` reports these counts
 separately. Transfer the full folders to the Mac before building its complete
-dataset. Git snapshots are not live coordination: computers scraping at the same
-time should use different configured league/season selections.
+dataset. The shared plan rejects overlapping data-type assignments. Remote status is a
+published snapshot; raw data transfers remain separate.
 
 [Transfer-folder instructions](ensemble_data/README.md). `--ensemble-root`
 selects another staging folder; `--data-root` selects the receiving data root.
@@ -259,7 +280,8 @@ The two optional maintenance settings require the historical
 ```text
 main.py                 Entry point for every match collection type
 dataset_builder.py      Export, season packaging, and combined ID tables
-config/settings.yaml    Shared collection settings, dataset types, and paths
+config/settings.yaml    Shared provider settings, manual defaults and paths
+config/workers.yaml     Shared worker assignments, dashboard and Git updates
 collection/             Collection commands, checkpoints, and CSV exporters
 providers/              Provider clients, adapters, identity matching, and safety
 fixtures/               Historical fixture-only collection and building

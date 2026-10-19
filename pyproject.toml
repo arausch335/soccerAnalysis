@@ -14,7 +14,7 @@ browser = ["playwright>=1.50,<2"]
 analysis = ["scipy", "scikit-learn", "plotly", "pyarrow"]
 
 [project.scripts]
-soccer-analysis = "main:main"
+soccer-analysis = "main:entrypoint"
 soccer-dataset = "dataset_builder:main"
 soccer-fixtures = "fixtures.collector:main"
 soccer-whoscored-events = "whoscored_events:main"
@@ -28,13 +28,14 @@ py-modules = ["main", "dataset_builder", "whoscored_events", "api_test", "fotmob
 
 [tool.setuptools.packages.find]
 namespaces = true
-include = ["config", "analysis*", "collection*", "fixtures*", "models*", "providers*", "storage*", "tools*", "chrome_extension"]
+include = ["config", "analysis*", "collection*", "fixtures*", "models*", "providers*", "storage*", "tools*", "chrome_extension", "dashboard"]
 
 [tool.setuptools.package-data]
 "analysis.role_pipeline" = ["*.html"]
 "analysis.match_visualization" = ["*.html", "*.css", "*.js"]
 "providers" = ["*.json"]
 
-"config" = ["settings.yaml"]
+"config" = ["settings.yaml", "workers.yaml"]
+"dashboard" = ["*.html", "*.css", "*.js"]
 
 "chrome_extension" = ["*.json", "*.js", "*.html", "*.css"]

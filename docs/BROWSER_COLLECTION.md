@@ -15,7 +15,9 @@ HTTP collection and offline dataset building do not require Playwright.
 
 Edit `config/settings.yaml`, then run one of these files:
 
-- `main.py`: all selected `collection.types`, with `collection.sofascore_access` controlling HTTP/browser access.
+- `main.py`: this computer’s shared assignments from `config/workers.yaml`,
+  with `collection.sofascore_access` in `settings.yaml` controlling access.
+  Explicit manual CLI selections retain the previous behavior.
 - `sofascore_browser.py`: visible-browser Sofascore collection, requesting all
   spatial categories. It uses the same competition/season selections, data root,
   checkpoints and CSV schema. Existing seasons can be resumed and upgraded.

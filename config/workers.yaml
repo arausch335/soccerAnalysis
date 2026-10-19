@@ -1,0 +1,30 @@
+# Shared by every computer. Edit assignments here, commit, and push from main.
+version: 1
+coordinator: main
+git:
+  enabled: true
+  remote: origin
+  branch: main
+  poll_seconds: 120
+  publish_inventory: true
+  auto_restart: true
+dashboard:
+  enabled: true
+  port: 8765
+  open_browser: true
+workers:
+  main:
+    label: Main Mac
+    color: '#169f91'
+    enabled: true
+    assignments:
+      - id: current-season
+        competitions: [Premier League, Bundesliga, La Liga, Champions League, Europa League, Serie A, Ligue 1]
+        seasons: ['2023/24']
+        collection_types: [combined]
+        spatial_capture: fast
+  msi:
+    label: MSI
+    color: '#587bec'
+    enabled: true
+    assignments: []

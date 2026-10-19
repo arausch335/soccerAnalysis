@@ -81,7 +81,7 @@ class PortableProgress:
         if 'browser_details' in capabilities:capabilities.add('sofascore_match_stats')
         return row.get('status')=='complete' and set(required)<=capabilities
 
-    def record(self, namespace, competition, season, mid, capabilities=(), *, collected_here=False):
+    def record(self, namespace, competition, season, mid, capabilities=(), *, collected_here=False, resources=None):
         key=job_key(namespace,competition,season,mid)
         old=self.local_records.get(key,{})
         origins=set(self.origins.get(key,[]))
@@ -93,6 +93,8 @@ class PortableProgress:
             'origins':sorted(origins),
             'holders':[self.origin],
             'updated_at':datetime.now(timezone.utc).isoformat()}
+        native={'whoscored_events':'whoscored_events','fotmob_players':'fotmob_stats'}.get(namespace)
+        row['resources']={**old.get('resources',{}),**(resources or ({native:'complete'} if native else {}))}
         previous=self.previous_local.get(key,{})
         if all(previous.get(field)==value for field,value in row.items() if field!='updated_at'):
             row['updated_at']=previous['updated_at']
@@ -143,21 +145,6 @@ class PortableProgress:
                         or directory.name!=season_label(match.season.name)):
                     raise ValueError(f'Checkpoint does not belong to its match/competition/season path: {marker}')
                 self.record_match(match)
-                relative=match.metadata.get('raw_response_files',{}).get('whoscored')
-                mid=match.metadata.get('provider_match_ids',{}).get('whoscored')
-                if relative and mid is not None:
-                    from providers.identity import team_key
-                    path=directory/relative
-                    if path.exists():
-                        saved=json.loads(path.read_text(encoding='utf-8'))
-                        payload=saved.get('payload',{});centre=payload.get('matchCentreData',{})
-                        if (saved.get('provider')!='whoscored' or saved.get('key')!=f'match/{mid}'
-                                or not who_valid(payload,mid)
-                                or centre.get('startDate','')[:10]!=match.kickoff.date().isoformat()
-                                or any(team_key(centre.get(side,{}).get('name',''))!=team_key(getattr(match,side+'_team').name)
-                                       for side in ('home','away'))):
-                            raise ValueError(f'Invalid integrated WhoScored raw events: {path}')
-                        self.record('whoscored_events',match.season.competition.name,match.season.name,mid)
         for subtree,namespace,provider in (('whoscored_events','whoscored_events','whoscored'),
                                           ('whoscored','whoscored_events','whoscored'),
                                           ('','whoscored_events','whoscored'),
@@ -188,6 +175,26 @@ class PortableProgress:
                     else:player_rows(payload,competition,season,event)
                     self.record(namespace,competition,season,mid)
 
+    def _integrated_events(self,match,collected_here):
+        from review_data import who_valid
+        relative=match.metadata.get('raw_response_files',{}).get('whoscored')
+        mid=match.metadata.get('provider_match_ids',{}).get('whoscored')
+        if relative and mid is not None:
+            from providers.identity import team_key
+            directory=self.root/re.sub(r'[^a-z0-9]+','-',match.season.competition.name.lower()).strip('-')/season_label(match.season.name)
+            path=directory/relative
+            if path.exists():
+                saved=json.loads(path.read_text(encoding='utf-8'))
+                payload=saved.get('payload',{});centre=payload.get('matchCentreData',{})
+                if (saved.get('provider')!='whoscored' or saved.get('key')!=f'match/{mid}'
+                        or not who_valid(payload,mid)
+                        or centre.get('startDate','')[:10]!=match.kickoff.date().isoformat()
+                        or any(team_key(centre.get(side,{}).get('name',''))!=team_key(getattr(match,side+'_team').name)
+                               for side in ('home','away'))):
+                    if self.scanning:raise ValueError(f'Invalid integrated WhoScored raw events: {path}')
+                    return
+                self.record('whoscored_events',match.season.competition.name,match.season.name,mid,collected_here=False)
+
     def record_match(self, match, *, collected_here=False):
         if match.metadata.get('id_namespace','sofascore')!='sofascore':return
         capabilities=['provider:'+key for key,value in match.metadata.get('provider_status',{}).items()
@@ -203,9 +210,29 @@ class PortableProgress:
         for category in ('heatmap','rating_breakdown'):
             if played and all(spatial.get(str(p.player.id),{}).get(category) in terminal for p in played):
                 capabilities.append('spatial:'+category)
+        resources={}
+        if 'sofascore_match_stats' in capabilities:resources['sofascore_stats']='complete'
+        detail=match.metadata.get('browser_details',{})
+        coverage=detail.get('coverage',{})
+        for category,name in (('statistics','match_statistics'),('incidents','incidents'),('momentum','momentum')):
+            if category in coverage:resources[name]=coverage[category]
+        detail_states=[coverage.get(key,'unknown') for key in ('statistics','incidents','momentum')]
+        if coverage:
+            resources['sofascore_details']=detail_states[0] if len(set(detail_states))==1 else 'partial'
+            player_states=[v for key,v in coverage.items() if key.startswith('player/') and key.endswith('/statistics')]
+            if player_states:resources['sofascore_stats']=player_states[0] if len(set(player_states))==1 else 'partial'
+        for category,name in (('average_positions','average_positions'),('shotmap','shotmaps')):
+            if category in spatial:resources[name]=spatial[category]
+        for category,name in (('heatmap','heatmaps'),('rating_breakdown','action_maps')):
+            states=[spatial.get(str(p.player.id),{}).get(category,'not_attempted') for p in played]
+            if states:resources[name]=states[0] if len(set(states))==1 else 'partial'
+        for provider,name in (('whoscored','whoscored_stats'),('fotmob','fotmob_enrichment')):
+            state=match.metadata.get('provider_status',{}).get(provider)
+            if state:resources[name]=state
         if capabilities:
             self.record('sofascore',match.season.competition.name,match.season.name,match.id,capabilities,
-                        collected_here=collected_here)
+                        collected_here=collected_here,resources=resources)
+        self._integrated_events(match,collected_here)
 
 
 def remote_done(namespace, competition, season, mid, required=()):

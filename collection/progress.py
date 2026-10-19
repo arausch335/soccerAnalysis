@@ -14,6 +14,21 @@ def waiting_seconds(clients):
 
 
 _ACTIVE=ContextVar('collection_progress',default=None)
+_OBSERVER=ContextVar('collection_observer',default=None)
+
+
+@contextmanager
+def observe_progress(callback):
+    token=_OBSERVER.set(callback)
+    try:yield
+    finally:_OBSERVER.reset(token)
+
+
+def notify(job,event,**values):
+    callback=_OBSERVER.get()
+    if callback:
+        callback({'event':event,'kind':job.kind,'competition':job.competition,'season':job.season,
+                  'match_id':job.current,'total':job.total,'remaining':job.remaining,**values})
 
 
 def duration(seconds):
@@ -107,11 +122,13 @@ class JobProgress:
             self.owner.setups[self.kind].append(self.setup_seconds)
         self.owner.emit(f'[Timing] {self.competition} {self.season} | {self.total} selected games; '
                         f'{len(self.pending)} remaining | season setup {duration(self.setup_seconds)}')
+        notify(self,'schedule')
 
     def start_game(self,mid,*,clients=(),cached=False):
         self.current=str(mid);self.game_start=self.owner.clock()
         self.before=network_count(clients);self.known_cached=cached
         self.wait_before=waiting_seconds(clients)
+        notify(self,'match_started')
 
     def finish_game(self,*,clients=(),status='complete',mode=None,cached=False):
         if self.game_start is None:return
@@ -138,9 +155,11 @@ class JobProgress:
             f'{" (provisional)" if provisional or rough or count<3 else ""} | {calibration}'
             +(f'; excludes {paused} paused season job(s)' if paused else ''))
         self.game_start=None
+        notify(self,'match_saved',status=status,cached=is_cached)
 
     def end(self,code=0):
         self.finished=True;self.paused=code!=0
+        notify(self,'job_finished',exit_code=code)
 
 
 def get_job(directory,kind,competition,season,*,report=print):

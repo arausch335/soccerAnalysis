@@ -73,6 +73,18 @@ class EnsembleTests(unittest.TestCase):
             self.assertEqual({r['namespace'] for r in portable['records'].values()},
                 {'sofascore','whoscored_events','fotmob_players'})
 
+    def test_import_archives_worker_run_state_without_activating_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base=Path(folder);root=base/'data';ensemble=base/'ensemble';source=ensemble/'copied-data'
+            atomic_json(root/'.soccer-scraper.json',{'format':1})
+            atomic_json(source/'.soccer-scraper.json',{'format':1})
+            atomic_json(root/'worker_runtime/main.json',{'state':'local'})
+            atomic_json(source/'worker_runtime/main.json',{'state':'imported'})
+            import_pending(root,ensemble,quiet)
+            self.assertEqual(json.loads((root/'worker_runtime/main.json').read_text())['state'],'local')
+            archive=next((root/'ensemble_imports').iterdir())
+            self.assertEqual(json.loads((archive/'machine_state/worker_runtime/main.json').read_text())['state'],'imported')
+
     def test_portable_file_skips_remote_matches_without_claiming_local_completeness(self):
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder);first=base/'first';populate(first,limit=1)

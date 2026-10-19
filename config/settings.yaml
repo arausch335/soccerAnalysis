@@ -1,4 +1,5 @@
-# Edit this file, then run main.py in PyCharm for any collection type.
+# Shared collection behavior for every computer. Assign work in workers.yaml.
+# Selection below is the default for manual CLI/standalone launchers only.
 # Relative paths resolve from this repository, regardless of the IDE directory.
 paths:
   data: data
@@ -20,7 +21,7 @@ collection:
     - Europa League
     - Serie A
     - Ligue 1
-  seasons: ["2021/22", "2022/23", "2023/24"]
+  seasons: ["2023/24"]
   spatial_capture: fast        # fast = average positions; all = every spatial endpoint
   build_dataset: false        # Package combined/Sofascore seasons after collection
   show_timing: true            # Per-game duration, season ETA, full collection ETA
