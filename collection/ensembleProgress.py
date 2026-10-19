@@ -35,10 +35,11 @@ def merge_records(target, incoming):
     return target
 
 
-def shared_progress(path):
-    """Read the compatibility map plus every Git-shared worker inventory."""
+def shared_progress(path, *, local_worker=None):
+    """Read local holdings and the inventories received from Main."""
     path=Path(path);records={};workers=[]
-    for worker in sorted((path.parent/'workers').glob('*.json')):
+    from .reporting import inventory_paths
+    for worker in inventory_paths(path.parent,local_worker=local_worker):
         saved=read_progress(worker)
         if saved.get('worker_id')!=worker.stem:raise ValueError(f'Worker inventory ID differs from filename: {worker}')
         workers.append(saved)
@@ -62,7 +63,7 @@ def job_key(namespace, competition, season, mid):
 class PortableProgress:
     def __init__(self, path, root, *, worker_id=None):
         self.path=Path(path) if path is not None else None;self.root=Path(root);self.scanning=False;self.skip_remote=True
-        self.records=shared_progress(self.path) if self.path is not None else {}
+        self.records=shared_progress(self.path,local_worker=worker_id or read_worker_id(root)) if self.path is not None else {}
         self.local_records={};self.previous_local={};self.worker_path=None
         self.origins=read_origins(self.root)
         if self.path is None:self.origin=read_worker_id(self.root);return

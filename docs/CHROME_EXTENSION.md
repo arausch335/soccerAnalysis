@@ -99,9 +99,11 @@ from `data/http_cache/sofascore`, `data/browser_cache/sofascore` and
 no browser visit is claimed just because an API response was reused. The
 browser coverage report continues to distinguish actual browser collection.
 
-After updating, run `python main.py --inventory` to refresh your worker's Git
-inventory, then commit/push that worker file so other computers can recognize
-its older API work too. No data migration or deletion is needed.
+After updating, run `python main.py --inventory` to refresh your worker's local
+inventory, then start its normal worker supervisor to report that evidence to
+Main. No data migration or deletion is needed. The direct connection also sends
+operational extension diagnostics to Main’s Worker logs view; raw responses,
+screenshots and page captures remain on the collecting computer.
 
 ## Pause, verification, disconnect
 

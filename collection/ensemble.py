@@ -17,7 +17,7 @@ from .ensembleProgress import PortableProgress, progress_session
 from .selection import season_key, competition_by_name
 from .workerIdentity import ensure_identity, read_worker_id, read_origins, save_origins
 
-MACHINE_STATE={'safety','browser_profiles','http_sessions','.ensemble-computer.json','identity.json','worker_runtime'}
+MACHINE_STATE={'safety','browser_profiles','http_sessions','.ensemble-computer.json','identity.json','worker_runtime','reporting.json'}
 STATUS={'not_attempted':0,'pending':0,'elsewhere':0,'failed':1,'partial':2,'visible_only':2,
         'deferred':3,'unavailable':3,'complete':4}
 
@@ -305,7 +305,7 @@ def ensemble_session(root, ensemble, report=print, *, skip_remote=True, worker_i
         progress.scan()
     report(f'Portable collection progress: {progress.path}')
     report(f'Worker identity: {progress.origin} ({root/"identity.json"})')
-    report(f'Git-shareable inventory: {progress.worker_path}')
+    report(f'Local worker inventory: {progress.worker_path}')
     with progress_session(progress):
         try:yield progress
         finally:progress.save()

@@ -17,17 +17,15 @@ without scraping. Choose a unique ID on every computer. The ID is saved in
 receiver's identity and preserves the incoming records' original collectors.
 
 `workers/<worker-id>.json` contains that computer's validated local inventory.
-These files are allowed in Git: commit/push your own, then pull other workers'
-files before scraping. Main reads every shared inventory but updates only its
-own. [Worker setup and Git commands](workers/README.md).
+Inventories remain local and are ignored by Git. The normal worker supervisor
+reports saved matches and logs directly to Main, and receives the other workers’
+inventories for ensemble completion checks. See [worker setup](../docs/WORKERS.md).
 
-The older ignored `provenance.json` is still a compatible aggregate progress
-file you can copy manually. Neither Git inventories nor copied progress files
-transfer raw data; eventually import all data folders on the main Mac.
-
-The file updates after every saved match and is rebuilt/merged from local
-artifacts at startup. For simultaneous computers, use different league/season
-selections: Git snapshots cannot coordinate new work in real time.
+The ignored `provenance.json` remains a compatible aggregate progress file for
+manual copying. Reporting sends collection evidence, not raw datasets; import
+the actual data folders on Main when needed. The shared worker plan rejects
+overlapping assignments. A live inventory is useful completion evidence, not
+a distributed job reservation system.
 Use `main.py --ignore-provenance` to collect missing local data even if the
 portable map records it elsewhere; existing local caches/checkpoints still resume.
 

@@ -4,3 +4,5 @@
 
 .competition-heading,.category-heading{position:static;padding:0}.competition-heading>span,.category-heading>span{position:sticky;left:0;display:inline-block;max-width:220px;padding:15px 20px 10px}.category-heading>span{padding-top:10px;padding-bottom:10px}nav{min-width:0;overflow-x:auto}nav button{flex-shrink:0}
 @media(max-width:700px){.competition-heading>span,.category-heading>span{max-width:130px;padding-left:13px;padding-right:10px}}
+
+.log-tail{max-height:65vh;overflow:auto}.log-line{padding:7px 0;border-bottom:1px solid var(--border,#e5e9ef);font-size:12px;overflow-wrap:anywhere}.log-line>span{color:#7a8394}.log-line code{white-space:pre-wrap;font-size:12px}.log-line em{font-style:normal;font-weight:700}.log-ERROR{color:#c33d3d}.log-WARNING{color:#a66b12}.log-INFO{color:#168674}.filters input[type=search]{padding:10px;border:1px solid #dce2e8;border-radius:7px;font:inherit}

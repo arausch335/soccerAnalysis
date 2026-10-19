@@ -118,21 +118,26 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(before,runtime.public.read_bytes())
         self.assertNotIn(str(self.root),runtime.public.read_text())
 
-    def test_hourly_publication_waits_for_saved_match_and_sends_finish(self):
+    def test_direct_publication_queues_every_saved_match_and_never_uses_git_to_publish(self):
         self.document['workers']['main']['assignments'][0]['competitions']=['La Liga'];self.save()
-        time=[0];published=[]
+        time=[0];queued=[]
+        class Direct:
+            status={'state':'unconfigured'}
+            def __init__(self,*args):pass
+            def start(self):return self
+            def close(self):pass
+            def enqueue(self,**kwargs):queued.append(time[0])
+            def log(self,*args):pass
         class Sync(NoSync):
-            def publish(self):published.append(time[0]);return True
+            def publish(self):raise AssertionError('Git must never publish worker progress')
         def runner(args):
             job=CollectionProgress(enabled=False,clock=lambda:time[0]).job('/private/path','combined','La Liga','2021-2022')
             job.begin();job.schedule([{'id':1},{'id':2}]);job.start_game(1)
-            time[0]=3599;job.finish_game()
-            job.start_game(2);time[0]=3610
-            self.assertEqual(published,[0])
-            job.finish_game();self.assertEqual(published,[0,3610])
-            time[0]=3620;job.end();return 0
-        self.assertEqual(run(self.args,runner=runner,session=self.session,sync_factory=Sync,clock=lambda:time[0]),0)
-        self.assertEqual(published,[0,3610,3620])
+            time[0]=1;job.finish_game();self.assertIn(1,queued)
+            job.start_game(2);time[0]=2;job.finish_game();self.assertIn(2,queued)
+            time[0]=3;job.end();return 0
+        with patch('collection.worker.Reporter',Direct):
+            self.assertEqual(run(self.args,runner=runner,session=self.session,sync_factory=Sync,clock=lambda:time[0]),0)
         state=json.loads((self.root/'worker_runtime/main.json').read_text())
         self.assertEqual(next(iter(state['schedules'].values()))['match_ids'],['1','2'])
         phase=next(iter(state['phase_stats'].values()))

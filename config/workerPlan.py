@@ -67,6 +67,7 @@ class WorkerPlan:
     jobs:list
     git:dict
     dashboard:dict
+    reporting:dict
     coordinator:str
     revision:str
     path:Path
@@ -87,12 +88,15 @@ def load_plan(path=None):
         document=yaml.load(data.decode('utf-8'),Loader=config._UniqueKeyLoader)
     except (OSError,yaml.YAMLError,UnicodeError) as exc:
         raise config.ConfigError(f'Cannot load worker plan: {exc}') from exc
-    section(document,('version','coordinator','git','dashboard','workers'),'workers plan')
+    if not isinstance(document,dict):raise config.ConfigError('workers plan must be a YAML mapping')
+    document.setdefault('reporting',{'enabled':False,'heartbeat_seconds':30})
+    section(document,('version','coordinator','git','dashboard','workers','reporting'),'workers plan')
+    reporting=section(document['reporting'],('enabled','heartbeat_seconds'),'workers.reporting')
+    config._boolean(reporting['enabled'],'workers.reporting.enabled')
+    if type(reporting['heartbeat_seconds']) is not int or not 10<=reporting['heartbeat_seconds']<=300:raise config.ConfigError('Reporting heartbeat must be 10–300 seconds')
     if type(document['version']) is not int or document['version']!=1:raise config.ConfigError('workers plan version must be 1')
-    if isinstance(document.get('git'),dict):document['git'].setdefault('publish_seconds',3600)
-    git=section(document['git'],('enabled','remote','branch','poll_seconds','publish_seconds','publish_inventory','auto_restart'),'workers.git')
-    if type(git['publish_seconds']) is not int or git['publish_seconds']<60:raise config.ConfigError('Publication interval must be at least 60 seconds')
-    for field in ('enabled','publish_inventory','auto_restart'):config._boolean(git[field],'workers.git.'+field)
+    git=section(document['git'],('enabled','remote','branch','poll_seconds','auto_restart'),'workers.git')
+    for field in ('enabled','auto_restart'):config._boolean(git[field],'workers.git.'+field)
     if not isinstance(git['remote'],str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*',git['remote']):raise config.ConfigError('Invalid Git remote')
     if (not isinstance(git['branch'],str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]*',git['branch'])
             or '..' in git['branch'] or git['branch'].endswith(('/','.lock'))):raise config.ConfigError('Invalid Git branch')
@@ -137,4 +141,4 @@ def load_plan(path=None):
                             seen[key]=worker
                     jobs.append(job)
     if document['coordinator'] not in workers:raise config.ConfigError('Coordinator must be a configured worker')
-    return WorkerPlan(workers,jobs,dict(git),dict(dashboard),document['coordinator'],hashlib.sha256(data).hexdigest(),path)
+    return WorkerPlan(workers,jobs,dict(git),dict(dashboard),dict(reporting),document['coordinator'],hashlib.sha256(data).hexdigest(),path)

@@ -22,8 +22,9 @@ with the browser dashboard; MSI and Headless default to scraping their
 assignments without a dashboard. The current plan gives MSI 2021/22 and Headless
 2022/23 across the seven configured competitions. Main has no scraping jobs.
 
-Workers publish saved progress hourly after the current match, and at job
-start/finish/pause. Main checks Git every two minutes. Code/config changes apply
+Workers send saved-match progress and operational logs directly to Main over
+your private connection, with 30-second heartbeats and a durable offline queue.
+Git is used only for code and shared configuration, checked every two minutes. Code/config changes apply
 between saved season jobs with a controlled restart. The coverage grid groups
 player stats, events, spatial maps and other data into aligned season columns,
 with worker colors for completed and planned portions. Current jobs include
@@ -137,7 +138,8 @@ shows the attempt/countdown and version; the diagnostic log records each result.
 For regular PyCharm runs set `collection.sofascore_access: extension` in YAML.
 Completed API checkpoints remain valid when switching transports; saved API
 responses are reused before opening the browser. `python main.py --inventory`
-refreshes Git-shareable worker records for that older data.
+refreshes local worker records for that older data. Start the worker supervisor
+to report the refreshed inventory to Main.
 
 [Installation, first-match check, permissions and limitations](docs/CHROME_EXTENSION.md).
 
@@ -182,24 +184,19 @@ computers use their configured ID (`msi` in the initial plan). Add new IDs to
 travels inside transferred data folders, while imports retain the receiving
 computer's identity. Collection origins stay with the imported records.
 
-The worker JSON files are allowed in Git; raw data, identity and logs remain
-ignored. Commit/push only your worker's file, then pull other workers' updates
-before starting collection:
+Worker inventories, runtime reports, logs and connection tokens are ignored by
+Git. The worker supervisor sends each saved match and operational log to Main’s
+authenticated reporting service, queues reports while offline, and receives the
+other workers’ inventory evidence for ensemble checks. Configure the private
+connection using [worker setup](docs/WORKERS.md).
 
-```bash
-git add ensemble_data/workers/main.json
-git commit -m "Update main inventory"
-git pull --rebase origin main
-git push origin main
-```
-
-`main.py` reads all shared worker files and updates only its own inventory
-after every saved match. Re-run `--inventory` to refresh the snapshot after
-transfers or filesystem changes. Inventories describe data held on a worker;
-their record `origins` preserve the original collectors. The shared worker
-supervisor automatically fetches and publishes snapshots hourly after a saved match;
-manual CLI commands do not run Git. The older ignored `ensemble_data/provenance.json`
-remains a compatible aggregate map you can manually copy between computers.
+`main.py` updates only its own inventory after every saved match. Re-run
+`--inventory` after transfers or filesystem changes, then start the supervisor
+to report that evidence. Inventories describe data held on a worker; record
+`origins` preserve the original collectors. The older ignored
+`ensemble_data/provenance.json` remains a compatible aggregate map for manual
+transfers. Git never publishes worker progress, creates worker commits or
+rebases local work.
 Local files are rechecked at startup. Provider namespaces,
 competition/season and completed provider/spatial/browser coverage prevent a
 WhoScored event ID or a basic HTTP match from standing in for other requested

@@ -34,15 +34,9 @@ Thumbs.db
 # Analysis-ready datasets remain local.
 dataset/
 
-# Transfers and the portable work map stay local; keep only its instructions.
+# Transfers, reporting caches and inventories stay local. Git distributes code/config only.
 ensemble_data/*
 !ensemble_data/README.md
 !ensemble_data/workers/
 ensemble_data/workers/*
 !ensemble_data/workers/README.md
-!ensemble_data/workers/*.json
-
-# Only sanitized worker snapshots are shared, never detailed runtime state.
-!ensemble_data/runtime/
-ensemble_data/runtime/*
-!ensemble_data/runtime/*.json

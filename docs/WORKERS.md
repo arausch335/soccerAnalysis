@@ -1,7 +1,8 @@
-# Main monitor, worker collection and progress publishing
+# Main monitor, worker collection and direct reporting
 
-The shared plan in `config/workers.yaml` controls all computers. Its current
-assignments are preserved:
+Main receives progress and operational logs directly over your private network.
+Git distributes code and common configuration only. Workers never make progress
+commits, push snapshots, rebase local work or transfer raw datasets through Git.
 
 | Computer | Default role | Work | Dashboard |
 | --- | --- | --- | --- |
@@ -9,163 +10,200 @@ assignments are preserved:
 | MSI (`msi`) | Worker | Seven competitions, 2021/22, combined, fast spatial | Off |
 | Headless (`headless`) | Worker | Seven competitions, 2022/23, combined, fast spatial | Off |
 
-## Update and start each worker
+## 1. Install Tailscale
 
-1. Stop its old Python scraper with Ctrl+C or PyCharm’s Stop button. Keep its
-   original data directory, browser profile and `data/identity.json` in place.
-2. In that computer’s existing repository and Python environment, run:
+Install Tailscale on Main and every worker, sign them into the same private
+network and leave it connected. Find Main’s Tailscale IPv4 address, typically
+`100.x.y.z`. Use that address below. No router port forwarding or public website
+is required. If macOS/Windows prompts about inbound connections, allow Python
+for this private connection; port 8766 is the report receiver.
 
-   ```bash
-   git status --short
-   git pull --ff-only origin main
-   python main.py --worker-id msi
-   ```
+The reporting service binds specifically to Main’s private/Tailscale IPv4
+address. The dashboard stays at `http://127.0.0.1:8765` on Main. Workers do not
+need the dashboard or a browser tab for reporting. Their existing scraper
+browser and extension are still required by the provider access settings.
 
-   Use `--worker-id headless` on Headless. The identity is saved, so subsequent
-   launches can simply use `python main.py` or PyCharm Run with no arguments.
-3. Ensure Git has a commit name/email and is authenticated for both fetch and
-   push without interactive prompts. Workers disable Git prompts so a login
-   request cannot hang a scrape. Configure missing Git identity normally with
-   `git config user.name` and `git config user.email`; use your own values.
-4. Connect the existing scraper Chrome extension as usual if the common settings
-   use extension access. No dashboard opens on workers. This does not turn off
-   the browser/extension used to collect data. FotMob continues through HTTP JSON
-   endpoints; its transport has not changed.
+## 2. Upgrade the code, preserving old inventories
 
-No new package dependency was added. If creating an environment for the first
-time, install `python -m pip install -r requirements.txt` and follow the browser
-setup in [BROWSER_COLLECTION.md](BROWSER_COLLECTION.md).
+Stop the old scraper on every computer before updating. Keep its original data
+folder, browser profile, environment and `data/identity.json`.
 
-The reporting upgrade revisits assigned jobs once using their existing
-checkpoints, so earlier attempted jobs gain current coverage and timing reports.
-A first pending job audits saved local files before scraping. This can take
-several minutes for a large historical archive. Existing matches are resumed;
-raw data is not deleted or overwritten by Git updates. If Git reports local
-changes or divergence, stop and review them. Do not use a hard reset or force
-push. Older machine-specific selections should be moved into the shared plan,
-with common collection preferences preserved in `config/settings.yaml`.
-
-Each worker ID belongs to one original data folder. The program refuses a
-conflicting ID before changing local identity. Data copied for import belongs
-in `ensemble_data`, where the receiving computer keeps its identity and run
-state. Never resolve an identity conflict by copying another computer’s
-`identity.json` over your own.
-
-## Main computer
+On a checkout that previously tracked worker JSON files, use this one-time
+upgrade from the repository directory and its existing Python environment:
 
 ```bash
-python main.py
+git status --short
+git fetch origin main
+python -c "import subprocess; exec(subprocess.check_output(['git', 'show', 'origin/main:tools/upgrade_worker_reporting.py'], text=True))"
 ```
 
-Main defaults to monitor mode: it opens `http://127.0.0.1:8765`, checks Git every
-120 seconds and receives workers’ published progress. It does not start
-scraping, even if an assignment is accidentally added while its role remains
-`monitor`. Keep this program running; the separate `--dashboard` view does not
-synchronize Git.
+The helper backs up the generated JSON files, verifies the copies, caches the
+inventories locally, restores **only those generated JSON paths**, and pulls
+with `--ff-only`. It does not restore settings or source files, touch identities
+or raw datasets, stash changes, push, or rebase. Existing staged changes stop
+the helper before restoration. If unrelated edits or local commits prevent the
+pull, review them normally; do not hard reset or force push. The backups remain
+under `data/worker_runtime/legacy-git-backup/`.
 
-Both roles retain both capabilities:
+New clones can simply use `git pull --ff-only origin main`. Install dependencies
+only if creating an environment: `python -m pip install -r requirements.txt`.
+This reporting feature adds no package dependencies.
+
+## 3. Configure Main once
+
+Replace the example IP with Main’s actual Tailscale IP:
 
 ```bash
-python main.py --monitor --no-dashboard  # Monitor without a browser
-python main.py --with-dashboard          # Worker plus optional dashboard
-python main.py --worker                 # Explicitly execute this computer’s assignments
-python main.py --dashboard              # Read-only view; no scraping or Git sync
-python main.py --retry --once           # Revisit assigned work using checkpoints
+python -m collection.reporting server --bind 100.80.12.3
 ```
 
-To make Main scrape, assign it work and either change its role to `worker` or
-launch with `--worker`. Avoid overlapping assignments; the plan validates
-competition, season and requested data types before collection starts.
+This creates ignored, private `data/reporting.json` and prints a setup command
+and a separate token for each worker. Keep the tokens private. Re-running the
+command preserves existing tokens, including when changing Main’s bind address.
+Then start Main:
 
-## Hourly snapshots, safe code updates
+```bash
+python main.py --worker-id main
+```
 
-Shared settings:
+Main opens the dashboard and listens on port 8766. It does not scrape by
+default. Historical local inventories are imported into its reporting database
+when the service starts, so previously collected coverage is retained.
+
+## 4. Configure each worker once
+
+On MSI, replace the IP with Main’s actual Tailscale IP:
+
+```bash
+python -m collection.reporting client --worker-id msi --url http://100.80.12.3:8766
+python main.py --worker-id msi
+```
+
+The first command asks for MSI’s token from Main using hidden input. On
+Headless, substitute `headless` and its own token. The chosen identity is saved;
+subsequent launches can use `python main.py` or PyCharm Run with no arguments.
+Do not change a worker ID to work around an identity conflict. Restore its
+original data folder, or intentionally configure a genuinely new worker ID.
+
+Reconnect the existing scraper Chrome extension as usual. FotMob still uses
+HTTP JSON endpoints; reporting does not change collection transports.
+
+Connection addresses and tokens live only in each computer’s ignored
+`data/reporting.json`. Shared provider preferences remain in
+`config/settings.yaml`, and assignments/roles in `config/workers.yaml`.
+
+## Delivery, offline operation and logs
+
+After every saved match, the worker durably queues inventory changes and a
+runtime snapshot. A background thread delivers them without waiting in the
+scraper’s network path. It also sends progress at schedule/job transitions,
+finish, failure and normal stop, with a heartbeat every 30 seconds. Initial
+connection sends a full local inventory; subsequent match updates send only
+changed records. Local JSON comparison and queue writes still add some disk
+work, but a match does not wait for an HTTP request or Git push.
+
+If Main sleeps, Tailscale disconnects, or authentication fails, the worker
+continues scraping and retains reports in
+`data/worker_runtime/reporting-outbox.sqlite`. It retries in the background.
+Retries are acknowledged and deduplicated; restarting either computer retains
+unsent reports and received history. Keep the original queue/database files
+alongside the worker’s original identity. Losing/replacing a queue after its
+worker is registered requires deliberate identity recovery, not silently
+claiming the same worker ID with a second stream.
+
+If reporting has not been configured yet, the supervisor still saves progress
+and logs into the local queue. Configure it and restart to begin delivery.
+There is no Git snapshot fallback. Keep Main awake for live reporting; queued
+updates catch up when it returns. Stopping a worker leaves pending messages
+saved, and they deliver on its next launch.
+
+Open **Worker logs** on Main to filter received output by computer, level or
+text (for example a match ID or provider). It includes worker console output,
+Python errors reported during collection, and operational extension diagnostics
+including browser actions, verification, recovery and timeouts. Known reporting
+tokens, URLs and common credential fields are redacted before transmission.
+Local console output and original diagnostic files remain available. Raw
+response bodies, cookies, screenshots and captured pages are not uploaded.
+
+The log view refreshes every five seconds. Lines queue immediately and send in
+background batches; Main retains the most recent **10,000 lines per worker**,
+with up to 300 matching lines shown in the browser. The local unsent queue grows
+while offline until delivery succeeds. It is a monitoring tail, not an unlimited
+central archive of every historical log. Abrupt process kills cannot forward a
+partial console line still buffered in memory.
+
+Main stores received state in `data/worker_runtime/reporting.sqlite`, with
+ignored inventory/status views under `ensemble_data/reporting/`. The database
+belongs to Main; no database file is opened across the network. The dashboard
+marks a direct worker disconnected after three missed heartbeats. Git checks
+continue every two minutes solely for code and shared assignment changes.
+
+Workers also receive other computers’ inventory evidence approximately every
+30 seconds for ensemble completion checks. This never pretends remote raw data
+exists locally. Live reports do not reserve work: the shared plan continues to
+reject overlapping assignments. Transfer/import the actual dataset folders
+separately when needed.
+
+## Shared controls and safe code updates
 
 ```yaml
 git:
+  enabled: true
+  remote: origin
+  branch: main
   poll_seconds: 120
-  publish_seconds: 3600
-  publish_inventory: true
   auto_restart: true
+reporting:
+  enabled: true
+  heartbeat_seconds: 30
 ```
 
-Workers fetch Git refs while scraping. Once an hour has elapsed, they publish
-progress immediately **after the current match is saved**. They also publish
-when a job starts, finishes, pauses, fails or is stopped normally. No match is
-interrupted merely to meet the hourly deadline. A verification wait or very
-long match can delay publication beyond an hour. Failed publication keeps local
-progress and appears in Git status; the next scheduled attempt retries it.
+Workers fetch code while scraping and apply a fast-forward update only between
+saved season jobs, followed by a controlled restart. Local edits, staged files,
+unrelated untracked files, local commits or an unfinished Git operation pause
+updates and preserve your work. Workers need Git fetch access, not Git commit
+identity or push credentials for reporting. Remove a worker’s write access if
+you do not otherwise use that machine to push code.
 
-Mid-season publishing uses an isolated Git index and creates a snapshot on top
-of the latest remote branch. It changes only this worker’s inventory and
-sanitized runtime files. It does not change the running checkout, HEAD or user
-index. Concurrent worker pushes are retried without force pushing; successful
-publication receipts allow the worker to consume its own commits safely later.
+Main defaults to monitor and workers default to scraping without a dashboard.
+Both capabilities remain available:
 
-Source/configuration updates still apply **between season jobs**. The worker
-closes the saved job, updates its checkout and restarts Python before another
-job begins. It also rechecks updates after a long startup audit. Local source
-edits, staged files, unrelated commits or another checkout claiming the same
-worker snapshots pause automatic sync and remain intact. Raw data, cookies,
-profiles, local identity and detailed errors stay out of Git. Only these files
-are eligible for automatic publication:
+```bash
+python main.py --monitor --no-dashboard  # Monitor receiver without a browser
+python main.py --with-dashboard          # Worker plus optional local dashboard
+python main.py --worker                  # Explicitly run this computer’s assignments
+python main.py --dashboard               # Read-only view; does not start receiver or Git
+python main.py --retry --once            # Revisit assignments using saved checkpoints
+```
 
-- `ensemble_data/workers/<id>.json`
-- `ensemble_data/runtime/<id>.json`
+Assign Main work and use `--worker` if you want it to scrape. Configuration
+addresses/tokens and queue/database files are machine state: imports archive
+another computer’s copies instead of activating them on the receiving computer.
+Do not copy Main’s reporting config onto a worker.
 
-With the default hourly publication and two-minute monitor polling, Main
-normally sees progress within approximately an hour plus two minutes. The
-browser refreshes its local view every five seconds. Git snapshots are not a
-live connection; the dashboard always shows their age and flags overdue
-running-job updates.
+## Coverage and current jobs
 
-## Coverage grid and current jobs
+The coverage grid aligns equal-width season columns across competitions, with
+player match stats (Sofascore, FotMob, WhoScored), WhoScored events, expandable
+Sofascore spatial maps, and other data. Solid worker colors indicate complete,
+hatching indicates planned unfinished work, and light grey indicates unplanned
+missing data. Unavailable and needs-verification states remain distinct.
+Copies count once; resource owners preserve collection credit.
 
-The main view aligns equal-width season columns across all competitions. Rows
-are grouped into player match stats (Sofascore, FotMob, WhoScored), WhoScored
-events, Sofascore spatial maps and other match data. Spatial rows expand into
-average positions, heatmaps, shots and action maps.
+Current jobs show elapsed time, games scraped, cached/skipped, failed/partial,
+held elsewhere, remaining attempts and provisional ETA. Counts and ETA remain
+based on the latest report; the dashboard does not invent progress while a
+worker is disconnected. Targets come from saved schedules and reported fixture
+lists. A season with no discovered target is never presented as 100% complete.
 
-Solid worker colors mean complete; worker-colored hatching means assigned but
-unfinished; light grey means missing and unassigned. Unavailable responses and
-records that need verification have distinct patterns. Spatial summaries count
-match × map-type sets, so one available map never implies every map is saved.
-Hover for exact counts and click a season for provider IDs and stored evidence.
-Filter competitions, categories and seasons, or highlight a worker without
-changing the underlying coverage totals.
-
-Transfers do not count as new collection. Copies are deduplicated; multiple
-collectors for the same saved unit count once. New records retain resource-level
-collection credit. Older ambiguous origins are neutral mixed credit instead of
-an invented worker split. Linked FotMob native and combined player statistics
-count once; old unlinked provider identities may require an audit before exact
-cross-provider deduplication is possible. Provider records in the summary remain
-separate IDs, not a unique real-world fixture count.
-
-Saved local schedules and workers’ published selected-fixture lists supply
-season targets. Combined event targets can use the baseline fixture target,
-explicitly labelled in the tooltip. If a total has not been discovered, the
-bar says “saved” and “target pending”; it does not claim the season is complete.
-
-Current jobs show elapsed time since the reported start, games scraped this
-run, cached/skipped matches, failures/partial matches, remaining attempts and
-ETA. ETAs use recent successful active scrape times, exclude cache-only work
-and verification waits, and are provisional while calibrating. Remote counts
-and ETA stay tied to their last report even while the elapsed clock advances.
-A stopped/paused job freezes elapsed time at its saved snapshot.
-
-New collections and audits record explicit availability for every supported
-resource. An audited optional resource with no collection evidence is treated
-as not attempted, not unknown. Truly legacy inventories without resource
-availability need an offline audit, normally done before the worker’s first
-pending job. Stop a worker before a separate manual audit:
+Inventory audits validate old data before a pending job. This can take several
+minutes on a large archive. Monitor/unassigned computers do not automatically
+scan their full archive. To rebuild explicitly, stop the scraper first:
 
 ```bash
 python main.py --inventory
 ```
 
-Unassigned/monitor computers do not start a full archive audit automatically.
-Use `--retry` for attempted/paused assignments; they are not retried in an endless
-loop. Edit assignments on Main and commit/push the common plan to distribute
-new work. Explicit CLI selections and standalone launchers retain their
-previous behavior, without the shared supervisor’s automatic Git actions.
+Then start the normal supervisor to report the refreshed inventory. Explicit
+manual collection commands and standalone launchers retain their prior behavior;
+direct reporting and remote logs are provided by the shared supervisor.

@@ -14,12 +14,13 @@ from filelock import FileLock
 import config
 from config.workerPlan import load_plan
 from .ensemble import ensemble_session
-from .gitSync import GitSync
+from .codeUpdates import CodeUpdates
 from .progress import observe_progress
 from .workerIdentity import read_worker_id, ensure_identity
 from .ensembleProgress import shared_progress, read_progress
 from storage.pandasStore import atomic_json
 from .workerRuntime import Runtime, now
+from .reporting import load_local, ReportingServer, Reporter, capture_logs
 
 RESTART=75
 
@@ -28,7 +29,7 @@ def fingerprint(job,settings):
     return hashlib.sha256(b'worker-reporting-v2\0'+settings+json.dumps(job.as_dict(),sort_keys=True).encode()).hexdigest()
 
 
-def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,stop=None,clock=time.monotonic):
+def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdates,stop=None,clock=time.monotonic):
     parser=argparse.ArgumentParser(description='Shared worker plan and collection dashboard')
     modes=parser.add_mutually_exclusive_group()
     modes.add_argument('--worker',action='store_true',help='Scrape this computer’s assignments')
@@ -68,6 +69,9 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,st
         with FileLock(str(root/'.collector.lock'),timeout=0):
             if not (root/'.soccer-scraper.json').exists():atomic_json(root/'.soccer-scraper.json',{'format':1})
             inventory=ensemble/'workers'/(worker+'.json')
+            historical=ensemble/'reporting'/'workers'/(worker+'.json')
+            if not inventory.exists() and historical.exists():
+                atomic_json(inventory,read_progress(historical))
             identity_file=root/'identity.json'
             previous=json.loads(identity_file.read_text(encoding='utf-8')) if identity_file.exists() else {}
             if inventory.exists() and read_progress(inventory).get('instance_id')!=previous.get('instance_id'):
@@ -75,8 +79,30 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,st
             ensure_identity(root,worker)
         state=Runtime(root,ensemble,worker)
         if options.retry:state.value['jobs']={}
+        reporting=None
+        local_reporting=load_local(root) if plan.reporting['enabled'] else None
+        if local_reporting:
+            client_options=local_reporting
+            if local_reporting['mode']=='server':
+                receiver=ReportingServer(root,ensemble,local_reporting).start();stack.callback(receiver.close)
+                print(f"Worker reporting listening on {local_reporting['bind']}:{local_reporting['port']}",flush=True)
+                client_options={'worker_id':worker,'url':f"http://{local_reporting['bind']}:{local_reporting['port']}",
+                                'token':local_reporting['tokens'][worker]}
+            reporting=Reporter(root,ensemble,worker,client_options,plan.reporting['heartbeat_seconds']).start()
+            stack.callback(reporting.close)
+            stack.enter_context(capture_logs(reporting))
+            print('Direct reporting enabled: saved matches and logs queue locally and send in the background.',flush=True)
+        elif plan.reporting['enabled']:
+            client_options={'worker_id':worker,'url':None,'token':''}
+            reporting=Reporter(root,ensemble,worker,client_options,plan.reporting['heartbeat_seconds']).start()
+            stack.callback(reporting.close);stack.enter_context(capture_logs(reporting))
+            print('Reporting setup pending: progress and logs queue locally. Configure Tailscale and see docs/WORKERS.md.',flush=True)
         sync=sync_factory(config.PROJECT_ROOT,worker,plan.git).start();stack.callback(sync.close)
-        initialized=False;progress=None;last_boundary=0;last_publication=clock()
+        def publish(*,inventory=True):
+            if reporting:
+                state.save(reporting=reporting.status)
+                reporting.enqueue(inventory=inventory)
+        initialized=False;progress=None;last_boundary=0
         settings=config.CONFIG_FILE.read_bytes()
         state.save(state='starting',role='monitor' if monitor else 'worker',plan_revision=plan.revision,git=sync.status)
         if runner is None:
@@ -88,7 +114,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,st
                 changed=[]
                 if clock()-last_boundary>=plan.git['poll_seconds'] or state.value['state'] in ('starting','between_jobs') or sync.status.get('state')=='update_pending':
                     changed=sync.boundary();last_boundary=clock()
-                    if progress is not None:progress.records=shared_progress(progress.path)
+                    if progress is not None:progress.records=shared_progress(progress.path,local_worker=worker)
                 if changed:
                     state.save(state='restart_required',git=sync.status,current=None)
                     return RESTART if plan.git['auto_restart'] else 3
@@ -100,6 +126,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,st
                          if state.value['jobs'].get(job.id,{}).get('fingerprint')!=fingerprint(job,settings)]
                 if not pending:
                     state.save(state='monitoring' if monitor else 'paused' if any(state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in plan.for_worker(worker)) else 'idle' if plan.for_worker(worker) else 'unassigned',current=None,git=sync.status)
+                    if reporting:state.save(reporting=reporting.status)
                     if options.once:return max((state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in plan.for_worker(worker)),default=0)
                     stop.wait(min(5,plan.git['poll_seconds']));continue
                 if not initialized:
@@ -111,32 +138,36 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=GitSync,st
                     continue
                 job=pending[0]
                 state.begin_job(job.as_dict())
-                if hasattr(sync,'publish'):sync.publish()
-                last_publication=clock()
+                publish()
                 def observe(value):
-                    nonlocal last_publication
                     state.value['git']=sync.status
                     state.event(value)
-                    force=value['event']=='job_finished'
-                    if value['event'] in ('match_saved','job_finished') and (force or clock()-last_publication>=plan.git['publish_seconds']):
-                        if hasattr(sync,'publish'):sync.publish()
-                        last_publication=clock()
-                        state.save(git=sync.status)
+                    if reporting:
+                        if progress is not None:progress.records=shared_progress(progress.path,local_worker=worker)
+                        if value['event'] in ('schedule','match_saved','job_finished'):publish(inventory=value['event']!='schedule')
+                        return
                 with observe_progress(observe):code=runner(job.args(root))
                 state.value['jobs'][job.id]={'fingerprint':fingerprint(job,settings),'exit_code':code,
                                              'state':'finished' if code==0 else 'paused'}
                 state.save(state='between_jobs',job_ended_at=now(),current=None,git=sync.status)
-                if code==130:return 130
+                if reporting:publish()
+                if code==130:
+                    state.save(state='stopped')
+                    return 130
         except KeyboardInterrupt:
             state.save(state='stopped',job_ended_at=state.value.get('job_ended_at') or now(),current=None,git=sync.status)
-            if hasattr(sync,'publish'):sync.publish()
+            publish()
             return 130
         except BaseException:
+            if reporting:
+                import traceback
+                traceback.print_exc()
             state.save(state='paused',job_ended_at=state.value.get('job_ended_at') or now(),current=None,git=sync.status)
-            if hasattr(sync,'publish'):sync.publish()
+            publish()
             raise
         finally:
             state.save(state=state.value['state'],git=sync.status)
+            if reporting:publish()
     return 0
 
 

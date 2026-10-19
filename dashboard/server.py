@@ -1,6 +1,7 @@
 """Loopback-only HTTP server with a read-only, allowlisted API."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import sqlite3
 from pathlib import Path
 import threading
 from urllib.parse import parse_qs, urlsplit
@@ -21,6 +22,7 @@ class DashboardServer:
                 url=urlsplit(self.path)
                 try:
                     if url.path=='/api/status':data=json.dumps(model.status()).encode();kind='application/json'
+                    elif url.path=='/api/logs':data=json.dumps(model.logs(parse_qs(url.query))).encode();kind='application/json'
                     elif url.path=='/api/matches':data=json.dumps(model.matches(parse_qs(url.query))).encode();kind='application/json'
                     elif url.path in ('/','/dashboard.css','/dashboard.js'):
                         name='index.html' if url.path=='/' else url.path[1:]
@@ -30,7 +32,7 @@ class DashboardServer:
                     self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
                     self.send_header('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
                     self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
-                except (OSError,ValueError,TypeError,KeyError):
+                except (OSError,ValueError,TypeError,KeyError,sqlite3.Error):
                     self.send_error(503,'Dashboard configuration or inventory needs review')
         self.server=ThreadingHTTPServer(('127.0.0.1',port),Handler);self.server.daemon_threads=True
         self.thread=threading.Thread(target=self.server.serve_forever,name='collection-dashboard',daemon=True)

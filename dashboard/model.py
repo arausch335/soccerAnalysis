@@ -10,6 +10,7 @@ import time
 from config.workerPlan import RESOURCES, load_plan
 from collection.ensembleProgress import read_progress
 from .coverage import build_grid
+from collection.reporting import inventory_paths, read_logs
 
 NAMESPACE_RESOURCES={
  'sofascore':['sofascore_stats','sofascore_details','match_statistics','incidents','momentum','average_positions','heatmaps','shotmaps','action_maps','whoscored_stats','fotmob_enrichment'],
@@ -70,7 +71,7 @@ class DashboardModel:
         for worker,info in plan.workers.items():
             workers[worker]={'id':worker,'label':info['label'],'color':info['color'],'enabled':info['enabled'],
                              'configured':True,'role':info['role'],'jobs':[j.as_dict() for j in plan.for_worker(worker)],'records':0,'collected':0,'runtime':None}
-        for path in sorted((self.ensemble/'workers').glob('*.json')):
+        for path in inventory_paths(self.ensemble,local_worker=self.worker):
             try:
                 saved=read_progress(path)
                 worker=saved.get('worker_id')
@@ -87,6 +88,8 @@ class DashboardModel:
             except (OSError,ValueError,TypeError,KeyError):warnings.append(f'Inventory for {path.stem} could not be read.')
         for worker,info in workers.items():
             path=self.ensemble/'runtime'/(worker+'.json')
+            direct=self.ensemble/'reporting'/'runtime'/(worker+'.json')
+            if direct.exists():path=direct
             local=self.root/'worker_runtime'/(worker+'.json')
             if worker==self.worker and local.exists():path=local
             if path.exists():
@@ -95,8 +98,12 @@ class DashboardModel:
                     if state.get('worker_id')==worker and state.get('format')=='soccer-worker-runtime-v1':
                         info['runtime']=state
                         # Remote files are published snapshots, never evidence that a process is online.
-                        info['runtime_source']='local' if path==local else 'published'
-                except (OSError,ValueError,TypeError):warnings.append(f'Status for {worker} could not be read.')
+                        info['runtime_source']='local' if path==local else 'direct' if path==direct else 'published'
+                        if path==direct:
+                            received=datetime.fromisoformat(state['received_at'])
+                            seconds=(datetime.now(timezone.utc)-received).total_seconds()
+                            info['connection']='connected' if seconds<=plan.reporting['heartbeat_seconds']*3 else 'disconnected'
+                except (OSError,ValueError,TypeError,KeyError):warnings.append(f'Status for {worker} could not be read.')
         for row in rows:
             for resource,state in row['resources'].items():
                 key=(row['holder'],row['competition'],row['season'],resource)
@@ -127,11 +134,17 @@ class DashboardModel:
                 'coordinator':plan.coordinator,'plan_revision':plan.revision[:10],
                 'resources':{key:label for key,(label,_) in RESOURCES.items()},'workers':list(workers.values()),
                 'jobs':[j.as_dict() for j in plan.jobs if plan.workers[j.worker]['enabled']],
-                'grid':grid,'publish_seconds':plan.git['publish_seconds'],'poll_seconds':plan.git['poll_seconds'],
+                'reporting':{**plan.reporting,'active':any(w.get('runtime_source')=='direct' or w.get('runtime') and w['runtime'].get('reporting',{}).get('state')=='connected' for w in workers.values())},'grid':grid,'poll_seconds':plan.git['poll_seconds'],
                 'coverage':coverage,'unique_records':len(all_keys),
                 'competitions':sorted({r['competition'] for r in rows}|{j.competition for j in plan.jobs}),
                 'seasons':sorted({r['season'] for r in rows}|{j.as_dict()['season'] for j in plan.jobs},reverse=True),
                 'warnings':list(dict.fromkeys(warnings))}
+
+    def logs(self,filters):
+        def value(key,default=''):return filters.get(key,[default])[0]
+        try:limit=int(value('limit','200'));after=max(0,int(value('after','0')))
+        except ValueError:limit=200;after=0
+        return read_logs(self.root,value('worker'),value('level'),value('search'),limit,after)
 
     def matches(self,filters):
         self.status()

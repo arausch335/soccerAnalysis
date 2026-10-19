@@ -6,9 +6,10 @@ git:
   remote: origin
   branch: main
   poll_seconds: 120
-  publish_seconds: 3600
-  publish_inventory: true
   auto_restart: true
+reporting:
+  enabled: true
+  heartbeat_seconds: 30
 dashboard:
   enabled: true
   port: 8765

@@ -49,6 +49,9 @@ class ExtensionDiagnostics:
         if args is not None:row['args'] = self.summary(args)
         if result is not None:row['result'] = self.summary(result)
         if elapsed is not None:row['elapsed_seconds'] = round(elapsed, 3)
+        from collection.workerLogs import operational_log
+        failed = isinstance(result,dict) and (result.get('error') or result.get('ok') is False)
+        operational_log('Extension '+self.path.parent.name+' '+json.dumps(row,ensure_ascii=True), 'WARNING' if failed else 'INFO')
         try:
             with self.lock:
                 self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -76,3 +76,21 @@ class DashboardTests(unittest.TestCase):
             with self.subTest(suffix=suffix,method=method),self.assertRaises(HTTPError) as error:urlopen(request)
             self.assertEqual(error.exception.code,code)
 
+
+    def test_received_runtime_uses_connection_age_and_logs_endpoint_supports_filters(self):
+        from datetime import datetime, timezone
+        from collection.reporting import ReportingStore
+        store=ReportingStore(self.root,self.ensemble)
+        store.accept('msi',[{'instance_id':'folder','stream':'stream','sequence':1,
+            'runtime':{'format':'soccer-worker-runtime-v1','worker_id':'msi','state':'scraping','updated_at':datetime.now(timezone.utc).isoformat()},
+            'logs':[{'at':'2026-10-19T12:00:00+00:00','level':'ERROR','message':'WhoScored match 22 failed'}]}])
+        model=DashboardModel(self.root,self.ensemble,self.plan,'main')
+        info=next(w for w in model.status()['workers'] if w['id']=='msi')
+        self.assertEqual(info['connection'],'connected');self.assertEqual(info['runtime_source'],'direct')
+        server=start_server(self.root,self.ensemble,self.plan,'main',0);self.addCleanup(server.close)
+        with urlopen(server.url+'/api/logs?worker=msi&level=ERROR&search=WhoScored') as response:
+            rows=json.load(response)['rows']
+        self.assertEqual(rows[0]['message'],'WhoScored match 22 failed')
+        saved=self.ensemble/'reporting/runtime/msi.json';runtime=json.loads(saved.read_text());runtime['received_at']='2020-01-01T00:00:00+00:00';atomic_json(saved,runtime)
+        model=DashboardModel(self.root,self.ensemble,self.plan,'main')
+        self.assertEqual(next(w for w in model.status()['workers'] if w['id']=='msi')['connection'],'disconnected')
