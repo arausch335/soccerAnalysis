@@ -111,6 +111,8 @@ class SeasonRunner:
         self.capabilities=json.loads(self.capability_path.read_text(encoding='utf-8')) if self.capability_path.exists() else {}
 
     def _fetch(self,provider,key,request,*,refresh=False):
+        timing=getattr(self,'timing',None)
+        if timing:timing.set_provider(provider)
         return self.cache.fetch(provider,key,request,refresh=refresh or self.refresh)
 
     def _fetch_fotmob_match(self,match_id,client):
@@ -324,7 +326,8 @@ class SeasonRunner:
         timing=get_job(self.directory,'fotmob_players' if self.baseline_provider=='fotmob' else
                        'combined' if len(self.providers)>1 else 'sofascore',
                        competition.name,season_label(canonical),report=self.report)
-        timing.begin()
+        self.timing=timing
+        timing.begin();timing.set_provider(self.baseline_provider)
         def timing_mode():
             return (str(getattr(sofa,'active','http')),self.providers,self.spatial)
         if self.baseline_provider=='sofascore':
@@ -371,9 +374,9 @@ class SeasonRunner:
         for event in selected:
             statuses.setdefault(event['id'],{'match_id':event['id'],'competition':competition.name,
                 'status':'pending','attempts':0,'updated_at':'','error':''})
-        timing.schedule(selected,completed=[mid for mid,row in statuses.items()
-            if row['status']=='complete' and not self.refresh and not timing.revisit_complete],
-            mode=timing_mode())
+        # CSV completion predates newer resource requirements. Every selected
+        # checkpoint must be checked before it can count as finished this pass.
+        timing.schedule(selected,mode=timing_mode())
         loaders={'fotmob':FotMobLoader(identity_resolver=self.identity_resolver),
                  'whoscored':WhoScoredLoader(identity_resolver=self.identity_resolver)}
         for index,event in enumerate(selected,1):
@@ -445,6 +448,7 @@ class SeasonRunner:
                         break
                     continue
             errors=[]
+            if self.baseline_provider=='sofascore':timing.set_provider('sofascore')
             browser_done=resuming and sofascore_stats_complete(match)
             if self.baseline_provider=='sofascore' and getattr(sofa,'uses_browser',False) and not browser_done:
                 errors.extend(self._browser_match_details(sofa,event,match));browser_done=True
@@ -461,6 +465,7 @@ class SeasonRunner:
                 if match.metadata['provider_status'].get(provider)=='complete' and not self.refresh:continue
                 if provider in disabled:
                     errors.append(f'{provider}: {disabled[provider]}');match.metadata['provider_status'][provider]='failed';continue
+                timing.set_provider(provider)
                 try:
                     fixture=match_fixture(event,fixtures[provider]);pid=fixture['id'];client=self.clients[provider]
                     if provider=='whoscored' and not self.refresh and not self.cache.path(provider,f'match/{pid}').exists():

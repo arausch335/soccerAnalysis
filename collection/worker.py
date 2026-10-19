@@ -29,6 +29,16 @@ def fingerprint(job,settings):
     return hashlib.sha256(b'worker-reporting-v2\0'+settings+json.dumps(job.as_dict(),sort_keys=True).encode()).hexdigest()
 
 
+def prepare_extension(root,jobs,monitor):
+    """Publish the local code early; no browser command or connection wait yet."""
+    if monitor or config.TRANSPORT['sofascore_mode']!='extension':return
+    if not any(set(job.collection_types)&{'sofascore','combined'} for job in jobs):return
+    from providers.extensionBridge import acquire_bridge
+    bridge,_=acquire_bridge(connect_timeout=config.TRANSPORT['browser']['manual_wait_seconds'],
+                            diagnostics_dir=root/'extension_diagnostics'/'sofascore')
+    bridge.start()
+
+
 def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdates,stop=None,clock=time.monotonic):
     parser=argparse.ArgumentParser(description='Shared worker plan and collection dashboard')
     modes=parser.add_mutually_exclusive_group()
@@ -77,6 +87,9 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
             if inventory.exists() and read_progress(inventory).get('instance_id')!=previous.get('instance_id'):
                 raise ValueError('This worker ID belongs to another data folder; use the original data folder or choose a new worker ID')
             ensure_identity(root,worker)
+        from providers.extensionBridge import extension_scope
+        stack.enter_context(extension_scope())
+        prepare_extension(root,plan.for_worker(worker),monitor)
         state=Runtime(root,ensemble,worker)
         if options.retry:state.value['jobs']={}
         reporting=None
@@ -138,15 +151,19 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                     continue
                 job=pending[0]
                 state.begin_job(job.as_dict())
+                if reporting:reporting.log(f'[Season started] {job.competition} {job.as_dict()["season"]}')
                 publish()
                 def observe(value):
                     state.value['git']=sync.status
                     state.event(value)
                     if reporting:
-                        if progress is not None:progress.records=shared_progress(progress.path,local_worker=worker)
-                        if value['event'] in ('schedule','match_saved','job_finished'):publish(inventory=value['event']!='schedule')
+                        if progress is not None and value['event']=='match_started':progress.records=shared_progress(progress.path,local_worker=worker)
+                        if value['event'] in ('schedule','match_saved','job_finished','provider_started'):publish(inventory=value['event'] in ('match_saved','job_finished'))
                         return
                 with observe_progress(observe):code=runner(job.args(root))
+                if reporting:
+                    milestone='completed' if code==0 else 'paused'
+                    reporting.log(f'[Season {milestone}] {job.competition} {job.as_dict()["season"]}', 'INFO' if code==0 else 'WARNING')
                 state.value['jobs'][job.id]={'fingerprint':fingerprint(job,settings),'exit_code':code,
                                              'state':'finished' if code==0 else 'paused'}
                 state.save(state='between_jobs',job_ended_at=now(),current=None,git=sync.status)

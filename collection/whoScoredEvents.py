@@ -63,7 +63,7 @@ class WhoScoredEventRunner:
         competition = competition_by_name(competition)
         season = season_key(season)
         timing=get_job(self.directory,'whoscored_events',competition.name,season_label(season),report=self.report)
-        timing.begin()
+        timing.begin();timing.set_provider('whoscored')
         self.directory.mkdir(parents=True, exist_ok=True)
         job = metadata_path(self.directory,'job.json')
         settings = dict(provider='whoscored',competition=competition.name,season=season)
@@ -89,6 +89,7 @@ class WhoScoredEventRunner:
                 reuse_match(self.directory,mid,event,standalone=True)
             cached=self.cache.path('whoscored',f'match/{mid}').exists()
             timing.start_game(mid,clients=(self.client,),cached=cached)
+            timing.set_provider('whoscored')
             game_status='complete'
             identity=(f"WhoScored {competition.name} {season_label(season)} | match {mid} | "
                       f"{event['homeTeam']['name']} vs {event['awayTeam']['name']}")

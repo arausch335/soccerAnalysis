@@ -223,7 +223,7 @@ class ReportingStore:
         return {'inventories': result, 'versions': current}
 
 
-def read_logs(root, worker='', level='', search='', limit=200, after=0):
+def read_logs(root, worker='', level='', search='', limit=200, after=0, *, focus=''):
     path = Path(root) / 'worker_runtime' / 'reporting.sqlite'
     if not path.exists():
         return {'rows': [], 'latest_id': 0}
@@ -235,6 +235,15 @@ def read_logs(root, worker='', level='', search='', limit=200, after=0):
             clauses.append('worker=?'); args.append(worker)
         if level:
             clauses.append('level=?'); args.append(level)
+        milestones="(message LIKE '[Season started] %' OR message LIKE '[Season completed] %' OR message LIKE '[Season paused] %' OR message LIKE '=== START:%' OR message LIKE '=== FINISHED:%' OR message LIKE '=== PAUSED:%')"
+        important={
+            'important':"(level IN ('WARNING','ERROR') OR "+milestones+")",
+            'errors':"level='ERROR'",
+            'warnings':"level IN ('WARNING','ERROR')",
+            'seasons':"message LIKE '[Season completed] %'",
+            'milestones':milestones,
+        }
+        if focus in important:clauses.append(important[focus])
         if search:
             clauses.append('instr(lower(message),lower(?))>0'); args.append(search[:200])
         rows = [dict(r) for r in db.execute('SELECT * FROM logs WHERE ' + ' AND '.join(clauses) + ' ORDER BY id DESC LIMIT ?', (*args, min(500, max(1, limit))))]
@@ -261,7 +270,8 @@ class ReportingServer:
                 self.send_header('Cache-Control', 'no-store')
                 self.send_header('Content-Length', str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                try:self.wfile.write(data)
+                except (BrokenPipeError,ConnectionResetError,TimeoutError):pass
 
             def authorized(self):
                 header = self.headers.get('Authorization', '')
@@ -549,6 +559,14 @@ def redact(message, *secrets_to_hide):
     return text
 
 
+def console_level(line, default='INFO'):
+    # A summary with zero failures is informational, not an error.
+    text=re.sub(r'\b0\s+(?:failed|errors?)\b','',line,flags=re.I)
+    if re.search(r'\b(error|exception|traceback|failed)\b',text,re.I):return 'ERROR'
+    if re.search(r'\b(warn|warning|paused|retry)\b',text,re.I):return 'WARNING'
+    return default
+
+
 @contextmanager
 def capture_logs(reporter):
     class Tee:
@@ -566,7 +584,7 @@ def capture_logs(reporter):
                         line, rest = self.pending[:4000], self.pending[4000:]
                     self.pending = rest
                     try:
-                        level = 'ERROR' if re.search(r'\b(error|exception|traceback|failed)\b', line, re.I) else 'WARNING' if re.search(r'\b(warn|warning|paused|retry)\b', line, re.I) else self.level
+                        level = console_level(line,self.level)
                         reporter.log(line, level)
                     except (OSError, ValueError, sqlite3.Error):
                         pass  # Console remains available if local reporting storage fills.

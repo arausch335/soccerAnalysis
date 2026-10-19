@@ -10,6 +10,7 @@ import time
 from config.workerPlan import RESOURCES, load_plan
 from collection.ensembleProgress import read_progress
 from .coverage import build_grid
+from .jobTiming import refresh_timing
 from collection.reporting import inventory_paths, read_logs
 
 NAMESPACE_RESOURCES={
@@ -96,7 +97,7 @@ class DashboardModel:
                 try:
                     state=json.loads(path.read_text(encoding='utf-8'))
                     if state.get('worker_id')==worker and state.get('format')=='soccer-worker-runtime-v1':
-                        info['runtime']=state
+                        info['runtime']=refresh_timing(state)
                         # Remote files are published snapshots, never evidence that a process is online.
                         info['runtime_source']='local' if path==local else 'direct' if path==direct else 'published'
                         if path==direct:
@@ -144,7 +145,7 @@ class DashboardModel:
         def value(key,default=''):return filters.get(key,[default])[0]
         try:limit=int(value('limit','200'));after=max(0,int(value('after','0')))
         except ValueError:limit=200;after=0
-        return read_logs(self.root,value('worker'),value('level'),value('search'),limit,after)
+        return read_logs(self.root,value('worker'),value('level'),value('search'),limit,after,focus=value('focus'))
 
     def matches(self,filters):
         self.status()

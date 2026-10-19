@@ -157,4 +157,43 @@ class ProgressTests(unittest.TestCase):
             browser.close()
 
 
+
+class ProgressReportingTests(unittest.TestCase):
+    def test_cached_counter_remains_numeric_and_empty_active_phase_has_no_zero_eta(self):
+        from collection.progress import observe_progress
+        events=[];clock=Clock();progress=CollectionProgress(enabled=False,clock=clock)
+        job=progress.job('cache-count','sofascore','La Liga','2023-2024')
+        with observe_progress(events.append):
+            job.begin();job.schedule([{'id':1},{'id':2}])
+            for mid in (1,2):
+                job.start_game(mid,cached=True);clock.advance(1);job.finish_game(cached=True)
+            self.assertEqual(events[-1]['cached'],2)
+            self.assertTrue(events[-1]['cached_match'])
+            self.assertIsNone(events[-1]['eta_seconds'])
+            job.end()
+        self.assertTrue(events[-1]['finished']);self.assertEqual(events[-1]['eta_seconds'],0)
+
+    def test_provider_changes_are_reported_and_latest_provider_is_retained(self):
+        from collection.progress import observe_progress
+        events=[];job=CollectionProgress(enabled=False).job('provider','combined','La Liga','2023-2024')
+        with observe_progress(events.append):
+            job.begin();job.set_provider('sofascore');job.set_provider('sofascore');job.set_provider('fotmob')
+        self.assertEqual([e['provider'] for e in events],['sofascore','fotmob'])
+
+    def test_old_complete_csv_does_not_hide_current_checkpoint_validation(self):
+        from collection.progress import observe_progress
+        from collection.seasonRunner import SeasonRunner
+        from tests.test_providers import Sofa
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            (root/'collection.csv').write_text('match_id,status\n1,complete\n2,complete\n')
+            events=[];progress=CollectionProgress(enabled=False)
+            with progress_scope(progress),observe_progress(events.append):
+                runner=SeasonRunner({'sofascore':Sofa()},root,providers=['sofascore'],spatial=(),report=lambda *a,**k:None)
+                self.assertTrue(runner.run('EPL','2024/25').status.eq('complete').all())
+            schedule=next(e for e in events if e['event']=='schedule')
+            self.assertEqual(schedule['remaining'],2)
+            saved=[e for e in events if e['event']=='match_saved']
+            self.assertEqual([e['remaining'] for e in saved],[1,0])
+
 if __name__=='__main__':unittest.main()

@@ -28,7 +28,7 @@ class Runtime:
         atomic_json(self.path,self.value);atomic_json(self.public,self.value)
 
     def begin_job(self,job):
-        self.save(state='scraping',job=job,job_started_at=now(),job_ended_at=None,phase_stats={},current=None)
+        self.save(state='scraping',job=job,job_started_at=now(),job_ended_at=None,phase_stats={},current=None,current_provider=None,provider_active=False)
 
     def event(self,value):
         value=dict(value)
@@ -38,6 +38,9 @@ class Runtime:
             self.value.setdefault('schedules',{})[key]={'competition':value['competition'],'season':value['season'],
                 'kind':value['kind'],'match_ids':selected}
         self.value.setdefault('phase_stats',{})[key]=value
+        if value.get('provider'):
+            self.value['current_provider']=value['provider']
+            self.value['provider_active']=value.get('provider_active',False)
         self.value['activity']=(self.value['activity']+[{**value,'at':now()}])[-40:]
         self.save(current=value)
 

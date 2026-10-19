@@ -247,3 +247,16 @@ class ReportingTests(unittest.TestCase):
         client.pull()
         received=json.loads((self.ensemble/'reporting/workers/headless.json').read_text())
         self.assertEqual(len(received['records']),40)
+
+    def test_important_and_season_completion_log_filters(self):
+        from collection.reporting import console_level
+        self.receiver();client=self.reporter()
+        client.log('Routine extension navigation')
+        client.log('[Season started] Premier League 2022-2023')
+        client.log('[Season completed] Premier League 2022-2023')
+        client.log('Provider failed','ERROR');client.log('Verification paused','WARNING');client.flush()
+        self.assertEqual(len(read_logs(self.main,focus='important')['rows']),4)
+        self.assertEqual(len(read_logs(self.main,focus='seasons')['rows']),1)
+        self.assertEqual(len(read_logs(self.main,focus='errors')['rows']),1)
+        self.assertEqual(len(read_logs(self.main,focus='milestones')['rows']),2)
+        self.assertEqual(console_level('0 failed / partial'),'INFO')

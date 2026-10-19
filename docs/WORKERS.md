@@ -85,6 +85,11 @@ subsequent launches can use `python main.py` or PyCharm Run with no arguments.
 Do not change a worker ID to work around an identity conflict. Restore its
 original data folder, or intentionally configure a genuinely new worker ID.
 
+The Sofascore extension connection code prints immediately at worker startup,
+before inventory auditing or Git checks. Connect it in Chrome while the worker
+prepares. It stays idle until a browser request is actually needed and is reused
+across season jobs. Main in monitor mode does not start an extension connection.
+
 Reconnect the existing scraper Chrome extension as usual. FotMob still uses
 HTTP JSON endpoints; reporting does not change collection transports.
 
@@ -117,8 +122,9 @@ There is no Git snapshot fallback. Keep Main awake for live reporting; queued
 updates catch up when it returns. Stopping a worker leaves pending messages
 saved, and they deliver on its next launch.
 
-Open **Worker logs** on Main to filter received output by computer, level or
-text (for example a match ID or provider). It includes worker console output,
+Open **Worker logs** on Main to filter received output by computer, importance or
+text (for example a match ID or provider). Important updates are the default; choose
+all logs, errors, warnings/errors, completed seasons, or starts/finishes/pauses. It includes worker console output,
 Python errors reported during collection, and operational extension diagnostics
 including browser actions, verification, recovery and timeouts. Known reporting
 tokens, URLs and common credential fields are redacted before transmission.
@@ -224,7 +230,13 @@ missing data. Unavailable and needs-verification states remain distinct.
 Copies count once; resource owners preserve collection credit.
 
 Current jobs show elapsed time, games scraped, cached/skipped, failed/partial,
-held elsewhere, remaining attempts and provisional ETA. Counts and ETA remain
+held elsewhere, remaining attempts and provisional ETA. ETAs recalculate from recent successful matches in the current run; cache-only
+work and verification waits do not train the scrape rate. Every selected
+checkpoint is counted until it is checked against current requirements, rather
+than trusting an older CSV completion flag. Main can reconstruct a provisional
+estimate from older live worker reports that incorrectly claim zero remaining.
+Active phases show checking/finishing instead of a misleading zero-second ETA.
+The card names the current or most recent provider. Counts and ETA remain
 based on the latest report; the dashboard does not invent progress while a
 worker is disconnected. Targets come from saved schedules and reported fixture
 lists. A season with no discovered target is never presented as 100% complete.

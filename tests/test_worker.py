@@ -21,6 +21,7 @@ class NoSync:
 
 class WorkerTests(unittest.TestCase):
     def setUp(self):
+        extension=patch('collection.worker.prepare_extension');extension.start();self.addCleanup(extension.stop)
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.base=Path(self.temp.name);self.root=self.base/'data';self.ensemble=self.base/'ensemble'
         self.plan=self.base/'workers.yaml'
