@@ -121,7 +121,7 @@ class CollectionUpdates(unittest.TestCase):
             atomic_json(normal/'config.json',{'baseline_provider':'sofascore'})
             cache=ResponseCache(normal/'raw')
             for mid in (1,2,3):cache.fetch('sofascore',f'lineups/{mid}',lineup)
-            who=root/'whoscored_events'/'premier-league'/'2024-2025'
+            who=root/'premier-league'/'2024-2025'
             runner=WhoScoredEventRunner(WhoScoredOnly(),who,quiet)
             runner.run('EPL','2024/25',limit=1)
             frame=build_report(root,['EPL'],['2024/25'])

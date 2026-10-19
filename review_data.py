@@ -96,7 +96,10 @@ def coverage(root,competition,season,provider):
     slug=re.sub(r'[^a-z0-9]+','-',competition.name.lower()).strip('-')
     label=season_label(season)
     directory=collection_directory(root,f'{slug}-{label}')
-    own=Path(root)/'whoscored_events'/slug/label
+    own=directory
+    who_schedule=own/'whoscored_schedule.json'
+    if not who_schedule.exists():
+        own=Path(root)/'whoscored_events'/slug/label;who_schedule=own/'schedule.json'
     # Prefer the provider's own schedule, retaining independent ID namespaces.
     if provider=='fotmob':
         from collection.fotmobOnly import player_rows
@@ -111,8 +114,8 @@ def coverage(root,competition,season,provider):
             payload=raw_payload(own,'fotmob',f'match/{mid}')
             if payload is None:return False
             return bool(player_rows(payload,competition.name,season,event))
-    elif provider=='whoscored' and (own/'schedule.json').exists():
-        schedule=own/'schedule.json';events=finished(read(schedule)['events'])
+    elif provider=='whoscored' and who_schedule.exists():
+        schedule=who_schedule;events=finished(read(schedule)['events'])
         def check(mid,event):
             payload=raw_payload(own,'whoscored',f'match/{mid}')
             if payload is None:payload=raw_payload(directory,'whoscored',f'match/{mid}')

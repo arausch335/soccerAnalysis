@@ -117,7 +117,14 @@ def merge_csv(source, target, output):
             return reader.fieldnames or [],rows
     columns,old=read(target);incoming,new=read(source)
     columns=list(dict.fromkeys(columns+incoming))
-    if 'resource' in columns and 'match_id' in columns:keys=['match_id','resource']
+    if source.name in ('events.csv','whoscored_events.csv') and {'match_id','event_index'}<=set(columns):
+        keys=['match_id','event_index']
+    elif source.name in ('events.csv','whoscored_events.csv') and {'wsc_match_id','event_index'}<=set(columns):
+        keys=['wsc_match_id','event_index']
+    elif {'wsc_match_id','wsc_player_id'}<=set(columns):keys=['wsc_match_id','wsc_player_id']
+    elif {'wsc_match_id','wsc_team_id'}<=set(columns):keys=['wsc_match_id','wsc_team_id']
+    elif 'wsc_match_id' in columns:keys=['wsc_match_id']
+    elif 'resource' in columns and 'match_id' in columns:keys=['match_id','resource']
     elif 'match_id' in columns and 'player_id' in columns:keys=['match_id','player_id']
     elif 'fmb_match_id' in columns and 'fmb_player_id' in columns:keys=['fmb_match_id','fmb_player_id']
     elif source.name=='collection.csv' and 'match_id' in columns:keys=['match_id']
@@ -202,6 +209,16 @@ def import_folder(source, root, report=print):
                                 raise ValueError(f'Imported collection identity differs: {relative}')
                     # A successful cache response supersedes an old negative cache.
                     if isinstance(old,dict) and isinstance(new,dict) and old.get('status')==404 and new.get('status')==200:merged=new
+                    elif (isinstance(old,dict) and isinstance(new,dict) and
+                          old.get('provider')=='whoscored' and str(old.get('key','')).startswith('match/')):
+                        if new.get('provider')!='whoscored' or old['key']!=new.get('key'):
+                            raise ValueError('Imported WhoScored cache identity differs')
+                        # Event arrays are immutable responses. Merging their
+                        # fields or list items can fabricate a stream neither
+                        # computer collected. Retain one exact full response.
+                        old_events=old.get('payload',{}).get('matchCentreData',{}).get('events',[])
+                        new_events=new.get('payload',{}).get('matchCentreData',{}).get('events',[])
+                        merged=new if len(new_events)>len(old_events) else old
                     else:merged=merge_value(old,new)
                     atomic_json(output,normalize_paths(merged))
                 elif path.suffix=='.csv':merge_csv(path,target,output)
@@ -234,7 +251,7 @@ def import_folder(source, root, report=print):
                 origins[key]=sorted(set(origins.get(key,[]))|set(row['origins']))
         save_origins(root,origins)
         PortableProgress(None,root).scan()
-        atomic_json(journal,{**json.loads(journal.read_text()),'state':'complete'})
+        atomic_json(journal,{**json.loads(journal.read_text(encoding='utf-8')),'state':'complete'})
         if all(path.exists() and digest(path)==checksum for _,path,checksum in files):
             shutil.rmtree(source)
         else:raise OSError('Staged source changed during import; kept it for review')
@@ -259,6 +276,8 @@ def import_pending(root, ensemble, report=print):
     elif json.loads(marker.read_text(encoding='utf-8')).get('format')!=1:raise ValueError('Unsupported receiving data folder format')
     with FileLock(str(root/'.collector.lock'),timeout=0):
         for candidate in candidates:import_folder(candidate,root,report)
+        from .whoScoredData import migrate_legacy
+        migrate_legacy(root,report)
 
 
 @contextmanager
@@ -279,6 +298,8 @@ def ensemble_session(root, ensemble, report=print, *, skip_remote=True, worker_i
         yield None;return
     if not (root/'.soccer-scraper.json').exists():atomic_json(root/'.soccer-scraper.json',{'format':1})
     with FileLock(str(root/'.collector.lock'),timeout=0):
+        from .whoScoredData import migrate_legacy
+        migrate_legacy(root,report)
         progress=PortableProgress(ensemble/'provenance.json',root,worker_id=worker_id)
         progress.skip_remote=skip_remote
         progress.scan()

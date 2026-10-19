@@ -370,3 +370,17 @@ test('preparing the already verified match preserves its document without anothe
   assert.equal(result.diagnostics.navigation_reused,true);
   assert.equal(result.diagnostics.document_id,'verified');assert.equal(reloads,0);assert.equal(updates,0);
 });
+
+test('WhoScored navigates only the selected tab and returns the intended document',async()=>{
+  let url='https://www.sofascore.com/event/1';const navigations=[];
+  chrome.tabs.get=async()=>({id:1,url,status:'complete'});
+  chrome.tabs.update=async(id,args)=>{assert.equal(id,1);url=args.url;navigations.push(url);};
+  chrome.scripting={executeScript:async({target,func,args})=>{
+    assert.equal(target.tabId,1);assert.equal(func.name,'whoPageOperation');
+    return [{frameId:0,result:{ok:true,status:200,source_url:url,text:'matchId: 11, matchCentreData: {}'}}];
+  }};
+  const result=await execute({tabId:1},{id:'who',action:'whoscored',args:{kind:'text',endpoint:'matches/11/live',params:{}}});
+  assert.equal(result.source_url,'https://www.whoscored.com/matches/11/live');
+  assert.deepEqual(navigations,['https://www.whoscored.com/matches/11/live']);
+  await assert.rejects(execute({tabId:1},{id:'evil',action:'whoscored',args:{kind:'text',endpoint:'../settings',params:{}}}));
+});

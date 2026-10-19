@@ -73,12 +73,12 @@ class StandaloneEventsTests(unittest.TestCase):
             runner = WhoScoredEventRunner(client,tmp,quiet)
             self.assertEqual(runner.run('EPL','2024/25'),2)
             self.assertEqual([c for c in client.calls if c[0]=='match'],[('match',11)])
-            failures = json.loads((Path(tmp)/'failures.json').read_text())
+            failures = json.loads((Path(tmp)/'whoscored_failures.json').read_text())
             self.assertEqual(set(failures),{'11'})
             self.assertEqual(list((Path(tmp)/'raw').glob('whoscored/*.json')),[])
             client.block = False
             self.assertEqual(runner.run('EPL','2024/25'),0)
-            self.assertEqual(json.loads((Path(tmp)/'failures.json').read_text()),{})
+            self.assertEqual(json.loads((Path(tmp)/'whoscored_failures.json').read_text()),{})
 
     def test_rejects_wrong_match_before_caching(self):
         with tempfile.TemporaryDirectory() as tmp:

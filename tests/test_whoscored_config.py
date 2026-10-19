@@ -12,19 +12,12 @@ from providers.safeClient import PersistentGate, SafeWhoScoredClient
 
 
 class WhoScoredConfigTests(unittest.TestCase):
-    def test_shared_selection_is_used_even_with_forwarded_flags(self):
-        with patch.object(config,'COMPETITIONS',['Bundesliga','Ligue 1']), \
-                patch.object(config,'SEASONS',['2024/25','2025/26']), \
-                patch('whoscored_events.collect',return_value=0) as collect_mock:
-            self.assertEqual(whoscored_events.main(['--limit','2']),0)
-        self.assertEqual(collect_mock.call_count,4)
-        collect_mock.assert_any_call(['--competition','Ligue 1','--season','2025/26','--limit','2'])
-
-    def test_single_selection_cli_override(self):
+    def test_launcher_routes_selection_and_ensemble_flags_through_main(self):
+        options=['--competition','Bundesliga','--season','2024/25','--offline',
+                 '--ensemble-root','shared','--worker-id','mac']
         with patch('whoscored_events.collect',return_value=0) as collect_mock:
-            whoscored_events.main(['--competition','Bundesliga','--season','2024/25','--offline'])
-        collect_mock.assert_called_once_with(
-            ['--competition','Bundesliga','--season','2024/25','--offline'])
+            self.assertEqual(whoscored_events.main(options),0)
+        collect_mock.assert_called_once_with([*options,'--collection-types','whoscored_events'])
 
     def test_configured_root_and_refresh_reach_the_runner(self):
         with tempfile.TemporaryDirectory() as folder, \
@@ -32,11 +25,11 @@ class WhoScoredConfigTests(unittest.TestCase):
                 patch.object(config,'COMPETITIONS',['Bundesliga']), \
                 patch.object(config,'SEASONS',['2024/25']), \
                 patch.object(config,'WHOSCORED_REFRESH_SCHEDULE',True), \
-                patch('collection.whoScoredEvents.SafeWhoScoredClient'), \
+                patch('collection.whoScoredEvents.create_whoscored_client'), \
                 patch('collection.whoScoredEvents.WhoScoredEventRunner') as runner:
             runner.return_value.run.return_value=0
             self.assertEqual(collect([]),0)
-            self.assertEqual(runner.call_args.args[1],Path(folder).resolve()/'whoscored_events'/'bundesliga'/'2024-2025')
+            self.assertEqual(runner.call_args.args[1],Path(folder).resolve()/'bundesliga'/'2024-2025')
             runner.return_value.run.assert_called_once_with(
                 'Bundesliga','2024/2025',limit=None,refresh_schedule=True)
 

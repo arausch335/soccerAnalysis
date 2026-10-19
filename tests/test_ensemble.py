@@ -35,7 +35,7 @@ def populate(root, *, limit=None, extra=False):
         'EPL','2024/25',limit=limit,build_csvs=False)
     atomic_json(directory/'job.json',{'competition':'Premier League','season':'2024/2025',
         'providers':['sofascore'],'spatial':[],'sofascore_spatial_capture':'none'})
-    WhoScoredEventRunner(WhoScoredOnly(),root/'whoscored_events'/'premier-league'/'2024-2025',quiet).run(
+    WhoScoredEventRunner(WhoScoredOnly(),root/'premier-league'/'2024-2025',quiet).run(
         'EPL','2024/25',limit=limit)
     FotMobOnlyRunner(Fot(),root/'fotmob_player_stats'/'premier-league'/'2024-2025',quiet).run(
         'EPL','2024/25',limit=limit)
@@ -91,7 +91,7 @@ class EnsembleTests(unittest.TestCase):
                 self.assertEqual(result.status.tolist(),['elsewhere','complete'])
                 self.assertEqual(sofa.calls,[2])
                 who=WhoScoredOnly()
-                self.assertEqual(WhoScoredEventRunner(who,second/'whoscored_events'/'premier-league'/'2024-2025',quiet).run('EPL','2024/25'),0)
+                self.assertEqual(WhoScoredEventRunner(who,second/'premier-league'/'2024-2025',quiet).run('EPL','2024/25'),0)
                 self.assertEqual([c for c in who.calls if c[0]=='match'],[('match',12)])
                 fot=Fot()
                 self.assertEqual(FotMobOnlyRunner(fot,second/'fotmob_player_stats'/'premier-league'/'2024-2025',quiet).run('EPL','2024/25'),0)
@@ -156,7 +156,7 @@ class EnsembleTests(unittest.TestCase):
     def test_invalid_provider_raw_payload_is_retained_for_review(self):
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder);source=base/'ensemble'/'data';populate(source,limit=1)
-            raw=next((source/'whoscored_events'/'premier-league'/'2024-2025'/'raw'/'whoscored').glob('*.json'))
+            raw=next((source/'premier-league'/'2024-2025'/'raw'/'whoscored').glob('*.json'))
             saved=json.loads(raw.read_text());saved['payload']['match_id']=999;atomic_json(raw,saved)
             with self.assertRaisesRegex(ValueError,'Invalid WhoScored'):
                 import_pending(base/'data',base/'ensemble',quiet)
@@ -185,3 +185,15 @@ class EnsembleTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class EventCsvTransferTests(unittest.TestCase):
+    def test_event_rows_from_the_same_player_are_not_collapsed_during_merge(self):
+        from collection.ensemble import merge_csv
+        import pandas as pd
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);source=root/'source/events.csv';target=root/'target/events.csv'
+            source.parent.mkdir();target.parent.mkdir()
+            pd.DataFrame([{'match_id':1,'event_index':i,'player_id':7,'x':i} for i in (0,1,2)]).to_csv(source,index=False)
+            pd.DataFrame([{'match_id':1,'event_index':i,'player_id':7,'x':i} for i in (0,1)]).to_csv(target,index=False)
+            output=root/'merged.csv';merge_csv(source,target,output)
+            self.assertEqual(len(pd.read_csv(output)),3)

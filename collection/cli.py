@@ -10,6 +10,7 @@ from filelock import FileLock, Timeout
 from providers.httpClient import ProviderError
 from providers.safeClient import SafeSofaScoreClient, SafeFotMobClient, SafeWhoScoredClient
 from providers.sofaScoreTransport import create_sofascore_client
+from providers.whoScoredTransport import create_whoscored_client
 from providers.sofaScoreProbe import DEFAULT_MATCH_ID, probe_match
 from collection.paths import collection_directory
 from collection.seasonRunner import SeasonRunner, SPATIAL_ENDPOINTS
@@ -40,6 +41,7 @@ def main(argv=None):
     parser.add_argument('--compile-events', action=argparse.BooleanOptionalAction, default=True,
                         help='Compile the WhoScored event stream CSV during export (default: enabled)')
     parser.add_argument('--sofascore-transport',choices=('http','browser','auto','extension'),default=config.TRANSPORT['sofascore_mode'])
+    parser.add_argument('--whoscored-transport',choices=('http','auto','browser','extension'),default=config.WHOSCORED_ACCESS)
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--match-id',type=int,default=DEFAULT_MATCH_ID,
                         help='Sofascore match ID for the single-request probe')
@@ -109,11 +111,11 @@ def main(argv=None):
                 for path in (root / 'safety').glob('*.json'):
                     print(path.name + '\n' + path.read_text(encoding='utf-8'))
                 return 0
-            classes = dict(sofascore=create_sofascore_client, fotmob=SafeFotMobClient, whoscored=SafeWhoScoredClient)
+            classes = dict(sofascore=create_sofascore_client, fotmob=SafeFotMobClient, whoscored=create_whoscored_client)
             clients = {
                 p: stack.enter_context(
                     classes[p](root, p, offline=args.offline or args.command == 'export',
-                               **({'mode':args.sofascore_transport} if p=='sofascore' else {}))
+                               **({'mode':args.sofascore_transport} if p=='sofascore' else {'mode':args.whoscored_transport} if p=='whoscored' else {}))
                 )
                 for p in settings['providers']
             }

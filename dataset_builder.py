@@ -318,6 +318,9 @@ def _cached_provider_fixtures(source, provider):
                 fixtures[fixture['id']] = fixture
         except (ValueError, KeyError, TypeError):
             continue
+    if provider=='whoscored':
+        from collection.whoScoredData import standalone_fixtures
+        for fixture in standalone_fixtures(source):fixtures.setdefault(fixture['id'],fixture)
     return list(fixtures.values())
 
 

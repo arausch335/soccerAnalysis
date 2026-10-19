@@ -57,8 +57,8 @@ class CollectionDispatchTests(unittest.TestCase):
 
     def test_export_standalone_forces_offline_and_disables_who_refresh(self):
         with tempfile.TemporaryDirectory() as folder,patch('main.collect_whoscored',return_value=0) as who:
-            directory=Path(folder)/'whoscored_events'/'la-liga'/'2024-2025'
-            directory.mkdir(parents=True);(directory/'job.json').write_text('{}')
+            directory=Path(folder)/'la-liga'/'2024-2025'
+            directory.mkdir(parents=True);(directory/'whoscored_job.json').write_text('{}')
             main.main(['export','--collection-types','whoscored_events','--competition','La Liga',
                        '--season','2024/25','--data-root',folder])
             self.assertIn('--offline',who.call_args.args[0])
@@ -106,7 +106,7 @@ class CollectionDispatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, \
                 patch('main.CollectionProgress',return_value=progress), \
                 patch('collection.cli.create_sofascore_client') as sofa_context, \
-                patch('collection.whoScoredEvents.SafeWhoScoredClient') as who_context, \
+                patch('collection.whoScoredEvents.create_whoscored_client') as who_context, \
                 patch('collection.fotmobOnly.SafeFotMobClient') as fot_context:
             sofa_context.return_value.__enter__.return_value=sofa
             who_context.return_value.__enter__.return_value=who

@@ -143,10 +143,28 @@ class PortableProgress:
                         or directory.name!=season_label(match.season.name)):
                     raise ValueError(f'Checkpoint does not belong to its match/competition/season path: {marker}')
                 self.record_match(match)
+                relative=match.metadata.get('raw_response_files',{}).get('whoscored')
+                mid=match.metadata.get('provider_match_ids',{}).get('whoscored')
+                if relative and mid is not None:
+                    from providers.identity import team_key
+                    path=directory/relative
+                    if path.exists():
+                        saved=json.loads(path.read_text(encoding='utf-8'))
+                        payload=saved.get('payload',{});centre=payload.get('matchCentreData',{})
+                        if (saved.get('provider')!='whoscored' or saved.get('key')!=f'match/{mid}'
+                                or not who_valid(payload,mid)
+                                or centre.get('startDate','')[:10]!=match.kickoff.date().isoformat()
+                                or any(team_key(centre.get(side,{}).get('name',''))!=team_key(getattr(match,side+'_team').name)
+                                       for side in ('home','away'))):
+                            raise ValueError(f'Invalid integrated WhoScored raw events: {path}')
+                        self.record('whoscored_events',match.season.competition.name,match.season.name,mid)
         for subtree,namespace,provider in (('whoscored_events','whoscored_events','whoscored'),
+                                          ('','whoscored_events','whoscored'),
                                           ('fotmob_player_stats','fotmob_players','fotmob')):
-            for schedule in self.root.glob(f'{subtree}/*/*/schedule.json'):
-                directory=schedule.parent;job=directory/'job.json'
+            pattern=f'{subtree}/*/*/schedule.json' if subtree else '*/*/whoscored_schedule.json'
+            for schedule in self.root.glob(pattern):
+                directory=schedule.parent
+                job=directory/('whoscored_job.json' if not subtree else 'job.json')
                 if not job.exists():continue
                 settings=json.loads(job.read_text(encoding='utf-8'))
                 competition=competition_by_name(settings['competition']).name;season=settings['season']

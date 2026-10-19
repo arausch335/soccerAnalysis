@@ -42,3 +42,18 @@ class WhoScoredExportTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class WhoScoredQualifierCoordinatesTests(unittest.TestCase):
+    def test_pass_destination_comes_from_qualifiers_when_provider_omits_end_fields(self):
+        from tests.test_whoscored_integration import fixture, payload
+        from types import SimpleNamespace
+        from datetime import datetime,timezone
+        data=payload();event=data['matchCentreData']['events'][0]
+        event['qualifiers']=[{'type':{'displayName':'PassEndX'},'value':'72.3'},
+                             {'type':{'displayName':'PassEndY'},'value':'31'}]
+        match=SimpleNamespace(id=1,metadata={'provider_match_ids':{'whoscored':11}},
+            kickoff=datetime.fromtimestamp(fixture()['startTimestamp'],timezone.utc),
+            season=SimpleNamespace(name='2024/25',competition=SimpleNamespace(name='Premier League')),
+            home_team=SimpleNamespace(name='Liverpool'),away_team=SimpleNamespace(name='Other'))
+        row=event_rows(match,{'payload':data})[0]
+        self.assertEqual((row['end_x'],row['end_y']),(72.3,31))

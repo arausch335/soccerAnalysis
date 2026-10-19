@@ -194,7 +194,7 @@ class ExtensionBridge:
         if self.diagnostics is not None:
             self.record('started')
             self.report(f'Extension diagnostic log: {self.diagnostics.path}', flush=True)
-        self.report('Open Sofascore in your normal Chrome, open Soccer Collector, and paste this connection code:', flush=True)
+        self.report('Open Sofascore or WhoScored in your normal Chrome, open Soccer Collector, and paste this connection code:', flush=True)
         self.report(f'http://{self.address}/#{self.token}', flush=True)
 
     def request(self, action, args=None, *, timeout=45):
@@ -212,7 +212,7 @@ class ExtensionBridge:
         return result
 
     def _request(self, action, args=None, *, timeout=45):
-        if action not in ('navigate', 'page', 'verify'):
+        if action not in ('navigate', 'page', 'verify', 'whoscored'):
             raise ValueError('Unknown extension action')
         self.start()
         if self.unavailable:

@@ -1,5 +1,6 @@
-import {connectionCode, sofaUrl, matchUrl, matchId} from './protocol.js';
+import {connectionCode, sofaUrl, matchUrl, matchId, whoUrl, whoEndpoint} from './protocol.js';
 import {pageOperation} from './page.js';
+import {whoPageOperation} from './who_page.js';
 
 let polling = false;
 let controller;
@@ -26,7 +27,7 @@ async function api(s, path, value) {
 
 async function selectedTab(s) {
   const tab = await chrome.tabs.get(s.tabId);
-  if (!tab.url || !sofaUrl(tab.url)) throw new Error('The chosen tab left Sofascore. Reconnect a Sofascore tab.');
+  if (!tab.url || !(sofaUrl(tab.url) || whoUrl(tab.url))) throw new Error('The chosen tab left the supported website. Reconnect a Sofascore or WhoScored tab.');
   return tab;
 }
 
@@ -53,7 +54,7 @@ async function runPage(s, args, timeoutMs) {
 export async function navigate(s, url, forceReload = false) {
   if (!matchUrl(url)) throw new Error('Only Sofascore match pages can be opened.');
   const before = await selectedTab(s);
-  const previous = await runPage(s, {operation: 'inspect'});
+  const previous = sofaUrl(before.url) ? await runPage(s, {operation: 'inspect'}) : {diagnostics:{}};
   // After verification, Python may prepare the already restored match again.
   // Keep that verified document; transient page failures explicitly force reload.
   if (!forceReload && before.url === url && previous.ok &&
@@ -105,6 +106,8 @@ export async function execute(s, command) {
     throw new Error('Malformed collector command.');
   }
   const initialTab = await selectedTab(s);
+  if (command.action === 'whoscored') return executeWho(s, command.args);
+  if (!sofaUrl(initialTab.url) && command.action !== 'navigate') throw new Error('This collection needs a Sofascore tab. Reopen Sofascore in the selected tab.');
   if (command.action === 'verify') {
     const mid = Number(command.args.endpoint?.match(/^event\/(\d+)/)?.[1]);
     const candidate = command.args.match_url || initialTab.url;
@@ -366,14 +369,14 @@ async function message(msg, sender) {
     if (old.connected) throw new Error('Disconnect before choosing another tab.');
     const connection = connectionCode(msg.code);
     const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
-    if (!tab?.url || !sofaUrl(tab.url)) throw new Error('Open Sofascore in this tab before connecting.');
+    if (!tab?.url || !(sofaUrl(tab.url) || whoUrl(tab.url))) throw new Error('Open Sofascore or WhoScored in this tab before connecting.');
     const same = old.base === connection.base && old.token === connection.token;
     const s = {...connection, tabId: tab.id, clientId: same && old.clientId || crypto.randomUUID().replaceAll('-', '')};
     controller?.abort();
     controller = new AbortController();
     await api(s, 'connect', {client_id: s.clientId});
     await chrome.storage.session.clear();
-    await save({...s, connected: true, paused: false, verification: null, message: 'Connected. Python controls only this Sofascore tab.'});
+    await save({...s, connected: true, paused: false, verification: null, message: 'Connected. Python controls only this selected tab.'});
     await chrome.alarms.create('collector', {periodInMinutes: 0.5});
     await badge('ON');
     void poll();
@@ -425,3 +428,38 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     else void poll();
   }
 });
+
+export async function executeWho(s,args) {
+  const initial=await selectedTab(s);
+  if (!whoEndpoint(args.endpoint,args.kind,args.params)) throw new Error('Unknown WhoScored collection endpoint.');
+  const stage=args.kind==='json' ? args.endpoint.match(/^tournaments\/(\d+)/)[1] : null;
+  const url='https://www.whoscored.com/'+(stage ? `stages/${stage}/fixtures` : args.endpoint);
+  if (initial.url.replace(/\/$/,'') !== url) await chrome.tabs.update(s.tabId,{url});
+  const deadline=Date.now()+Math.min(300000,Math.max(1000,args.manual_wait_ms || 120000));
+  let result, waitingSince=null;
+  while (Date.now()<deadline) {
+    const current=await selectedTab(s);
+    if (!whoUrl(current.url)) {await new Promise(r=>setTimeout(r,500));continue;}
+    // Wait for the intended document; never read the previous game's source.
+    const currentPath=new URL(current.url).pathname.toLowerCase().replace(/\/$/,'');
+    const wantedPath=new URL(url).pathname.toLowerCase().replace(/\/$/,'');
+    const expectedMatch=args.endpoint.match(/^matches\/(\d+)\/live$/i)?.[1];
+    const correctPath=expectedMatch ? new RegExp(`^/matches/${expectedMatch}/live(?:/|$)`).test(currentPath) : currentPath===wantedPath;
+    if (args.kind==='text' && !correctPath) {
+      await new Promise(r=>setTimeout(r,500));continue;
+    }
+    const frames=await chrome.scripting.executeScript({target:{tabId:s.tabId},world:'MAIN',func:whoPageOperation,args:[args]});
+    result=frames.find(f=>f.frameId===0)?.result;
+    if (result?.status===403 && result.verification) {
+      waitingSince ??= Date.now();
+      await save({message:'WhoScored verification: finish the check in the selected tab. Collection is waiting.'});
+      await new Promise(r=>setTimeout(r,1000));continue;
+    }
+    if (result?.status===200 && args.kind==='text' && /^matches\//.test(args.endpoint) &&
+        (!/matchCentreData/.test(result.text || '') ||
+         result.text.match(/\bmatchId["']?\s*[:=]\s*(\d+)/)?.[1]!==expectedMatch)) {await new Promise(r=>setTimeout(r,500));continue;}
+    if (result) return {...result,waiting_seconds:waitingSince===null ? 0 : (Date.now()-waitingSince)/1000};
+    await new Promise(r=>setTimeout(r,500));
+  }
+  return result || {ok:true,status:408,source_url:(await selectedTab(s)).url};
+}

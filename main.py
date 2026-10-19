@@ -227,8 +227,8 @@ def _job_directory(root,kind,competition,season,name=None):
     if kind in ('combined','sofascore'):
         return collection_directory(root,name or _collection_name(competition,season))
     slug=re.sub(r'[^a-z0-9]+','-',competition_by_name(competition).name.lower()).strip('-')
-    subtree='whoscored_events' if kind=='whoscored_events' else 'fotmob_player_stats'
-    return Path(root)/subtree/slug/season_label(season)
+    if kind=='whoscored_events':return Path(root)/slug/season_label(season)
+    return Path(root)/'fotmob_player_stats'/slug/season_label(season)
 
 
 def _standalone_options(kind,args,action):
@@ -245,8 +245,10 @@ def _standalone_options(kind,args,action):
     # These apply only to the combined/Sofascore jobs in a mixed run.
     parser.add_argument('--providers',nargs='+')
     parser.add_argument('--sofascore-transport')
+    parser.add_argument('--whoscored-transport',choices=('http','auto','browser','extension'))
     parser.add_argument('--sofascore-spatial-capture')
     parser.add_argument('--no-spatial',action='store_true')
+    parser.add_argument('--compile-events',action=argparse.BooleanOptionalAction,default=config.BUILD_EVENTS)
     options=parser.parse_args(args[1:] if args and args[0] in ('start','resume','export','status','probe') else args)
     if options.limit is not None and options.limit<1:parser.error('limit must be positive')
     if options.offline and options.refresh_schedule:parser.error('Cannot refresh offline')
@@ -260,11 +262,13 @@ def _standalone(kind,options,targets,action):
         provider='whoscored' if kind=='whoscored_events' else 'fotmob'
         forwarded=['--providers',provider,'--data-root',str(options.data_root)]
         if options.match_id is not None:forwarded+=['--match-id',str(options.match_id)]
+        if kind=='whoscored_events' and options.whoscored_transport:
+            forwarded+=['--whoscored-transport',options.whoscored_transport]
         return probe(forwarded)
     collect_standalone=collect_whoscored if kind=='whoscored_events' else collect_fotmob
     result=0
     for job,directory,competition,season in targets:
-        exists=(directory/'job.json').is_file()
+        exists=(directory/('whoscored_job.json' if kind=='whoscored_events' else 'job.json')).is_file()
         if action=='status':
             print(f'{kind} {competition} {season_label(season)} | '
                   +(f'{job.total} scheduled; {job.remaining} remaining (cache presence)' if job.total is not None else 'schedule not yet discovered'))
@@ -275,6 +279,12 @@ def _standalone(kind,options,targets,action):
             job.end();continue
         forwarded=['--competition',competition,'--season',season,'--data-root',str(options.data_root)]
         if options.limit is not None:forwarded+=['--limit',str(options.limit)]
+        if kind=='whoscored_events' and options.whoscored_transport:
+            forwarded+=['--whoscored-transport',options.whoscored_transport]
+        if kind=='whoscored_events' and (action=='export' or options.build_dataset or options.build_dataset is None and config.BUILD_DATASET):
+            forwarded+=['--export-csvs','--compile-events' if options.compile_events else '--no-compile-events']
+            if options.build_dataset or options.build_dataset is None and config.BUILD_DATASET:
+                forwarded+=['--dataset-root',str(options.dataset_root or config.DATASET_ROOT)]
         if options.offline or action=='export':forwarded+=['--offline']
         if options.refresh_schedule is not None:
             if options.refresh_schedule:forwarded+=['--refresh-schedule']
@@ -322,7 +332,7 @@ def _main(argv=None):
         providers,_=provider_parser.parse_known_args(args)
         if providers.providers!=['sofascore']:parser.error('sofascore collection type requires --providers sofascore')
     progress=CollectionProgress(enabled=config.SHOW_TIMING and action not in ('status','probe'))
-    standalone_options={k:_standalone_options(k,command_args,action) for k in kinds if k not in ('combined','sofascore')}
+    standalone_options={k:_standalone_options(k,args,action) for k in kinds if k not in ('combined','sofascore')}
     targets={}
     for kind in kinds:
         targets[kind]=[]

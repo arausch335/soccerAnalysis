@@ -26,3 +26,19 @@ export function matchId(text) {
   const found = url.hash.match(/(?:^#|,)id:(\d+)/) || url.pathname.match(/^\/event\/(\d+)$/);
   return found ? Number(found[1]) : null;
 }
+
+export function whoUrl(text) {
+  try {
+    const url=new URL(text);
+    return url.protocol==='https:' && url.hostname==='www.whoscored.com' &&
+      !url.username && !url.password && !url.port;
+  } catch (_) {return false;}
+}
+
+export function whoEndpoint(endpoint,kind,params={}) {
+  if (typeof endpoint!=='string' || endpoint.includes('..') || /[?#\\]/.test(endpoint)) return false;
+  if (kind==='json') return /^tournaments\/\d+\/data\/$/.test(endpoint) &&
+    Object.keys(params).sort().join(',')==='d,isAggregate' && /^\d{6}$/.test(params.d) && params.isAggregate==='false';
+  return kind==='text' && Object.keys(params).length===0 &&
+    /^(?:matches\/\d+\/live|regions\/\d+\/tournaments\/\d+\/[a-z0-9-]+|regions\/\d+\/tournaments\/\d+\/seasons\/\d+(?:\/(?:stages\/\d+\/(?:show|fixtures)\/)?[a-z0-9-]+)?|seasons\/\d+\/[a-z0-9-]+|stages\/\d+\/[a-z0-9-]+)$/i.test(endpoint);
+}

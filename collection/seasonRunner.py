@@ -184,6 +184,17 @@ class SeasonRunner:
                     result[provider]=list(events.values())
                 else:
                     events={}
+                    from .whoScoredData import standalone_fixtures
+                    local=standalone_fixtures(self.directory)
+                    if local and not self.refresh:
+                        result[provider]=local
+                        try:
+                            for fixture in selected:match_fixture(fixture,local)
+                        except (ValueError,IdentityError):pass
+                        else:
+                            self.report(f'whoscored: reusing {len(local)} locally saved fixtures.')
+                            continue
+                    events.update({row['id']:row for row in local})
                     stages=configured_whoscored_stages(competition,season)
                     if stages is None:
                         stages=[]
@@ -209,7 +220,7 @@ class SeasonRunner:
                 if len({e['id'] for e in result[provider]})!=len(result[provider]):raise ValueError('Duplicate fixture IDs')
                 self.report(f'{provider}: {len(result[provider])} finished fixtures available.')
             except DATA_ERRORS as exc:
-                errors[provider]=str(exc)
+                if not result.get(provider):errors[provider]=str(exc)
                 self.report(f'{provider} fixture discovery failed: {exc}')
         return result,errors
 
@@ -452,6 +463,9 @@ class SeasonRunner:
                     errors.append(f'{provider}: {disabled[provider]}');match.metadata['provider_status'][provider]='failed';continue
                 try:
                     fixture=match_fixture(event,fixtures[provider]);pid=fixture['id'];client=self.clients[provider]
+                    if provider=='whoscored' and not self.refresh and not self.cache.path(provider,f'match/{pid}').exists():
+                        from .whoScoredData import reuse_match
+                        reuse_match(self.directory,pid,fixture)
                     payload=(self._fetch_fotmob_match(pid,client) if provider=='fotmob' else
                              self._fetch(provider,f'match/{pid}',lambda:client.match_details(pid)))
                     loaders[provider].enrich(match,payload,fixture,allow_partial=True)
@@ -796,7 +810,7 @@ class SeasonRunner:
             atomic_csv(status[columns],status_path)
         for obsolete in ('player_stats.csv','player_match_features.csv','spatial_features.csv','touches.csv',
                          'pass_features.csv','pass_zone_transitions.csv','dribble_features.csv',
-                         'shot_features.csv','whoscored_events.csv'):
+                         'shot_features.csv'):
             (self.directory/obsolete).unlink(missing_ok=True)
         self.data_quality_warnings=quality
         clear_json_cache()
@@ -832,6 +846,7 @@ class SeasonRunner:
 
     def _cached_provider_fixtures(self):
         """Read fixture indexes already on disk; never make a network request."""
+        from .whoScoredData import standalone_fixtures
         result={}
         converters={'fotmob':fotmob_fixture,'whoscored':whoscored_fixture}
         for provider,convert in converters.items():
@@ -848,6 +863,9 @@ class SeasonRunner:
                 except (ValueError,KeyError,TypeError):
                     continue
             result[provider]=list(fixtures.values())
+        fixtures={row['id']:row for row in standalone_fixtures(self.directory)}
+        fixtures.update({row['id']:row for row in result.get('whoscored',[])})
+        result['whoscored']=list(fixtures.values())
         return result
 
     def _recover_cached_enrichments(self,match,event,cached_fixtures):
@@ -861,6 +879,9 @@ class SeasonRunner:
                 relative=match.metadata.get('raw_response_files',{}).get(provider)
                 path=(self.directory/relative if relative else
                       self.cache.path(provider,f'match/{fixture["id"]}'))
+                if not path.exists() and provider=='whoscored':
+                    from .whoScoredData import reuse_match
+                    reuse_match(self.directory,fixture['id'],fixture)
                 if not path.exists():continue
                 saved=read_json(path)
                 if saved.get('provider')!=provider or saved.get('key')!=f'match/{fixture["id"]}':

@@ -77,8 +77,7 @@ python main.py --collection-types sofascore --sofascore-transport browser
 
 `collection.action` applies to each selected type. `auto` starts or resumes;
 `start` selects new jobs, and `resume` selects saved jobs. Standalone `status`
-reads local cache counts. Standalone `export` validates WhoScored caches or
-rebuilds FotMob CSVs offline; combined/Sofascore `export` builds the packaged
+reads local cache counts. Standalone `export` rebuilds WhoScored and FotMob CSVs offline; combined/Sofascore `export` builds the packaged
 dataset. Standalone output remains in its existing source-specific folders.
 Explicit CLI commands or competition/season selections target one season;
 running without arguments uses every configured competition and season.
@@ -318,18 +317,72 @@ python whoscored_events.py --competition Bundesliga --season 2024/25
 python whoscored_events.py --competition Bundesliga --season 2024/25 --limit 5
 ```
 
-Results are saved under `data/whoscored_events/<competition>/<YYYY-YYYY>/`.
+Results share `data/<competition>/<YYYY-YYYY>/` with the other providers.
 Original match payloads are retained under `raw/whoscored/`, wrapped with the
 provider, cache key, and fetch timestamp. Provider field names and nested event
-objects are preserved; this workflow creates no CSV exports.
+objects are preserved. Raw-only collection remains the default. To build CSVs
+from saved data, including every event, without network requests:
 
-Repeat the command to resume from saved responses. `schedule.json`, `job.json`,
-and `failures.json` retain discovery and progress information. Use
+```bash
+python whoscored_events.py export --competition "Champions League" --season 2019/20 --compile-events
+```
+
+This writes `whoscored_events.csv`, `whoscored_player_match_stats.csv`,
+`whoscored_team_match_stats.csv`, and `whoscored_fixtures.csv` in the season folder. Native IDs have `wsc_` column names.
+Player metrics come from named WhoScored event flags; absent categories stay
+missing, and nested player/team statistics remain in JSON columns. Add
+`--build-dataset` to copy these tables to
+`dataset/whoscored/<competition>/<YYYY-YYYY>/`. Set `dataset.tables.events: true`
+to compile events by default; an explicit `--compile-events` overrides it.
+Export rebuilds every locally saved match even after a limited collection.
+
+Both launchers use the ensemble import, worker inventory and remote-completion
+logic. Copy the complete data folder between computers and share worker JSON
+inventories as described above. Browser profiles stay machine-specific.
+WhoScored event CSV transfers preserve one row per event, and raw response
+conflicts retain one exact response with the incoming original archived.
+
+Combined collection and offline dataset builds now reuse standalone WhoScored
+schedules and match payloads. Date, team and player identity checks still apply;
+WhoScored IDs are never treated as Sofascore IDs. Existing Sofascore checkpoints
+can gain WhoScored enrichment during an offline export. Unmatched or ambiguous
+identities remain reported rather than being forced into the dataset.
+
+Repeat the command to resume from saved responses. `whoscored_schedule.json`,
+`whoscored_job.json`, and `whoscored_failures.json` retain provider discovery and
+progress without overwriting the baseline schedule or job.
+Existing `data/whoscored_events/<competition>/<season>/` folders are copied,
+validated and checksum-verified into the shared season tree automatically on
+startup, then removed from their old location. Transfer imports perform the
+same migration; conflicting originals remain in `data/ensemble_imports/`. Use
 `--refresh-schedule` (or `collection.whoscored.refresh_schedule: true` in the config) to discover newly
 finished fixtures in an ongoing season. `--limit` selects the first N finished
 fixtures; omit it on a subsequent run to collect the rest. The collector uses the
 shared request pacing, HTTP cache, and WhoScored cooldown ledger. A WhoScored
 refusal pauses collection and retains saved progress.
+
+Choose `collection.whoscored.access: http`, `browser`, `auto`, or `extension`.
+`auto` tries HTTP and switches to visible Chrome after a parsing/access failure;
+401/404/429 and offline misses do not trigger fallback. Existing YAML files
+without `access` retain HTTP behavior. New settings use `auto`.
+
+```bash
+python whoscored_events.py --whoscored-transport extension --competition Bundesliga --season 2024/25 --limit 1
+python whoscored_events.py --whoscored-transport browser --competition Bundesliga --season 2024/25 --limit 1
+```
+
+Visible-browser mode uses the optional `[browser]` install and a separate
+WhoScored profile. Extension mode uses Soccer Collector **0.5.0**: run
+`python -m tools.extension_setup`, reload the prepared extension in Chrome,
+open WhoScored, and paste the connection code into **Connect this tab**.
+The extension controls only that selected tab and can switch it between the two
+providers during mixed collection. It reads WhoScored's loaded page source and
+requests fixture JSON within the same browser session; cookies stay in Chrome.
+WhoScored verification waits for the user for `collection.browser.manual_wait_seconds`
+and then pauses for a resumable retry. The Sofascore-specific 1/5/30-minute
+reload recovery is unchanged. WhoScored HTTP 429 waits apply to browser and
+extension collection too; HTTP verification refusals do not impose a browser ban.
+The API tester accepts `--whoscored-transport` as well.
 
 WhoScored requests wait a random **15–30 seconds** between request starts by
 default. Set `collection.whoscored.request_delay_min_seconds` and

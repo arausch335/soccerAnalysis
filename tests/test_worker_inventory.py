@@ -73,7 +73,7 @@ class WorkerInventoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder);root=base/'data';staging=base/'ensemble';populate(root,limit=1)
             self.assertEqual(self.inventory(root,staging,'main-mac'),0)
-            raw=next((root/'whoscored_events'/'premier-league'/'2024-2025'/'raw'/'whoscored').glob('*.json'))
+            raw=next((root/'premier-league'/'2024-2025'/'raw'/'whoscored').glob('*.json'))
             raw.unlink()
             self.assertEqual(self.inventory(root,staging),0)
             rows=json.loads((staging/'workers'/'main-mac.json').read_text())['records']

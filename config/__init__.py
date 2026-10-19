@@ -133,8 +133,11 @@ def load_config(path=None, *, project_root=None):
         raise ConfigError('api_test.match_ids must be positive integer provider IDs')
     if isinstance(collection['whoscored'],dict):
         collection['whoscored'].setdefault('stage_ids',{})
+        collection['whoscored'].setdefault('access','http')
     whoscored = _section(collection['whoscored'], (
-        'request_delay_min_seconds','request_delay_max_seconds','refresh_schedule','stage_ids'), 'whoscored')
+        'request_delay_min_seconds','request_delay_max_seconds','refresh_schedule','stage_ids','access'), 'whoscored')
+    if whoscored['access'] not in ('http','auto','browser','extension'):
+        raise ConfigError('whoscored.access must be http, auto, browser, or extension')
     stage_ids=whoscored['stage_ids']
     if (not isinstance(stage_ids,dict) or any(
             not isinstance(key,str) or not isinstance(ids,list) or not ids
@@ -180,6 +183,7 @@ def load_config(path=None, *, project_root=None):
         'BUILD_DATASET': _boolean(collection['build_dataset'], 'collection.build_dataset'),
         'COLLECTION_NAMES': tuple(_strings(dataset['collections'], 'dataset.collections', allow_empty=True)),
         'WHOSCORED_STAGE_IDS':stage_ids,
+        'WHOSCORED_ACCESS':whoscored['access'],
         'WHOSCORED_MIN_DELAY':minimum,
         'API_TEST_PROVIDERS':providers,
         'API_TEST_MATCH_IDS':dict(match_ids),

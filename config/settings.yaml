@@ -41,6 +41,7 @@ collection:
     timeout_seconds: 30
     manual_wait_seconds: 120
   whoscored:
+    access: auto              # http, browser, auto fallback, or extension
     request_delay_min_seconds: 15
     request_delay_max_seconds: 30
     # Verified stage IDs skip competition/season HTML discovery.

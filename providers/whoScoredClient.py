@@ -29,7 +29,7 @@ class _Directory(HTMLParser):
 
 def embedded_json(text, key):
     # The provider's object values are JSON; the enclosing assignment is JS.
-    found=re.search(r'\b'+re.escape(key)+r'\s*:\s*',text)
+    found=re.search(r'\b'+re.escape(key)+r'[\"\']?\s*[:=]\s*',text)
     if not found:
         raise ProviderError(f'WhoScored page is missing {key}; it may be blocked or its format changed')
     try:
@@ -43,6 +43,13 @@ def embedded_json(text, key):
 class WhoScoredClient(HttpClient):
     BASE_URL='https://www.whoscored.com'
     REFERER='https://www.whoscored.com/'
+
+    def get_text(self,endpoint,params=None):
+        response=self._request(endpoint,params)
+        # WhoScored pages are UTF-8. An inferred Windows code page can reject
+        # valid player/team names containing bytes such as 0x81.
+        content=getattr(response,'content',None)
+        return content.decode('utf-8-sig') if isinstance(content,bytes) else response.text
 
     def seasons(self, competition_path):
         parser=_Directory(); parser.feed(self.get_text(competition_path))
@@ -78,7 +85,11 @@ class WhoScoredClient(HttpClient):
 
     def match_details(self, match_id):
         text=self.get_text(f'matches/{int(match_id)}/live')
-        found=re.search(r'\bmatchId\s*:\s*(\d+)',text)
+        return self.parse_match(text,match_id)
+
+    @classmethod
+    def parse_match(cls, text, match_id):
+        found=re.search(r'\bmatchId[\"\']?\s*[:=]\s*(\d+)',text)
         if not found or int(found.group(1)) != int(match_id):
             raise ProviderError('WhoScored returned a different or incomplete match page')
         centre=embedded_json(text,'matchCentreData')
@@ -86,7 +97,7 @@ class WhoScoredClient(HttpClient):
         if not isinstance(centre.get('events'),list) or not all(centre.get(side,{}).get('players') for side in ('home','away')):
             raise ProviderError('WhoScored event data or lineups are unavailable')
         return {'match_id':int(match_id),'matchCentreData':centre,'matchCentreEventTypeJson':types,
-                'source_url':f'{self.BASE_URL}/matches/{match_id}/live'}
+                'source_url':f'{cls.BASE_URL}/matches/{match_id}/live'}
 
     def match_teams(self, match_id):
         """Read just team IDs/names; lineups and event data are not required."""

@@ -46,7 +46,7 @@ class CollectionProgress:
             else:self.report(message)
 
     def job(self,directory,kind,competition,season):
-        key=str(Path(directory).resolve())
+        key=str(Path(directory).resolve())+('|whoscored_events' if kind=='whoscored_events' else '')
         if key not in self.jobs:self.jobs[key]=JobProgress(self,key,kind,competition,season)
         return self.jobs[key]
 
@@ -164,7 +164,7 @@ def progress_scope(progress):
 def prime_job(job,directory,*,limit=None):
     """Read existing counts locally; do not fetch future schedules for an ETA."""
     directory=Path(directory)
-    path=directory/'schedule.json'
+    path=directory/('whoscored_schedule.json' if job.kind=='whoscored_events' else 'schedule.json')
     if not path.exists():return
     try:
         events=json.loads(path.read_text(encoding='utf-8'))['events']
@@ -197,7 +197,7 @@ def collection_scope(kind,root,competitions,seasons,*,limit=None):
     import re
     from .selection import competition_by_name, season_label
     owner=CollectionProgress(enabled=config.SHOW_TIMING)
-    subtree='whoscored_events' if kind=='whoscored_events' else 'fotmob_player_stats'
+    subtree='' if kind=='whoscored_events' else 'fotmob_player_stats'
     for name in competitions:
         competition=competition_by_name(name).name
         slug=re.sub(r'[^a-z0-9]+','-',competition.lower()).strip('-')

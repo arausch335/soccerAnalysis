@@ -10,10 +10,11 @@ from filelock import FileLock, Timeout
 from providers.cache import ResponseCache
 from providers.events import whoscored_fixture
 from providers.httpClient import ProviderError, ProviderRequestError
-from providers.safeClient import SafeWhoScoredClient
+from providers.whoScoredTransport import create_whoscored_client
 from storage.pandasStore import atomic_json
 from .progress import get_job, collection_scope
 from .selection import competition_by_name, season_key, season_label, configured_whoscored_stages
+from .whoScoredData import metadata_path, standalone_directory
 
 
 class WhoScoredEventRunner:
@@ -23,8 +24,12 @@ class WhoScoredEventRunner:
         self.cache = ResponseCache(self.directory / 'raw')
         self.report = report
 
+    def _mode(self):
+        mode=getattr(self.client,'active',getattr(self.client,'mode','http'))
+        return mode if isinstance(mode,str) else 'http'
+
     def schedule(self, competition, season, *, refresh=False):
-        path = self.directory / 'schedule.json'
+        path = metadata_path(self.directory,'schedule.json')
         if path.exists() and not refresh:
             return json.loads(path.read_text(encoding='utf-8'))['events']
         start = int(season[:4])
@@ -60,7 +65,7 @@ class WhoScoredEventRunner:
         timing=get_job(self.directory,'whoscored_events',competition.name,season_label(season),report=self.report)
         timing.begin()
         self.directory.mkdir(parents=True, exist_ok=True)
-        job = self.directory/'job.json'
+        job = metadata_path(self.directory,'job.json')
         settings = dict(provider='whoscored',competition=competition.name,season=season)
         if job.exists() and json.loads(job.read_text(encoding='utf-8')) != settings:
             raise ValueError('WhoScored collection selection differs from the saved job')
@@ -72,13 +77,16 @@ class WhoScoredEventRunner:
             self.client.refresh_cache = False
         if limit is not None:
             events = events[:limit]
-        failure_path = self.directory/'failures.json'
+        failure_path = metadata_path(self.directory,'failures.json')
         failures = json.loads(failure_path.read_text(encoding='utf-8')) if failure_path.exists() else {}
         complete = 0;elsewhere=0
         timing.schedule(events,completed=[e['id'] for e in events
-            if self.cache.path('whoscored',f"match/{e['id']}").exists()],mode='http')
+            if self.cache.path('whoscored',f"match/{e['id']}").exists()],mode=self._mode())
         for index,event in enumerate(events,1):
             mid = event['id']
+            from .whoScoredData import reuse_match
+            if not self.cache.path('whoscored',f'match/{mid}').exists():
+                reuse_match(self.directory,mid,event,standalone=True)
             cached=self.cache.path('whoscored',f'match/{mid}').exists()
             timing.start_game(mid,clients=(self.client,),cached=cached)
             game_status='complete'
@@ -120,7 +128,7 @@ class WhoScoredEventRunner:
                     break
             finally:
                 atomic_json(failure_path,failures)
-                timing.finish_game(clients=(self.client,),status=game_status)
+                timing.finish_game(clients=(self.client,),status=game_status,mode=self._mode())
         self.report(f'WhoScored {competition.name} {season_label(season)} raw responses saved locally: {complete-elsewhere}/{len(events)}; {elsewhere} recorded on another computer',flush=True)
         code=0 if events and complete == len(events) else 2
         timing.end(code)
@@ -133,7 +141,11 @@ def main(argv=None):
     parser.add_argument('--season',default=config.SEASONS[0])
     parser.add_argument('--data-root',type=Path,default=config.DATA_ROOT)
     parser.add_argument('--limit',type=int)
+    parser.add_argument('--export-csvs',action='store_true')
+    parser.add_argument('--compile-events',action=argparse.BooleanOptionalAction,default=config.BUILD_EVENTS)
+    parser.add_argument('--dataset-root',type=Path)
     parser.add_argument('--offline',action='store_true')
+    parser.add_argument('--whoscored-transport',choices=('http','auto','browser','extension'),default=config.WHOSCORED_ACCESS)
     parser.add_argument('--refresh-schedule',action=argparse.BooleanOptionalAction,
                         default=config.WHOSCORED_REFRESH_SCHEDULE,
                         help='Refresh fixtures to include newly finished matches')
@@ -148,16 +160,29 @@ def main(argv=None):
         slug = re.sub(r'[^a-z0-9]+','-',competition.name.lower()).strip('-')
         root = args.data_root.resolve()
         root.mkdir(parents=True,exist_ok=True)
-        if not any(root.iterdir()):
-            atomic_json(root/'.soccer-scraper.json',{'format':1})
+        marker=root/'.soccer-scraper.json'
+        if not marker.exists():
+            if any(root.iterdir()):raise ValueError('Refusing an existing unmarked data directory')
+            atomic_json(marker,{'format':1})
+        elif json.loads(marker.read_text(encoding='utf-8')).get('format')!=1:
+            raise ValueError('Unsupported data folder format')
         # Share the existing safety ledger and lock; standalone jobs have their
         # own subtree so the Sofascore-keyed dataset builder cannot ingest them.
-        directory = root/'whoscored_events'/slug/season_label(season)
+        directory = standalone_directory(root,competition.name,season)
         with collection_scope('whoscored_events',root,[competition.name],[season],limit=args.limit), \
                 FileLock(str(root/'.collector.lock'),timeout=0):
-            with SafeWhoScoredClient(root,'whoscored',offline=args.offline) as client:
-                return WhoScoredEventRunner(client,directory).run(competition.name,season,
+            from .whoScoredData import migrate_legacy
+            migrate_legacy(root)
+            with create_whoscored_client(root,'whoscored',offline=args.offline,mode=args.whoscored_transport) as client:
+                code=WhoScoredEventRunner(client,directory).run(competition.name,season,
                     limit=args.limit,refresh_schedule=args.refresh_schedule)
+                if args.export_csvs or args.dataset_root:
+                    from .whoScoredExports import export_standalone, package_standalone
+                    count=export_standalone(directory,compile_events=args.compile_events)
+                    print(f'WhoScored: exported {count} locally saved matches to {directory}',flush=True)
+                    if args.dataset_root:
+                        print(f'Packaged WhoScored dataset: {package_standalone(directory,args.dataset_root,compile_events=args.compile_events)}',flush=True)
+                return code
     except KeyboardInterrupt:
         print('Interrupted. Run the same command to resume from saved responses.')
         return 130
