@@ -99,7 +99,10 @@ def coverage(root,competition,season,provider):
     own=directory
     who_schedule=own/'whoscored_schedule.json'
     if not who_schedule.exists():
-        own=Path(root)/'whoscored_events'/slug/label;who_schedule=own/'schedule.json'
+        from collection.whoScoredData import LEGACY_SUBTREES,metadata_path
+        for subtree in LEGACY_SUBTREES:
+            own=Path(root)/subtree/slug/label;who_schedule=metadata_path(own,'schedule.json')
+            if who_schedule.exists():break
     # Prefer the provider's own schedule, retaining independent ID namespaces.
     if provider=='fotmob':
         from collection.fotmobOnly import player_rows

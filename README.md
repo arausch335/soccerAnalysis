@@ -351,10 +351,27 @@ identities remain reported rather than being forced into the dataset.
 Repeat the command to resume from saved responses. `whoscored_schedule.json`,
 `whoscored_job.json`, and `whoscored_failures.json` retain provider discovery and
 progress without overwriting the baseline schedule or job.
-Existing `data/whoscored_events/<competition>/<season>/` folders are copied,
-validated and checksum-verified into the shared season tree automatically on
-startup, then removed from their old location. Transfer imports perform the
-same migration; conflicting originals remain in `data/ensemble_imports/`. Use
+Existing `data/whoscored/<competition>/<season>/` and
+`data/whoscored_events/<competition>/<season>/` folders are copied, validated
+and checksum-verified into the shared season tree automatically on startup,
+then removed from their old location. Both prefixed and older metadata names
+are recognized, including flat `raw/*.json` response caches. Collections missing
+their old job file use the league/season path. Raw-only collections migrate
+without inventing fixture schedules or claiming complete inventory coverage.
+Transfer imports perform the same migration and preserve the original worker;
+conflicting originals remain in `data/ensemble_imports/`. Interrupted or changing
+sources remain available for retry.
+
+To migrate and rebuild this worker's inventory without scraping or importing
+unrelated staged transfers, stop the scraper and run:
+
+```bash
+python -m tools.migrate_whoscored
+```
+
+Optional `--data-root PATH` and `--ensemble-root PATH` override the configured
+folders. This command preserves `config/settings.yaml` and refuses to run while
+another collector holds the data lock. Use
 `--refresh-schedule` (or `collection.whoscored.refresh_schedule: true` in the config) to discover newly
 finished fixtures in an ongoing season. `--limit` selects the first N finished
 fixtures; omit it on a subsequent run to collect the rest. The collector uses the

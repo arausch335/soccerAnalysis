@@ -159,12 +159,15 @@ class PortableProgress:
                             raise ValueError(f'Invalid integrated WhoScored raw events: {path}')
                         self.record('whoscored_events',match.season.competition.name,match.season.name,mid)
         for subtree,namespace,provider in (('whoscored_events','whoscored_events','whoscored'),
+                                          ('whoscored','whoscored_events','whoscored'),
                                           ('','whoscored_events','whoscored'),
                                           ('fotmob_player_stats','fotmob_players','fotmob')):
             pattern=f'{subtree}/*/*/schedule.json' if subtree else '*/*/whoscored_schedule.json'
-            for schedule in self.root.glob(pattern):
+            patterns=(pattern,f'{subtree}/*/*/whoscored_schedule.json') if provider=='whoscored' and subtree else (pattern,)
+            for schedule in sorted({path for pattern in patterns for path in self.root.glob(pattern)}):
                 directory=schedule.parent
-                job=directory/('whoscored_job.json' if not subtree else 'job.json')
+                from .whoScoredData import metadata_path
+                job=metadata_path(directory,'job.json') if provider=='whoscored' else directory/'job.json'
                 if not job.exists():continue
                 settings=json.loads(job.read_text(encoding='utf-8'))
                 competition=competition_by_name(settings['competition']).name;season=settings['season']
