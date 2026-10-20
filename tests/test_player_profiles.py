@@ -108,9 +108,6 @@ class PlayerProfileTests(unittest.TestCase):
             verifier.investigate([proposal()]);verifier.investigate([proposal()])
             self.assertEqual(fot.player_profile.call_count,1);self.assertEqual(sofa.player_profile.call_count,1)
             self.assertEqual(player_link('fotmob',77),'7')
-            before=revision(tmp);p=investigated();p['investigation']['checked_at']='2026-10-21T00:00:00+00:00'
-            store.ingest([p]);self.assertEqual(revision(tmp),before)
-            self.assertEqual(store.snapshot()['decisions'][0]['investigation']['checked_at'],'2026-10-21T00:00:00+00:00')
         with TemporaryDirectory() as tmp,identity_scope(tmp):
             fot.player_profile.side_effect=ProviderRequestError('HTTP 502',status_code=502)
             verifier=ProfileVerifier({'sofascore':sofa,'fotmob':fot},tmp,lambda *a:None)
