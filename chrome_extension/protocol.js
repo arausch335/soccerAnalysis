@@ -42,3 +42,7 @@ export function whoEndpoint(endpoint,kind,params={}) {
   return kind==='text' && Object.keys(params).length===0 &&
     /^(?:matches\/\d+\/live|regions\/\d+\/tournaments\/\d+\/[a-z0-9-]+|regions\/\d+\/tournaments\/\d+\/seasons\/\d+(?:\/(?:stages\/\d+\/(?:show|fixtures)\/)?[a-z0-9-]+)?|seasons\/\d+\/[a-z0-9-]+|stages\/\d+\/[a-z0-9-]+)$/i.test(endpoint);
 }
+
+export function fotmobUrl(text) {
+  try {const u=new URL(text);return u.protocol==='https:' && u.hostname==='www.fotmob.com' && !u.username && !u.password && !u.port;} catch (_) {return false;}
+}

@@ -5,7 +5,7 @@ from pathlib import Path
 import shutil
 import tempfile
 
-ASSETS = ('manifest.json', 'worker.js', 'page.js', 'who_page.js', 'protocol.js',
+ASSETS = ('manifest.json', 'worker.js', 'page.js', 'who_page.js', 'fotmob_page.js', 'protocol.js',
           'popup.html', 'popup.js', 'popup.css')
 MARKER = 'collector-build.json'
 FORMAT = 'soccer-collector-extension'
@@ -61,8 +61,8 @@ def main(argv=None):
     print('Prepared Soccer Collector extension folder:')
     print(directory)
     print('\nIn Chrome, open chrome://extensions, enable Developer mode, click Load unpacked, and select that folder.')
-    print('Open a Sofascore or WhoScored match in normal Chrome. In Python, run main.py with:')
-    print('--collection-types sofascore --sofascore-transport extension --competition "Premier League" --season 2024/25 --limit 1')
+    print('Open a Sofascore, WhoScored or FotMob page in normal Chrome. In Python, run main.py with:')
+    print('--collection-types combined --competition "Premier League" --season 2024/25 --limit 1')
     print('Paste the connection code printed by Python into the extension, then click Connect this tab.')
     return 0
 

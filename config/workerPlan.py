@@ -9,7 +9,7 @@ import config
 from collection.selection import competition_by_name, season_key, season_label
 from collection.workerIdentity import valid_worker_id
 
-TYPES={'combined','sofascore','whoscored_events','fotmob_players'}
+TYPES={'combined'}
 RESOURCES={
  'sofascore_stats':('Sofascore · player statistics','sofascore'),
  'sofascore_details':('Sofascore · match detail bundle','sofascore'),

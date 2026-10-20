@@ -1,3 +1,4 @@
+from tests.paths import system_path
 """WhoScored native exports, offline integration and transport identity contracts."""
 from copy import deepcopy
 import json
@@ -8,17 +9,16 @@ from unittest.mock import Mock, patch
 
 import pandas as pd
 import config
-import whoscored_events
 from collection.ensemble import ensemble_session, import_pending
 from collection.ensembleProgress import job_key
 from collection.seasonRunner import SeasonRunner
-from collection.whoScoredEvents import WhoScoredEventRunner
+from tests.legacy_collectors import WhoScoredEventRunner
 from collection.whoScoredExports import export_standalone, package_standalone
 from collection.whoScoredData import standalone_directory
 from providers.cache import ResponseCache
 from providers.httpClient import ProviderRequestError, ProviderError
 from providers.whoScoredClient import WhoScoredClient, embedded_json
-from providers.whoScoredTransport import WhoScoredTransport, BrowserWhoScoredClient, WhoScoredBrowserGate
+from providers.transports.whoscored import WhoScoredTransport, ExtensionWhoScoredClient, WhoScoredExtensionGate
 from storage.pandasStore import atomic_json, PandasStore
 from tests.test_providers import Sofa, event
 
@@ -84,16 +84,6 @@ class WhoScoredIntegrationTests(unittest.TestCase):
             with ensemble_session(root,Path(tmp)/'ensemble',quiet,worker_id='mac') as progress:
                 self.assertIn(job_key('whoscored_events','Premier League','2024/25',11),progress.local_records)
 
-    def test_export_action_packages_selected_native_tables_through_real_launcher(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base=Path(tmp);populate(base/'data')
-            code=whoscored_events.main(['export','--competition','EPL','--season','2024/25',
-                '--data-root',str(base/'data'),'--ensemble-root',str(base/'ensemble'),
-                '--build-dataset','--dataset-root',str(base/'dataset'),'--compile-events'])
-            self.assertEqual(code,0)
-            target=base/'dataset/whoscored/premier-league/2024-2025'
-            self.assertEqual(pd.read_csv(target/'events.csv').wsc_match_id.tolist(),[11])
-            self.assertTrue((target/'player_match_stats.csv').exists())
 
     def test_existing_sofascore_only_checkpoints_gain_whoscored_during_offline_export(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -106,21 +96,6 @@ class WhoScoredIntegrationTests(unittest.TestCase):
             self.assertEqual(match.metadata['provider_match_ids']['whoscored'],11)
             self.assertEqual(len(pd.read_csv(directory/'events.csv')),1)
 
-    def test_direct_launcher_updates_worker_inventory_and_skips_remote_saved_games(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base=Path(tmp);source=base/'source';populate(source)
-            shared=base/'ensemble'
-            with ensemble_session(source,shared,quiet,worker_id='msi'):pass
-            target=base/'target';directory=populate(target)
-            next((directory/'raw'/'whoscored').glob('*.json')).unlink()
-            client=Mock();client.request_gate.is_blocked=False
-            with patch('collection.whoScoredEvents.create_whoscored_client') as factory:
-                factory.return_value.__enter__.return_value=client
-                self.assertEqual(whoscored_events.main(['--competition','EPL','--season','2024/25',
-                    '--data-root',str(target),'--ensemble-root',str(shared),'--worker-id','mac','--offline']),0)
-            client.match_details.assert_not_called()
-            records=json.loads((shared/'workers'/'mac.json').read_text())['records']
-            self.assertEqual(records,{})
 
     def test_import_keeps_one_exact_event_response_instead_of_synthesizing_a_stream(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -136,39 +111,13 @@ class WhoScoredIntegrationTests(unittest.TestCase):
 
 
 class WhoScoredTransportTests(unittest.TestCase):
-    def test_browser_fallback_is_sticky_but_respects_429_and_offline(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            http=Mock();http.match_details.side_effect=ProviderRequestError('Denied',status_code=403)
-            browser=Mock();browser.match_details.return_value=payload()
-            client=WhoScoredTransport(tmp,mode='auto',http=http,browser=browser,report=quiet)
-            self.assertEqual(client.match_details(11),payload());client.match_details(11)
-            http.match_details.assert_called_once();self.assertEqual(browser.match_details.call_count,2)
-            for status,offline in [(429,False),(403,True),(401,False),(404,False)]:
-                http=Mock();http.match_details.side_effect=ProviderRequestError('Denied',status_code=status)
-                browser=Mock();client=WhoScoredTransport(tmp,mode='auto',offline=offline,http=http,browser=browser,report=quiet)
-                with self.assertRaises(ProviderRequestError):client.match_details(11)
-                browser.match_details.assert_not_called()
 
-    def test_browser_cache_is_shared_with_http_and_offline_never_launches(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            client=BrowserWhoScoredClient(tmp)
-            page=Mock();page.status=200
-            sample=payload()
-            html='matchId: 11, matchCentreData: '+json.dumps(sample['matchCentreData'])+', matchCentreEventTypeJson: '+json.dumps(sample['matchCentreEventTypeJson'])
-            client._read=Mock(return_value={'ok':True,'status':200,'source_url':'https://www.whoscored.com/matches/11/live','text':html})
-            with patch.object(client.request_gate,'wait'):
-                self.assertEqual(client.get_text('matches/11/live'),html)
-            offline=BrowserWhoScoredClient(tmp,offline=True)
-            with patch.object(offline,'_start') as launch:
-                self.assertEqual(offline.get_text('matches/11/live'),html)
-                with self.assertRaises(ProviderRequestError):offline.get_text('matches/12/live')
-                launch.assert_not_called()
 
     def test_extension_payload_is_parsed_and_wrong_match_or_origin_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             bridge=Mock();p=payload();text='matchId: 11, matchCentreData: '+json.dumps(p['matchCentreData'])+', matchCentreEventTypeJson: '+json.dumps(p['matchCentreEventTypeJson'])
             bridge.request.return_value={'ok':True,'status':200,'source_url':'https://www.whoscored.com/matches/11/live','text':text}
-            client=BrowserWhoScoredClient(tmp,mode='extension',bridge=bridge)
+            client=ExtensionWhoScoredClient(tmp,bridge=bridge)
             with patch.object(client.request_gate,'wait'):
                 self.assertEqual(client.match_details(11)['match_id'],11)
                 with self.assertRaisesRegex(ProviderError,'different or incomplete'):client.match_details(12)
@@ -184,8 +133,8 @@ class WhoScoredTransportTests(unittest.TestCase):
     def test_browser_ignores_http_verification_but_shares_rate_limit(self):
         from providers.safeClient import PersistentGate
         with tempfile.TemporaryDirectory() as tmp:
-            http=PersistentGate(Path(tmp)/'safety','whoscored');http.block(ProviderRequestError('HTTP 403',status_code=403))
-            browser=WhoScoredBrowserGate(tmp);self.assertFalse(browser.is_blocked)
+            http=PersistentGate(system_path(Path(tmp),"safety"),'whoscored');http.block(ProviderRequestError('HTTP 403',status_code=403))
+            browser=WhoScoredExtensionGate(tmp);self.assertFalse(browser.is_blocked)
             http.block(ProviderRequestError('HTTP 429',status_code=429));self.assertTrue(browser.is_blocked)
             with self.assertRaises(ProviderRequestError):browser.wait('matches/11/live')
 

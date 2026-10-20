@@ -1,3 +1,4 @@
+from tests.paths import system_path
 from contextlib import contextmanager
 import json
 from pathlib import Path
@@ -51,7 +52,7 @@ class WorkerTests(unittest.TestCase):
         def runner(args):jobs.append(args);return 0
         self.assertEqual(run(self.args,runner=runner,session=self.session,sync_factory=NoSync),0)
         self.assertEqual(len(jobs),2);self.assertEqual(self.sessions,1)
-        self.assertEqual(json.loads((self.root/'identity.json').read_text())['worker_id'],'main')
+        self.assertEqual(json.loads((system_path(self.root,"identity.json")).read_text())['worker_id'],'main')
         self.assertEqual(run(self.args,runner=runner,session=self.session,sync_factory=NoSync),0)
         self.assertEqual(len(jobs),2);self.assertEqual(self.sessions,1)
         self.assertEqual(run(self.args+['--retry'],runner=runner,session=self.session,sync_factory=NoSync),0)
@@ -62,7 +63,7 @@ class WorkerTests(unittest.TestCase):
         def no_job(args):raise AssertionError('Unassigned worker scraped')
         self.assertEqual(run(args,runner=no_job,session=self.session,sync_factory=NoSync),0)
         self.assertEqual(self.sessions,0)
-        self.assertEqual(json.loads((self.root/'identity.json').read_text())['worker_id'],'msi')
+        self.assertEqual(json.loads((system_path(self.root,"identity.json")).read_text())['worker_id'],'msi')
 
     def test_local_plan_changes_restart_only_after_runner_returns(self):
         calls=[]
@@ -92,12 +93,12 @@ class WorkerTests(unittest.TestCase):
         from storage.pandasStore import atomic_json
         atomic_json(self.root/'.soccer-scraper.json',{'format':1})
         identity={'worker_id':'original','instance_id':'original-folder'}
-        atomic_json(self.root/'identity.json',identity)
+        atomic_json(system_path(self.root,"identity.json"),identity)
         atomic_json(self.ensemble/'workers/main.json',{'format':'soccer-analysis-progress-v1',
             'worker_id':'main','instance_id':'different-folder','records':{}})
         with self.assertRaisesRegex(ValueError,'another data folder'):
             run(self.args,runner=lambda args:0,session=self.session,sync_factory=NoSync)
-        self.assertEqual(json.loads((self.root/'identity.json').read_text()),identity)
+        self.assertEqual(json.loads((system_path(self.root,"identity.json")).read_text()),identity)
 
     def test_unknown_worker_fails_without_writing(self):
         with self.assertRaises(ValueError):run([v if v!='main' else 'unknown' for v in self.args],sync_factory=NoSync)
@@ -139,7 +140,7 @@ class WorkerTests(unittest.TestCase):
             time[0]=3;job.end();return 0
         with patch('collection.worker.Reporter',Direct):
             self.assertEqual(run(self.args,runner=runner,session=self.session,sync_factory=Sync,clock=lambda:time[0]),0)
-        state=json.loads((self.root/'worker_runtime/main.json').read_text())
+        state=json.loads((self.root/'_system/workers/main.json').read_text())
         self.assertEqual(next(iter(state['schedules'].values()))['match_ids'],['1','2'])
         phase=next(iter(state['phase_stats'].values()))
         self.assertEqual(phase['scraped'],2);self.assertIn('eta_seconds',phase)
@@ -149,7 +150,7 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(run(self.args+['--monitor'],runner=lambda args:calls.append(args) or 0,
             session=self.session,sync_factory=NoSync),0)
         self.assertEqual(calls,[]);self.assertEqual(self.sessions,0)
-        state=json.loads((self.root/'worker_runtime/main.json').read_text())
+        state=json.loads((self.root/'_system/workers/main.json').read_text())
         self.assertEqual(state['role'],'monitor');self.assertEqual(state['state'],'monitoring')
 
     def test_runtime_retains_targets_and_finished_job_timing_across_restart(self):

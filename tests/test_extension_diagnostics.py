@@ -3,7 +3,7 @@ import json
 import tempfile
 import unittest
 
-from providers.extensionDiagnostics import ExtensionDiagnostics
+from providers.transports.diagnostics import ExtensionDiagnostics
 
 
 class ExtensionDiagnosticTests(unittest.TestCase):

@@ -1,11 +1,12 @@
 """Existing Sofascore data contract over JavaScript in a user-selected Chrome tab."""
+from storage.layout import system_path
 import re
 from urllib.parse import urlencode, urlsplit
 
 from storage.pandasStore import atomic_json
-from .browserSofaScore import BrowserSofaScoreClient, event_url, validate_payload
-from .extensionBridge import acquire_bridge
-from .httpClient import ProviderError, ProviderRequestError
+from .sofascore_payloads import SofaScoreExtensionPayloads, event_url, validate_payload
+from .bridge import acquire_bridge
+from ..httpClient import ProviderError, ProviderRequestError
 
 ENDPOINT = re.compile(
     r'(?:event/\d+(?:/(?:lineups|statistics|incidents|graph/momentum|average-positions|shotmap|'
@@ -13,16 +14,16 @@ ENDPOINT = re.compile(
     r'unique-tournament/\d+/(?:seasons|season/\d+/events/(?:last|next)/\d+))$')
 
 
-class ExtensionSofaScoreClient(BrowserSofaScoreClient):
+class ExtensionSofaScoreClient(SofaScoreExtensionPayloads):
     active = 'extension'
-    uses_browser = True  # Request the same detailed coverage as visible-browser runs.
+    captures_details = True  # Request the same detailed coverage as visible-browser runs.
 
     def __init__(self, root, settings, *, offline=False, report=print, bridge=None):
         super().__init__(root, settings, offline=offline, report=report)
-        self.cache_dir = self.root/'extension_cache'/'sofascore'
+        self.cache_dir = self.cache.directory
         self.bridge, self._owns_bridge = ((bridge, False) if bridge is not None else
             acquire_bridge(report=report, connect_timeout=settings['manual_wait_seconds'],
-                           diagnostics_dir=self.root/'extension_diagnostics'/'sofascore'))
+                           diagnostics_dir=system_path(self.root,'extension_diagnostics')/'sofascore'))
         self.last_transport = 'extension'
         self.audit = {}
         self.source_url = None
@@ -150,7 +151,7 @@ class ExtensionSofaScoreClient(BrowserSofaScoreClient):
             'method': method, 'source_url': self.source_url, 'payload': payload}
         from datetime import datetime, timezone
         record['fetched_at'] = datetime.now(timezone.utc).isoformat()
-        atomic_json(self._cache_path(endpoint, params), record)
+        self.cache.write(endpoint, params, 'json', record)
         self.responses[(endpoint, urlencode(params or {}, doseq=True))] = record
         self.audit[endpoint] = {'transport': 'extension', 'method': method}
         return payload

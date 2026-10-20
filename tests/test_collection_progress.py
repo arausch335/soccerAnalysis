@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock
 
 from collection.progress import CollectionProgress, get_job, prime_job, progress_scope
-from collection.whoScoredEvents import WhoScoredEventRunner
+from tests.legacy_collectors import WhoScoredEventRunner
 from tests.test_whoscored_events import WhoScoredOnly
 
 
@@ -139,22 +139,6 @@ class ProgressTests(unittest.TestCase):
                 self.assertEqual(client.network_requests,1)
                 session.get.assert_called_once()
 
-    def test_browser_captured_response_counts_but_cache_read_does_not(self):
-        import config
-        from providers.browserSofaScore import BrowserSofaScoreClient
-        from providers.sofaScoreTransport import SofaScoreTransport
-        from tests.test_providers import event
-        with tempfile.TemporaryDirectory() as folder:
-            browser=BrowserSofaScoreClient(folder,config.TRANSPORT['browser'])
-            response=SimpleNamespace(url='https://www.sofascore.com/api/v1/event/1',
-                request=SimpleNamespace(resource_type='fetch'),status=200,headers={},
-                json=lambda:{'event':event(1)})
-            browser._capture(response)
-            self.assertEqual(browser.event(1),{'event':event(1)})
-            self.assertEqual(browser.network_requests,1)
-            transport=SofaScoreTransport(folder,mode='auto',http=SimpleNamespace(network_requests=2),browser=browser)
-            self.assertEqual(transport.network_requests,3)
-            browser.close()
 
 
 

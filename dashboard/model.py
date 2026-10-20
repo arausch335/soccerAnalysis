@@ -1,4 +1,5 @@
 """Read inventories and saved schedules, without scanning raw payloads or scraping."""
+from storage.layout import system_path
 from collections import Counter
 from datetime import datetime, timezone
 import json
@@ -91,7 +92,7 @@ class DashboardModel:
             path=self.ensemble/'runtime'/(worker+'.json')
             direct=self.ensemble/'reporting'/'runtime'/(worker+'.json')
             if direct.exists():path=direct
-            local=self.root/'worker_runtime'/(worker+'.json')
+            local=system_path(self.root,'worker_runtime')/(worker+'.json')
             if worker==self.worker and local.exists():path=local
             if path.exists():
                 try:

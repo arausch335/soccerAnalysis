@@ -10,12 +10,12 @@ from providers import SofaScoreLoader, FotMobLoader, WhoScoredLoader, ProviderEr
 from providers.cache import ResponseCache
 from providers.events import fotmob_fixture, whoscored_fixture
 from providers.fotMobClient import without_incident_stream
-from providers.identity import IdentityResolver, match_fixture
+from providers.identity import IdentityResolver, IdentityError, match_fixture
 from providers.statistics import synthesize
 from models import FootballDataset
 from storage import PandasStore
 from storage.pandasStore import atomic_json, KEYS
-from .runner import atomic_csv, now
+from .files import atomic_csv, now
 from .selection import (competition_by_name, resolve_sofascore_season, season_key,
                         season_label, months_between, is_qualification_event,
                         with_reviewed_schedule_results, configured_whoscored_stages)
@@ -450,14 +450,14 @@ class SeasonRunner:
             errors=[]
             if self.baseline_provider=='sofascore':timing.set_provider('sofascore')
             browser_done=resuming and sofascore_stats_complete(match)
-            if self.baseline_provider=='sofascore' and getattr(sofa,'uses_browser',False) and not browser_done:
+            if self.baseline_provider=='sofascore' and getattr(sofa,'captures_details',False) and not browser_done:
                 errors.extend(self._browser_match_details(sofa,event,match));browser_done=True
             if self.baseline_provider=='sofascore' and not self._sofascore_blocked:
                 errors.extend(self._collect_spatial(match,event,sofa))
                 if getattr(sofa,'requires_manual_attention',False) is True:self._sofascore_blocked=True
                 # Fallback can begin on an optional spatial request after HTTP
                 # lineups succeeded. The same match still needs full browser data.
-                if getattr(sofa,'uses_browser',False) and not browser_done and not self._sofascore_blocked:
+                if getattr(sofa,'captures_details',False) and not browser_done and not self._sofascore_blocked:
                     errors.extend(self._browser_match_details(sofa,event,match))
                     if not self._sofascore_blocked:errors.extend(self._collect_spatial(match,event,sofa))
             for provider in self.providers:
@@ -487,6 +487,15 @@ class SeasonRunner:
                 match.metadata['collection_transport']={key:value for key,value in sofa.audit.items()
                     if key==f'event/{mid}' or key.startswith(f'event/{mid}/')}
             store.to_csv(dataset)
+            # Raw files and the checkpoint now hold every successful provider result.
+            if all(match.metadata.get('provider_status',{}).get(p)=='complete' for p in self.providers):
+                for provider,client in self.clients.items():
+                    provider_id=match.metadata.get('provider_match_ids',{}).get(provider,mid)
+                    for transport in (getattr(client,'http',None),getattr(client,'extension',None)):
+                        cache=getattr(transport,'cache',None)
+                        if cache is not None:cache.release_match(provider_id)
+                responses=getattr(sofa,'responses',None)
+                if isinstance(responses,dict):responses.clear()
             after=network_count(self.clients.values())
             record_match(match,collected_here=timing.before is None or after is None or after>timing.before)
             entry.update(status='complete' if not errors else 'partial',error='; '.join(errors),

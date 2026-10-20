@@ -144,7 +144,7 @@ class PortableProgress:
         # Validate actual artifacts rather than trusting a copied status CSV.
         from review_data import who_valid
         from providers.cache import ResponseCache
-        from .fotmobOnly import player_rows
+        from .legacyFotmobRows import player_rows
         for marker in self.root.glob('*/*/match_checkpoints/*/CURRENT.json'):
             dataset=PandasStore(marker.parent).from_csv()
             for match in dataset.matches.values():

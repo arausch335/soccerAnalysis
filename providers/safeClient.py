@@ -1,4 +1,5 @@
 """Disk-backed pacing, cooldowns and caches for portable collection."""
+from storage.layout import system_path
 import hashlib
 import json
 import math
@@ -8,6 +9,7 @@ from pathlib import Path
 
 from filelock import FileLock
 from storage.pandasStore import atomic_json
+from storage.requestCache import RequestCache
 from .httpClient import ProviderRequestError
 from .sofaScoreClient import SofaScoreClient
 from .fotMobClient import FotMobClient
@@ -88,13 +90,14 @@ class CachedTransport:
                  min_delay=8, max_delay=15):
         self.offline = offline
         self.refresh_cache = False
-        self.response_directory = Path(state_directory) / 'http_cache' / provider
+        self.cache = RequestCache(state_directory,provider)
+        self.response_directory = self.cache.directory
         self.response_directory.mkdir(parents=True, exist_ok=True)
         import config
         if min_delay==8 and max_delay==15:
             min_delay=config.TRANSPORT['http']['delay_min_seconds']
             max_delay=config.TRANSPORT['http']['delay_max_seconds']
-        gate = PersistentGate(Path(state_directory) / 'safety', provider,
+        gate = PersistentGate(system_path(Path(state_directory),'safety'), provider,
                               min_delay=min_delay,max_delay=max_delay)
         import config
         owned=session is None
@@ -113,12 +116,8 @@ class CachedTransport:
         else:super().close()
 
     def _cached(self, endpoint, params, kind, request):
-        identity = json.dumps([self.BASE_URL, endpoint, params, kind], sort_keys=True)
-        path = self.response_directory / (hashlib.sha256(identity.encode()).hexdigest() + '.json')
-        if path.exists() and not self.refresh_cache:
-            saved = json.loads(path.read_text(encoding='utf-8'))
-            if saved['identity'] != identity:
-                raise ValueError('HTTP cache identity mismatch')
+        saved=self.cache.read(endpoint,params,kind) if not self.refresh_cache else None
+        if saved is not None:
             if saved.get('status') == 404:
                 raise ProviderRequestError('Cached HTTP 404: ' + endpoint, endpoint=endpoint, status_code=404)
             self.last_transport=saved.get('transport','http_cache')
@@ -129,13 +128,13 @@ class CachedTransport:
             payload = request()
         except ProviderRequestError as exc:
             if exc.status_code == 404:
-                atomic_json(path, dict(identity=identity, status=404, fetched_at=time.time()))
+                self.cache.write(endpoint,params,kind,dict(status=404,fetched_at=time.time()))
             # A challenge can arrive as HTTP 200 HTML or invalid JSON. Stop
             # that provider rather than issuing the rest of a season's calls.
             elif exc.status_code == 200 or exc.status_code is None:
                 self.request_gate.block(exc)
             raise
-        atomic_json(path, dict(identity=identity, status=200, fetched_at=time.time(), payload=payload,transport='http',identity_profile=self.transport_identity['profile']))
+        self.cache.write(endpoint,params,kind,dict(status=200,fetched_at=time.time(),payload=payload,transport='http'))
         self.last_transport='http'
         return payload
 

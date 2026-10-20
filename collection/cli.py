@@ -1,4 +1,5 @@
 """Portable CLI. New collections use dedicated, marked data directories."""
+from storage.layout import system_path,organize_data_root
 import argparse
 from contextlib import ExitStack
 import json
@@ -9,8 +10,10 @@ import config
 from filelock import FileLock, Timeout
 from providers.httpClient import ProviderError
 from providers.safeClient import SafeSofaScoreClient, SafeFotMobClient, SafeWhoScoredClient
-from providers.sofaScoreTransport import create_sofascore_client
-from providers.whoScoredTransport import create_whoscored_client
+from providers.transports.sofascore import create_sofascore_client
+from providers.transports.whoscored import create_whoscored_client
+from providers.transports.fotmob import create_fotmob_client
+from providers.transports.bridge import extension_scope,acquire_bridge
 from providers.sofaScoreProbe import DEFAULT_MATCH_ID, probe_match
 from collection.paths import collection_directory
 from collection.seasonRunner import SeasonRunner, SPATIAL_ENDPOINTS
@@ -31,7 +34,7 @@ def main(argv=None):
     parser.add_argument('--competition', default='Premier League')
     parser.add_argument('--season', default='2024/25')
     parser.add_argument('--providers', nargs='+', choices=['sofascore','fotmob','whoscored'],
-                        default=None)
+                        default=['sofascore','fotmob','whoscored'])
     parser.add_argument('--limit', type=int, help='First N finished matches; omit for the season')
     spatial_group = parser.add_mutually_exclusive_group()
     spatial_group.add_argument('--sofascore-spatial-capture', choices=SPATIAL_CAPTURE_MODES)
@@ -40,12 +43,12 @@ def main(argv=None):
                         help='Build combined CSV exports after collection (default: enabled)')
     parser.add_argument('--compile-events', action=argparse.BooleanOptionalAction, default=True,
                         help='Compile the WhoScored event stream CSV during export (default: enabled)')
-    parser.add_argument('--sofascore-transport',choices=('http','browser','auto','extension'),default=config.TRANSPORT['sofascore_mode'])
-    parser.add_argument('--whoscored-transport',choices=('http','auto','browser','extension'),default=config.WHOSCORED_ACCESS)
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--match-id',type=int,default=DEFAULT_MATCH_ID,
                         help='Sofascore match ID for the single-request probe')
     args = parser.parse_args(argv)
+    if set(args.providers)!= {'sofascore','fotmob','whoscored'}:
+        parser.error('Combined collection requires all three providers')
     if args.match_id < 1:
         parser.error('match ID must be positive')
     if args.command == 'probe' and args.offline:
@@ -59,6 +62,7 @@ def main(argv=None):
     if args.limit is not None and args.limit < 1:
         parser.error('limit must be positive')
     root = args.data_root.resolve()
+    organize_data_root(root)
     marker = root / '.soccer-scraper.json'
     if not marker.exists():
         if root.exists() and any(root.iterdir()):
@@ -70,10 +74,13 @@ def main(argv=None):
     # Active collections use data/<competition>/<YYYY-YYYY>. Historical
     # collections belong under outputs/old_data and remain outside this root.
     try:
-        with FileLock(str(root / '.collector.lock'), timeout=0), ExitStack() as stack:
+        with FileLock(str(system_path(root,'.collector.lock')), timeout=0), ExitStack() as stack:
+            stack.enter_context(extension_scope())
+            if not args.offline and args.command not in ('export','status'):
+                bridge,_=acquire_bridge(connect_timeout=config.TRANSPORT['extension']['manual_wait_seconds'],diagnostics_dir=system_path(root,'extension_diagnostics')/'collector')
+                bridge.start()
             if args.command == 'probe':
-                probe_client=(create_sofascore_client(root,mode='extension') if args.sofascore_transport=='extension'
-                              else SafeSofaScoreClient(root,'sofascore',offline=args.offline))
+                probe_client=create_sofascore_client(root,offline=args.offline)
                 with probe_client as client:
                     ok,message = probe_match(client,args.match_id)
                     print(message)
@@ -108,17 +115,23 @@ def main(argv=None):
                 for name in ('job.json','run_summary.json','capabilities.json'):
                     path = directory / name
                     if path.exists(): print(name + '\n' + path.read_text(encoding='utf-8'))
-                for path in (root / 'safety').glob('*.json'):
+                for path in (system_path(root,'safety')).glob('*.json'):
                     print(path.name + '\n' + path.read_text(encoding='utf-8'))
                 return 0
-            classes = dict(sofascore=create_sofascore_client, fotmob=SafeFotMobClient, whoscored=create_whoscored_client)
+            settings['providers']=['sofascore','fotmob','whoscored']
+            if args.command in ('start','resume'):
+                settings['workflow_version']=3;atomic_json(settings_path,settings)
+            classes = dict(sofascore=create_sofascore_client, fotmob=create_fotmob_client, whoscored=create_whoscored_client)
             clients = {
                 p: stack.enter_context(
-                    classes[p](root, p, offline=args.offline or args.command == 'export',
-                               **({'mode':args.sofascore_transport} if p=='sofascore' else {'mode':args.whoscored_transport} if p=='whoscored' else {}))
+                    classes[p](root, p, offline=args.offline or args.command == 'export')
                 )
                 for p in settings['providers']
             }
+            if args.command=='resume' and settings.get('providers')!=['sofascore','fotmob','whoscored']:
+                settings['providers']=['sofascore','fotmob','whoscored']
+            if args.command in ('start','resume'):
+                settings['workflow_version']=3;atomic_json(settings_path,settings);atomic_json(settings_path,settings)
             runner = SeasonRunner(clients,directory,providers=settings['providers'],spatial=settings['spatial'])
             if args.command == 'export':
                 events = json.loads((directory/'schedule.json').read_text(encoding='utf-8'))['events']

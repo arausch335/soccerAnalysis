@@ -7,6 +7,7 @@ The selected provider owns every match/team ID in the output. FotMob schedule
 feeds do not contain venue or city, so those columns are blank in FotMob runs.
 """
 from __future__ import annotations
+from storage.layout import system_path
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -20,7 +21,7 @@ import pandas as pd
 from providers.sofascore_ids import SOFASCORE_COMPETITION_IDS
 from providers.events import fotmob_fixture
 from providers.safeClient import SafeFotMobClient, SafeSofaScoreClient
-from collection.runner import atomic_csv
+from collection.files import atomic_csv
 from collection.selection import resolve_sofascore_season
 from dataset_builder import FIXTURE_COLUMNS, fixtures_from_events
 from storage.pandasStore import atomic_json
@@ -146,7 +147,7 @@ def _schedule_events(client, competition, start, season_id, *, provider,
     label=season_label(start)
     competition_id=(competition.sofascore_id if provider=='sofascore' else
                     competition.fotmob_id)
-    checkpoint=(data_root/'fixture_schedules'/provider/_slug(competition.name)/
+    checkpoint=(system_path(data_root,'fixture_schedules')/provider/_slug(competition.name)/
                 f'{label}.json')
     refresh=refresh_current and start == current_start
     save_checkpoint=False
@@ -216,7 +217,7 @@ def build(*, provider=PROVIDER, client=None, data_root=DATA_ROOT, output_csv=OUT
     print(f'Fixture provider: {provider}; match and team IDs use its namespace.',
           flush=True)
     frames=[]
-    with FileLock(str(data_root/'.collector.lock'),timeout=0):
+    with FileLock(str(system_path(data_root,'.collector.lock')),timeout=0):
         for competition in competitions:
             first=max(start_season,competition.first_season)
             if first > end:continue

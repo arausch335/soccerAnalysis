@@ -1,4 +1,5 @@
 """Exclusive output-directory locks on Windows and POSIX."""
+from storage.layout import system_path
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 def output_lock(folder):
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    with (folder / ".collector.lock").open("a+b") as handle:
+    with (system_path(folder,'.collector.lock')).open("a+b") as handle:
         if os.name == "nt":
             import msvcrt
             handle.seek(0, os.SEEK_END)

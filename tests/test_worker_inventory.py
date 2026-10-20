@@ -1,3 +1,4 @@
+from tests.paths import system_path
 import json
 from pathlib import Path
 import shutil
@@ -24,7 +25,7 @@ class WorkerInventoryTests(unittest.TestCase):
             base=Path(folder);root=base/'data';staging=base/'ensemble';populate(root,limit=1)
             with patch('main.collect',side_effect=AssertionError('Inventory must not scrape')):
                 self.assertEqual(self.inventory(root,staging,'main-mac'),0)
-            identity=json.loads((root/'identity.json').read_text())
+            identity=json.loads((system_path(root,"identity.json")).read_text())
             self.assertEqual(identity['worker_id'],'main-mac')
             worker=staging/'workers'/'main-mac.json';before=worker.read_bytes()
             saved=json.loads(before)
@@ -59,15 +60,15 @@ class WorkerInventoryTests(unittest.TestCase):
             (staging/'transfer').mkdir()
             shutil.copytree(laptop,staging/'transfer'/'data')
             self.assertEqual(self.inventory(root,staging),0)
-            self.assertEqual(json.loads((root/'identity.json').read_text())['worker_id'],'main-mac')
+            self.assertEqual(json.loads((system_path(root,"identity.json")).read_text())['worker_id'],'main-mac')
             records=json.loads((staging/'workers'/'main-mac.json').read_text())['records']
             first=job_key('sofascore','Premier League','2024/25',1)
             second=job_key('sofascore','Premier League','2024/25',2)
             self.assertEqual(records[first]['origins'],['laptop','main-mac'])
             self.assertEqual(records[second]['origins'],['laptop'])
-            archive=next((root/'ensemble_imports').iterdir())
+            archive=next((system_path(root,"ensemble_imports")).iterdir())
             self.assertEqual(json.loads((archive/'import.json').read_text())['source_worker_id'],'laptop')
-            self.assertEqual(json.loads((archive/'machine_state'/'identity.json').read_text())['worker_id'],'laptop')
+            self.assertEqual(json.loads((system_path(archive/'machine_state',"identity.json")).read_text())['worker_id'],'laptop')
 
     def test_inventory_refresh_removes_missing_artifacts_from_own_held_snapshot(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -95,11 +96,11 @@ class WorkerInventoryTests(unittest.TestCase):
     def test_user_can_set_identity_in_the_data_folder_and_invalid_ids_are_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder);root=base/'data';staging=base/'ensemble';populate(root,limit=1)
-            atomic_json(root/'identity.json',{'worker_id':'main-mac'})
+            atomic_json(system_path(root,"identity.json"),{'worker_id':'main-mac'})
             self.assertEqual(self.inventory(root,staging),0)
             self.assertTrue((staging/'workers'/'main-mac.json').exists())
             self.assertEqual(self.inventory(root,staging,'../unsafe'),2)
-            self.assertEqual(json.loads((root/'identity.json').read_text())['worker_id'],'main-mac')
+            self.assertEqual(json.loads((system_path(root,"identity.json")).read_text())['worker_id'],'main-mac')
 
 
 if __name__=='__main__':unittest.main()

@@ -384,3 +384,20 @@ test('WhoScored navigates only the selected tab and returns the intended documen
   assert.deepEqual(navigations,['https://www.whoscored.com/matches/11/live']);
   await assert.rejects(execute({tabId:1},{id:'evil',action:'whoscored',args:{kind:'text',endpoint:'../settings',params:{}}}));
 });
+
+test('one chosen tab switches from WhoScored to FotMob and back to a Sofascore schedule',async()=>{
+  let url='https://www.whoscored.com/matches/123/live';const moves=[];
+  chrome.tabs.get=async()=>({id:1,url,status:'loading'});
+  chrome.tabs.update=async(_id,changes)=>{url=changes.url || url;moves.push(url);};
+  chrome.scripting.executeScript=async request=>{
+    if (request.func.name==='fotmobPageOperation') return [{frameId:0,result:{ok:true,status:200,source_url:url,payload:{general:{matchId:123}}}}];
+    if (request.func.name==='pageOperation') return [{frameId:0,result:{ok:true,status:200,source_url:url,payload:{seasons:[]}}}];
+    return [{frameId:0,result:'interactive'}];
+  };
+  const s={...store,tabId:1};
+  const fot=await execute(s,{id:'fot',action:'fotmob',args:{endpoint:'matchDetails',params:{matchId:123}}});
+  assert.equal(fot.status,200);assert.equal(fot.source_url,'https://www.fotmob.com/');
+  const sofa=await execute(s,{id:'sofa',action:'page',args:{operation:'read',endpoint:'unique-tournament/17/seasons'}});
+  assert.equal(sofa.status,200);assert.equal(sofa.source_url,'https://www.sofascore.com/');
+  assert.deepEqual(moves,['https://www.fotmob.com/','https://www.sofascore.com/']);
+});

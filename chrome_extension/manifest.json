@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Soccer Collector",
-  "version": "0.5.0",
-  "description": "Connect a chosen Sofascore or WhoScored tab to your local soccerAnalysis collector.",
+  "version": "0.6.0",
+  "description": "API fallback collection from Sofascore, WhoScored and FotMob in one chosen Chrome tab.",
   "minimum_chrome_version": "120",
   "permissions": [
     "storage",
@@ -12,6 +12,7 @@
   "host_permissions": [
     "https://www.sofascore.com/*",
     "https://www.whoscored.com/*",
+    "https://www.fotmob.com/*",
     "http://127.0.0.1/*"
   ],
   "background": {

@@ -11,10 +11,10 @@ import unittest
 import pandas as pd
 from collection.playerStatsSchema import PLAYER_MATCH_COLUMNS
 from collection.seasonRunner import SeasonRunner
-from providers.extensionBridge import ExtensionBridge
-from providers.extensionSofaScore import ExtensionSofaScoreClient
+from providers.transports.bridge import ExtensionBridge
+from providers.transports.sofascore_extension import ExtensionSofaScoreClient
 from tools.extension_setup import prepare_extension
-from tests.test_browser_transport import browser_settings
+from tests.test_extension_payloads import extension_settings
 from tests.test_extension_client import FakeBridge
 from tests.test_providers import event, lineup
 
@@ -52,7 +52,7 @@ class ExtensionUiTests(unittest.TestCase):
             root=Path(folder);directory=prepare_extension(root/'load-this-extension')
             self.assertFalse(any(p.name.startswith('_') for p in directory.rglob('*')))
             bridge=ExtensionBridge(report=quiet,connect_timeout=5,diagnostics_dir=root/'trace');bridge.start()
-            settings={**browser_settings(),'timeout_seconds':5,'manual_wait_seconds':10}
+            settings={**extension_settings(),'timeout_seconds':5,'manual_wait_seconds':10}
             context=p.chromium.launch_persistent_context(str(root/'profile'),headless=False,
                 args=[f'--disable-extensions-except={directory}',f'--load-extension={directory}'])
             fake=FakeBridge();blocked=False;interrupted=False;requests=[]

@@ -1,4 +1,5 @@
 """WhoScored's provider files inside the shared data/<league>/<season> tree."""
+from storage.layout import system_path
 import hashlib
 import json
 from pathlib import Path
@@ -114,7 +115,7 @@ def migrate_legacy(root,report=print):
                     validate_match(saved['payload'],mid,events[mid])
                 raw_targets[relative]=ResponseCache(destination/'raw').path('whoscored',f'match/{mid}')
         batch=hashlib.sha256(json.dumps([(str(relative),checksum) for _,relative,checksum in files]).encode()).hexdigest()[:16]
-        archive=root/'ensemble_imports'/'whoscored-layout'/source.parent.parent.name/source.parent.name/source.name/batch
+        archive=system_path(root,'ensemble_imports')/'whoscored-layout'/source.parent.parent.name/source.parent.name/source.name/batch
         if any(parent.is_symlink() for parent in (archive,*archive.parents)) or root not in archive.resolve().parents:
             raise ValueError('WhoScored migration archive leaves the data root')
         for path,relative,_ in files:

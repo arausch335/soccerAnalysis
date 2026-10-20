@@ -1,4 +1,5 @@
 """User-named worker identity and data-carried collection origins."""
+from storage.layout import system_path
 import json
 from pathlib import Path
 import re
@@ -17,18 +18,18 @@ def valid_worker_id(value):
 
 def read_worker_id(root):
     root=Path(root)
-    identity=root/'identity.json'
+    identity=system_path(root,'identity.json')
     if identity.exists():
         saved=json.loads(identity.read_text(encoding='utf-8'))
         if not isinstance(saved,dict):raise ValueError('data/identity.json must be an object with worker_id')
         return valid_worker_id(saved.get('worker_id'))
-    legacy=root/'.ensemble-computer.json'
+    legacy=system_path(root,'.ensemble-computer.json')
     if legacy.exists():return 'worker-'+str(json.loads(legacy.read_text(encoding='utf-8'))['id'])[:12]
     return 'legacy-unidentified'
 
 
 def ensure_identity(root, worker_id=None):
-    root=Path(root);path=root/'identity.json'
+    root=Path(root);path=system_path(root,'identity.json')
     identity=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     if not isinstance(identity,dict):raise ValueError('data/identity.json must be an object with worker_id')
     name=worker_id or identity.get('worker_id')
@@ -41,7 +42,7 @@ def ensure_identity(root, worker_id=None):
 
 
 def read_origins(root):
-    path=Path(root)/'.ensemble-origins.json'
+    path=system_path(Path(root),'.ensemble-origins.json')
     if not path.exists():return {}
     saved=json.loads(path.read_text(encoding='utf-8'))
     if not isinstance(saved,dict) or saved.get('format')!=ORIGIN_FORMAT or not isinstance(saved.get('records'),dict):
@@ -52,4 +53,4 @@ def read_origins(root):
 
 
 def save_origins(root, records):
-    atomic_json(Path(root)/'.ensemble-origins.json',{'format':ORIGIN_FORMAT,'records':records})
+    atomic_json(system_path(Path(root),'.ensemble-origins.json'),{'format':ORIGIN_FORMAT,'records':records})

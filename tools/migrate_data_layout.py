@@ -1,5 +1,6 @@
 """Move flat data/<competition>-YYYY-YY folders to data/<competition>/YYYY-YYYY."""
 from __future__ import annotations
+from storage.layout import system_path
 
 import argparse
 from pathlib import Path
@@ -32,7 +33,7 @@ def migrate(data_root: Path | str, *, dry_run: bool = False) -> list[tuple[Path,
     root = Path(data_root).resolve()
     if dry_run:
         return migration_plan(root)
-    with FileLock(str(root / '.collector.lock'), timeout=0):
+    with FileLock(str(system_path(root,'.collector.lock')), timeout=0):
         plan = migration_plan(root)
         for source, destination in plan:
             destination.parent.mkdir(parents=True, exist_ok=True)

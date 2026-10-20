@@ -1,4 +1,5 @@
 """Small, portable status snapshots. Never include paths, cookies, URLs or errors."""
+from storage.layout import system_path
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -11,7 +12,7 @@ def now():return datetime.now(timezone.utc).isoformat()
 
 class Runtime:
     def __init__(self,root,ensemble,worker):
-        self.path=Path(root)/'worker_runtime'/(worker+'.json')
+        self.path=system_path(Path(root),'worker_runtime')/(worker+'.json')
         self.public=Path(ensemble)/'runtime'/(worker+'.json')
         previous=json.loads(self.path.read_text()) if self.path.exists() else {}
         self._saved_payload=None

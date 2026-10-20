@@ -1,3 +1,4 @@
+from tests.paths import system_path
 import json
 from pathlib import Path
 import shutil
@@ -10,9 +11,9 @@ import config
 from collection.ensemble import ensemble_session, import_pending
 from collection.ensembleProgress import PortableProgress
 from collection.seasonRunner import SeasonRunner
-from collection.whoScoredEvents import WhoScoredEventRunner
-from collection.fotmobOnly import FotMobOnlyRunner
-from providers.extensionBridge import acquire_bridge
+from tests.legacy_collectors import WhoScoredEventRunner
+from tests.legacy_collectors import FotMobOnlyRunner
+from providers.transports.bridge import acquire_bridge
 from storage.pandasStore import PandasStore, atomic_json
 from review_data import build_report
 from tests.test_providers import Sofa, Fot, lineup
@@ -48,8 +49,8 @@ class EnsembleTests(unittest.TestCase):
             populate(live,limit=1);populate(source,extra=True)
             (live/'notes.txt').write_text('local notes')
             (source/'notes.txt').write_text('incoming notes')
-            atomic_json(live/'safety'/'sofascore.json',{'status_code':429,'blocked_until':999})
-            atomic_json(source/'safety'/'sofascore.json',{'status_code':403})
+            atomic_json(system_path(live,"safety")/'sofascore.json',{'status_code':429,'blocked_until':999})
+            atomic_json(system_path(source,"safety")/'sofascore.json',{'status_code':403})
             store=PandasStore(live/'premier-league'/'2024-2025'/'match_checkpoints'/'1')
             dataset=store.from_csv();dataset.matches[1].metadata['local_provenance']={'kept':True};store.to_csv(dataset)
             incoming=PandasStore(source/'premier-league'/'2024-2025'/'match_checkpoints'/'1')
@@ -64,9 +65,9 @@ class EnsembleTests(unittest.TestCase):
             frame=build_report(live,['EPL'],['2024/25'])
             self.assertEqual(dict(zip(frame.provider,frame.complete)),{'sofascore':2,'whoscored':2,'fotmob':3})
             self.assertEqual(set(frame.percent),{100.0})
-            self.assertEqual(json.loads((live/'safety'/'sofascore.json').read_text())['status_code'],429)
+            self.assertEqual(json.loads((system_path(live,"safety")/'sofascore.json').read_text())['status_code'],429)
             self.assertEqual((live/'notes.txt').read_text(),'local notes')
-            archive=next((live/'ensemble_imports').iterdir())
+            archive=next((system_path(live,"ensemble_imports")).iterdir())
             self.assertEqual((archive/'conflicts'/'notes.txt').read_text(),'incoming notes')
             self.assertEqual(json.loads((archive/'import.json').read_text())['state'],'complete')
             portable=json.loads((ensemble/'provenance.json').read_text())
@@ -78,12 +79,12 @@ class EnsembleTests(unittest.TestCase):
             base=Path(folder);root=base/'data';ensemble=base/'ensemble';source=ensemble/'copied-data'
             atomic_json(root/'.soccer-scraper.json',{'format':1})
             atomic_json(source/'.soccer-scraper.json',{'format':1})
-            atomic_json(root/'worker_runtime/main.json',{'state':'local'})
-            atomic_json(source/'worker_runtime/main.json',{'state':'imported'})
+            atomic_json(root/'_system/workers/main.json',{'state':'local'})
+            atomic_json(source/'_system/workers/main.json',{'state':'imported'})
             import_pending(root,ensemble,quiet)
-            self.assertEqual(json.loads((root/'worker_runtime/main.json').read_text())['state'],'local')
-            archive=next((root/'ensemble_imports').iterdir())
-            self.assertEqual(json.loads((archive/'machine_state/worker_runtime/main.json').read_text())['state'],'imported')
+            self.assertEqual(json.loads((root/'_system/workers/main.json').read_text())['state'],'local')
+            archive=next((system_path(root,"ensemble_imports")).iterdir())
+            self.assertEqual(json.loads((archive/'machine_state/_system/workers/main.json').read_text())['state'],'imported')
 
     def test_portable_file_skips_remote_matches_without_claiming_local_completeness(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -153,14 +154,14 @@ class EnsembleTests(unittest.TestCase):
             self.assertEqual(json.loads((root/'job.json').read_text())['provider'],'sofascore')
 
     def test_extension_batch_uses_all_config_combinations_and_one_connection(self):
-        self.assertEqual(config.TRANSPORT['sofascore_mode'],'extension')
+        self.assertIn('extension',config.TRANSPORT)
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder);connections=[]
             def collect(args):
                 connections.append(acquire_bridge(report=quiet)[0]);return 0
             with patch('main.COMPETITIONS',['Premier League','La Liga']),patch('main.SEASONS',['2023/24','2024/25']), \
                     patch('main.collect',side_effect=collect) as scrape:
-                self.assertEqual(main.main(['--collection-types','sofascore','--data-root',str(base/'data'),
+                self.assertEqual(main.main(['--collection-types','combined','--data-root',str(base/'data'),
                     '--ensemble-root',str(base/'ensemble')]),0)
             self.assertEqual(scrape.call_count,4)
             self.assertEqual(len({id(connection) for connection in connections}),1)

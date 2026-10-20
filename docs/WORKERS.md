@@ -21,12 +21,12 @@ for this private connection; port 8766 is the report receiver.
 The reporting service binds specifically to Main’s private/Tailscale IPv4
 address. The dashboard stays at `http://127.0.0.1:8765` on Main. Workers do not
 need the dashboard or a browser tab for reporting. Their existing scraper
-browser and extension are still required by the provider access settings.
+Chrome extension is prepared at startup and used when an API fails.
 
 ## 2. Upgrade the code, preserving old inventories
 
 Stop the old scraper on every computer before updating. Keep its original data
-folder, browser profile, environment and `data/identity.json`.
+folder, environment and `data/_system/config/identity.json`.
 
 On a checkout that previously tracked worker JSON files, use this one-time
 upgrade from the repository directory and its existing Python environment:
@@ -43,7 +43,7 @@ with `--ff-only`. It does not restore settings or source files, touch identities
 or raw datasets, stash changes, push, or rebase. Existing staged changes stop
 the helper before restoration. If unrelated edits or local commits prevent the
 pull, review them normally; do not hard reset or force push. The backups remain
-under `data/worker_runtime/legacy-git-backup/`.
+under `data/_system/workers/legacy-git-backup/`.
 
 New clones can simply use `git pull --ff-only origin main`. Install dependencies
 only if creating an environment: `python -m pip install -r requirements.txt`.
@@ -57,7 +57,7 @@ Replace the example IP with Main’s actual Tailscale IP:
 python -m collection.reporting server --bind 100.80.12.3
 ```
 
-This creates ignored, private `data/reporting.json` and prints a setup command
+This creates ignored, private `data/_system/config/reporting.json` and prints a setup command
 and a separate token for each worker. Keep the tokens private. Re-running the
 command preserves existing tokens, including when changing Main’s bind address.
 Then start Main:
@@ -94,7 +94,7 @@ Reconnect the existing scraper Chrome extension as usual. FotMob still uses
 HTTP JSON endpoints; reporting does not change collection transports.
 
 Connection addresses and tokens live only in each computer’s ignored
-`data/reporting.json`. Shared provider preferences remain in
+`data/_system/config/reporting.json`. Shared provider preferences remain in
 `config/settings.yaml`, and assignments/roles in `config/workers.yaml`.
 
 ## Delivery, offline operation and logs
@@ -109,7 +109,7 @@ work, but a match does not wait for an HTTP request or Git push.
 
 If Main sleeps, Tailscale disconnects, or authentication fails, the worker
 continues scraping and retains reports in
-`data/worker_runtime/reporting-outbox.sqlite`. It retries in the background.
+`data/_system/workers/reporting-outbox.sqlite`. It retries in the background.
 Retries are acknowledged and deduplicated; restarting either computer retains
 unsent reports and received history. Keep the original queue/database files
 alongside the worker’s original identity. Losing/replacing a queue after its
@@ -138,7 +138,7 @@ while offline until delivery succeeds. It is a monitoring tail, not an unlimited
 central archive of every historical log. Abrupt process kills cannot forward a
 partial console line still buffered in memory.
 
-Main stores received state in `data/worker_runtime/reporting.sqlite`, with
+Main stores received state in `data/_system/workers/reporting.sqlite`, with
 ignored inventory/status views under `ensemble_data/reporting/`. The database
 belongs to Main; no database file is opened across the network. The dashboard
 marks a direct worker disconnected after three missed heartbeats. Git checks

@@ -11,10 +11,9 @@ import config
 from collection.cli import main as collect
 from collection.paths import collection_directory
 from collection.selection import competition_by_name, season_key, season_label
-from providers.extensionBridge import extension_scope
+from providers.transports.bridge import extension_scope,acquire_bridge
+from storage.layout import organize_data_root,system_path
 from collection.progress import CollectionProgress, progress_scope, prime_job, get_job
-from collection.whoScoredEvents import main as collect_whoscored
-from collection.fotmobOnly import main as collect_fotmob
 from collection.ensemble import ensemble_session
 
 
@@ -69,7 +68,7 @@ def _normal_requirements(directory,forwarded):
     capture='none' if requested.no_spatial else requested.sofascore_spatial_capture
     try:saved=json.loads((directory/'job.json').read_text(encoding='utf-8'))
     except (OSError,ValueError):return False,None
-    changed=('providers' in saved and set(saved['providers'])!=set(desired) or
+    changed=(saved.get('workflow_version')!=3 or 'providers' in saved and set(saved['providers'])!=set(desired) or
              'sofascore_spatial_capture' in saved and saved['sofascore_spatial_capture']!=capture)
     upgrade=desired if 'providers' in saved and set(saved['providers'])!=set(desired) else None
     return changed,upgrade
@@ -154,10 +153,6 @@ def _batch(forwarded):
             directory=collection_directory(root,name)
             targets.append((canonical_competition,canonical_season,name,directory,
                             (directory/'job.json').exists()))
-    transport_parser=argparse.ArgumentParser(add_help=False)
-    transport_parser.add_argument('--sofascore-transport',default=config.TRANSPORT['sofascore_mode'])
-    transport,_=transport_parser.parse_known_args(forwarded)
-    browser_requested=transport.sofascore_transport in ('browser','extension')
     existing=[target for target in targets if target[4]]
     new=[target for target in targets if not target[4]]
     results=[]
@@ -171,7 +166,7 @@ def _batch(forwarded):
         return code
     if ACTION in ('auto','resume'):
         for competition,season,name,directory,_ in existing:
-            if not browser_requested and not _normal_requirements(directory,forwarded)[0] and _collection_complete(directory):
+            if not _normal_requirements(directory,forwarded)[0] and _collection_complete(directory):
                 print(f'Skipping complete collection: {name}')
                 get_job(directory,'combined',competition,season).end()
                 continue
@@ -220,158 +215,36 @@ def _normal_main(argv=None):
     return result
 
 
-KINDS=('combined','sofascore','whoscored_events','fotmob_players')
-
-
-def _job_directory(root,kind,competition,season,name=None):
-    if kind in ('combined','sofascore'):
-        return collection_directory(root,name or _collection_name(competition,season))
-    slug=re.sub(r'[^a-z0-9]+','-',competition_by_name(competition).name.lower()).strip('-')
-    if kind=='whoscored_events':return Path(root)/slug/season_label(season)
-    return Path(root)/'fotmob_player_stats'/slug/season_label(season)
-
-
-def _standalone_options(kind,args,action):
-    parser=argparse.ArgumentParser(description=f'{kind} collection through main.py')
-    parser.add_argument('--competition')
-    parser.add_argument('--season')
-    parser.add_argument('--data-root',type=Path,default=config.DATA_ROOT)
-    parser.add_argument('--limit',type=int)
-    parser.add_argument('--offline',action='store_true')
-    parser.add_argument('--refresh-schedule',action=argparse.BooleanOptionalAction,default=None)
-    parser.add_argument('--build-dataset',action=argparse.BooleanOptionalAction)
-    parser.add_argument('--dataset-root')
-    parser.add_argument('--match-id',type=int)
-    # These apply only to the combined/Sofascore jobs in a mixed run.
-    parser.add_argument('--providers',nargs='+')
-    parser.add_argument('--sofascore-transport')
-    parser.add_argument('--whoscored-transport',choices=('http','auto','browser','extension'))
-    parser.add_argument('--sofascore-spatial-capture')
-    parser.add_argument('--no-spatial',action='store_true')
-    parser.add_argument('--compile-events',action=argparse.BooleanOptionalAction,default=config.BUILD_EVENTS)
-    options=parser.parse_args(args[1:] if args and args[0] in ('start','resume','export','status','probe') else args)
-    if options.limit is not None and options.limit<1:parser.error('limit must be positive')
-    if options.offline and options.refresh_schedule:parser.error('Cannot refresh offline')
-    if action=='export' and options.refresh_schedule:parser.error('Cannot refresh during offline export')
-    return options
-
-
-def _standalone(kind,options,targets,action):
-    if action=='probe':
-        from api_test import main as probe
-        provider='whoscored' if kind=='whoscored_events' else 'fotmob'
-        forwarded=['--providers',provider,'--data-root',str(options.data_root)]
-        if options.match_id is not None:forwarded+=['--match-id',str(options.match_id)]
-        if kind=='whoscored_events' and options.whoscored_transport:
-            forwarded+=['--whoscored-transport',options.whoscored_transport]
-        return probe(forwarded)
-    collect_standalone=collect_whoscored if kind=='whoscored_events' else collect_fotmob
-    result=0
-    for job,directory,competition,season in targets:
-        exists=(directory/('whoscored_job.json' if kind=='whoscored_events' else 'job.json')).is_file()
-        if action=='status':
-            print(f'{kind} {competition} {season_label(season)} | '
-                  +(f'{job.total} scheduled; {job.remaining} remaining (cache presence)' if job.total is not None else 'schedule not yet discovered'))
-            job.end();continue
-        if (action=='start' and exists) or (action in ('resume','export') and not exists):
-            print(f'Skipping {kind} {competition} {season_label(season)}: '
-                  +('already started; use auto/resume' if exists else 'no saved collection'))
-            job.end();continue
-        forwarded=['--competition',competition,'--season',season,'--data-root',str(options.data_root)]
-        if options.limit is not None:forwarded+=['--limit',str(options.limit)]
-        if kind=='whoscored_events' and options.whoscored_transport:
-            forwarded+=['--whoscored-transport',options.whoscored_transport]
-        if kind=='whoscored_events' and (action=='export' or options.build_dataset or options.build_dataset is None and config.BUILD_DATASET):
-            forwarded+=['--export-csvs','--compile-events' if options.compile_events else '--no-compile-events']
-            if options.build_dataset or options.build_dataset is None and config.BUILD_DATASET:
-                forwarded+=['--dataset-root',str(options.dataset_root or config.DATASET_ROOT)]
-        if options.offline or action=='export':forwarded+=['--offline']
-        if options.refresh_schedule is not None:
-            if options.refresh_schedule:forwarded+=['--refresh-schedule']
-            elif kind=='whoscored_events':forwarded+=['--no-refresh-schedule']
-        elif action=='export' and kind=='whoscored_events':forwarded+=['--no-refresh-schedule']
-        print(f'\n=== {action.upper()}: {kind} {competition} {season_label(season)} ===',flush=True)
-        try:
-            code=collect_standalone(forwarded)
-        except SystemExit as exc:
-            code=exc.code if isinstance(exc.code,int) else 2
-        job.end(code)
-        result=max(result,code)
-        if code==130:return code
-    return result
-
+KINDS=('combined',)
 
 def _main(argv=None):
     args=list(sys.argv[1:] if argv is None else argv)
     parser=argparse.ArgumentParser(add_help=False)
-    parser.add_argument('--collection-types',nargs='+',choices=KINDS,default=COLLECTION_TYPES)
-    selected,args=parser.parse_known_args(args)
-    kinds=list(dict.fromkeys(selected.collection_types))
-    if 'combined' in kinds and 'sofascore' in kinds:
-        parser.error('Choose combined OR sofascore; they share match checkpoints')
-    if '--help' in args or '-h' in args:
-        print('main.py --collection-types '+ ' '.join(KINDS))
-        print('Choose any combination of collection types, except combined + sofascore. Defaults: collection.types in config/settings.yaml.')
-        print('Standalone export validates/rebuilds saved responses offline; status reads saved counts.')
-        return _normal_main(args)
+    parser.add_argument('--collection-types',nargs='+',choices=KINDS,default=['combined'])
+    _,args=parser.parse_known_args(args)
     selection=_selection(args)
-    action_parser=argparse.ArgumentParser(add_help=False)
-    action_parser.add_argument('--build-dataset',action=argparse.BooleanOptionalAction)
-    action_parser.add_argument('--dataset-root')
-    _,command_args=action_parser.parse_known_args(args)
-    explicit=bool(command_args and command_args[0] in ('start','resume','export','status','probe'))
-    single=explicit or any(a in ('--competition','--season','--name') or
-        a.startswith(('--competition=','--season=','--name=')) for a in args)
-    action=command_args[0] if explicit else ACTION
-    if action not in ('auto','start','resume','export','status','probe'):parser.error('Unknown collection action')
-    if any(k not in ('combined','sofascore') for k in kinds) and any(a=='--name' or a.startswith('--name=') for a in args):
-        parser.error('--name applies only to combined/Sofascore; select standalone jobs with competition/season')
-    if 'sofascore' in kinds and any(a=='--providers' or a.startswith('--providers=') for a in args):
-        provider_parser=argparse.ArgumentParser(add_help=False)
-        provider_parser.add_argument('--providers',nargs='+')
-        providers,_=provider_parser.parse_known_args(args)
-        if providers.providers!=['sofascore']:parser.error('sofascore collection type requires --providers sofascore')
+    explicit=bool(args and args[0] in ('start','resume','export','status','probe'))
+    single=explicit or any(a in ('--competition','--season','--name') or a.startswith(('--competition=','--season=','--name=')) for a in args)
+    action=args[0] if explicit else ACTION
     progress=CollectionProgress(enabled=config.SHOW_TIMING and action not in ('status','probe'))
-    standalone_options={k:_standalone_options(k,args,action) for k in kinds if k not in ('combined','sofascore')}
-    targets={}
-    for kind in kinds:
-        targets[kind]=[]
-        for competition in ([selection.competition] if single else COMPETITIONS):
-            for season in ([selection.season] if single else SEASONS):
-                competition=competition_by_name(competition).name
-                season=season_key(season)
-                directory=_job_directory(selection.data_root,kind,competition,season,selection.name if single else None)
-                job=progress.job(directory,kind,competition,season_label(season))
-                limit_parser=argparse.ArgumentParser(add_help=False)
-                limit_parser.add_argument('--limit',type=int)
-                limits,_=limit_parser.parse_known_args(args)
-                if kind in ('combined','sofascore'):
-                    requirements=args+(['--providers','sofascore'] if kind=='sofascore' else [])
-                    job.revisit_complete=_normal_requirements(directory,requirements)[0]
-                prime_job(job,directory,limit=limits.limit)
-                targets[kind].append((job,directory,competition,season))
-    result=0
-    progress.emit('[Timing] Scrape ETAs update after each game; extension verification waits and final CSV/dataset builds are excluded.')
+    targets=[]
+    limits=argparse.ArgumentParser(add_help=False);limits.add_argument('--limit',type=int)
+    limit,_=limits.parse_known_args(args)
+    for competition in ([selection.competition] if single else COMPETITIONS):
+        for season in ([selection.season] if single else SEASONS):
+            name=selection.name if single else _collection_name(competition,season)
+            directory=collection_directory(selection.data_root,name)
+            job=progress.job(directory,'combined',competition_by_name(competition).name,season_label(season))
+            job.revisit_complete=_normal_requirements(directory,args)[0]
+            prime_job(job,directory,limit=limit.limit);targets.append(job)
+    progress.emit('[Timing] ETAs use recent successful matches; extension verification waits are excluded.')
     with progress_scope(progress), extension_scope():
         try:
-            for kind in kinds:
-                if kind in ('combined','sofascore'):
-                    forwarded=[a for a in args if not standalone_options or a not in ('--refresh-schedule','--no-refresh-schedule')]
-                    if kind=='sofascore' and not any(a=='--providers' or a.startswith('--providers=') for a in forwarded):
-                        forwarded+=['--providers','sofascore']
-                    code=_normal_main(forwarded)
-                else:code=_standalone(kind,standalone_options[kind],targets[kind],action)
-                for job,_,_,_ in targets[kind]:
-                    if not job.finished:job.end(code)
-                result=max(result,code)
-                if code==130:break
-        except BaseException:
-            for job in progress.jobs.values():
-                if not job.finished:job.end(2)
-            raise
-        finally:
-            progress.summary()
-    return result
+            result=_normal_main(args)
+            for job in targets:
+                if not job.finished:job.end(result)
+            return result
+        finally:progress.summary()
 
 
 def main(argv=None):
@@ -387,6 +260,22 @@ def main(argv=None):
         print('Shared worker: run without arguments; --worker --help; --dashboard for a read-only view.')
         print('Worker inventory: --inventory --worker-id main-mac; transfers: --ensemble-root PATH --import-only --ignore-provenance')
         return _main(args)
+    root=_selection(args).data_root
+    organize_data_root(root)
+    if not (root/'.soccer-scraper.json').exists() and (not root.exists() or not any(root.iterdir())):
+        from storage.pandasStore import atomic_json
+        atomic_json(root/'.soccer-scraper.json',{'format':1})
+    try:
+        with extension_scope():
+            if not transfer.inventory and not transfer.import_only and '--offline' not in args and not any(x in args for x in ('status','export')):
+                bridge,_=acquire_bridge(connect_timeout=config.TRANSPORT['extension']['manual_wait_seconds'],diagnostics_dir=system_path(_selection(args).data_root,'extension_diagnostics')/'collector')
+                bridge.start()
+            return _ensemble_main(args,transfer)
+    except (OSError,ValueError) as exc:
+        print(f'Collection paused: {exc}',flush=True);return 2
+
+
+def _ensemble_main(args,transfer):
     try:
         with ensemble_session(_selection(args).data_root,transfer.ensemble_root,skip_remote=not transfer.ignore_provenance,
                               worker_id=transfer.worker_id) as progress:

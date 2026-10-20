@@ -18,7 +18,7 @@ class MainTests(unittest.TestCase):
 
     def _job(self,root,name,summary=None):
         directory=collection_directory(root,name);directory.mkdir(parents=True)
-        (directory/'job.json').write_text('{}')
+        (directory/'job.json').write_text(json.dumps({'workflow_version':3,'providers':['sofascore','fotmob','whoscored']}))
         if summary is not None:
             (directory/'run_summary.json').write_text(json.dumps(summary))
             discovered=summary['finished_matches_discovered']

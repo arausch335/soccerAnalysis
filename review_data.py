@@ -4,6 +4,7 @@ Percentages use saved finished, non-qualification fixtures, not an assumed full
 season size. Missing schedules are unknown; a partial schedule can overstate
 season coverage. Run the collectors with refreshed schedules before auditing.
 """
+from storage.layout import system_path
 import argparse
 import json
 from pathlib import Path
@@ -11,7 +12,7 @@ import re
 import pandas as pd
 import config
 from collection.paths import collection_directory
-from collection.runner import atomic_csv
+from collection.files import atomic_csv
 from collection.selection import competition_by_name, season_label, is_qualification_event
 from providers.cache import ResponseCache
 from storage import PandasStore
@@ -105,7 +106,7 @@ def coverage(root,competition,season,provider):
             if who_schedule.exists():break
     # Prefer the provider's own schedule, retaining independent ID namespaces.
     if provider=='fotmob':
-        from collection.fotmobOnly import player_rows
+        from collection.legacyFotmobRows import player_rows
         own=Path(root)/'fotmob_player_stats'/slug/label
         schedule=own/'schedule.json'
         if not schedule.exists():
@@ -132,7 +133,7 @@ def coverage(root,competition,season,provider):
                             note='saved collection uses another ID namespace')
             events=finished(read(schedule)['events'])
         elif provider=='sofascore':
-            schedule=Path(root)/'fixture_schedules'/'sofascore'/slug/(label+'.json')
+            schedule=system_path(Path(root),'fixture_schedules')/'sofascore'/slug/(label+'.json')
             if not schedule.exists():
                 return dict(complete=0,total=None,percent=None,schedule='',note='no saved schedule')
             saved=read(schedule)

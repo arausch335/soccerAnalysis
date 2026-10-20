@@ -49,11 +49,11 @@ class MatchProbeTests(unittest.TestCase):
 
     def test_cli_probe_checks_a_game_instead_of_season_directory(self):
         with tempfile.TemporaryDirectory() as tmp, \
-                patch('collection.cli.SafeSofaScoreClient') as factory:
+                patch('collection.cli.create_sofascore_client') as factory:
             client = factory.return_value.__enter__.return_value
             client.event.return_value = {'event':{'id':123,
                 'homeTeam':{'name':'Home'},'awayTeam':{'name':'Away'}}}
-            self.assertEqual(collect(['probe','--match-id','123','--data-root',tmp,'--sofascore-transport','http']),0)
+            self.assertEqual(collect(['probe','--match-id','123','--data-root',tmp]),0)
             client.event.assert_called_once_with(123)
             client.seasons.assert_not_called()
 

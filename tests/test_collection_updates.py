@@ -7,9 +7,9 @@ import unittest
 from unittest.mock import Mock, patch
 import pandas as pd
 import config
-from collection.fotmobOnly import FotMobOnlyRunner, player_rows
+from tests.legacy_collectors import FotMobOnlyRunner, player_rows
 from collection.playerStatsSchema import PLAYER_MATCH_COLUMNS, FOTMOB_PLAYER_MATCH_COLUMNS, fotmob_column
-from collection.whoScoredEvents import WhoScoredEventRunner
+from tests.legacy_collectors import WhoScoredEventRunner
 from providers.cache import ResponseCache
 from providers.events import fotmob_fixture
 from providers.httpClient import ProviderRequestError

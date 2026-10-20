@@ -1,3 +1,4 @@
+from tests.paths import system_path
 import json
 import os
 from pathlib import Path
@@ -7,14 +8,14 @@ from unittest.mock import patch
 
 import pandas as pd
 from storage.pandasStore import atomic_json
-from collection.runner import atomic_csv
+from collection.files import atomic_csv
 
 
 class AtomicReplaceTests(unittest.TestCase):
     def test_transient_windows_errors_retry_without_removing_previous_json(self):
         for code in (5,32,33):
             with self.subTest(code=code),tempfile.TemporaryDirectory() as folder:
-                target=Path(folder)/'.ensemble-origins.json';target.write_text('{"old":true}')
+                target=system_path(Path(folder),".ensemble-origins.json");target.write_text('{"old":true}')
                 error=PermissionError('Windows access/sharing conflict');error.winerror=code
                 original=os.replace;attempts=[]
                 def replace(source,destination):

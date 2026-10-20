@@ -31,7 +31,7 @@ class ExtensionDiagnostics:
         for key, item in value.items():
             if key in ('source_url', 'url', 'match_url') and isinstance(item, str):
                 parsed = urlsplit(item)
-                if parsed.scheme == 'https' and parsed.netloc == 'www.sofascore.com':
+                if parsed.scheme == 'https' and parsed.netloc in ('www.sofascore.com','www.whoscored.com','www.fotmob.com'):
                     mid = re.search(r'(?:^|,)id:(\d+)', parsed.fragment)
                     result[key] = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, '',
                                              'id:'+mid[1] if mid else ''))

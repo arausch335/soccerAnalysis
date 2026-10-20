@@ -1,3 +1,4 @@
+from tests.paths import system_path
 """Legacy alias migration preserves data, provider identity and transfer origins."""
 import json
 from pathlib import Path
@@ -69,7 +70,7 @@ class LegacyWhoScoredMigrationTests(unittest.TestCase):
             originals={next((folder/'raw/whoscored').glob('*.json')).read_bytes() for folder in (old,other)}
             self.assertEqual(migrate_legacy(root,quiet),2)
             preserved={next((target/'raw/whoscored').glob('*.json')).read_bytes()}
-            for path in (root/'ensemble_imports').rglob('*.json'):
+            for path in (system_path(root,"ensemble_imports")).rglob('*.json'):
                 if 'payload' in json.loads(path.read_text()):preserved.add(path.read_bytes())
             self.assertTrue(originals<=preserved)
             self.assertEqual(len(json.loads(next((target/'raw/whoscored').glob('*.json')).read_text())['payload']['matchCentreData']['events']),2)
@@ -111,7 +112,7 @@ class LegacyWhoScoredMigrationTests(unittest.TestCase):
         for prefixed in (False,True):
             with self.subTest(prefixed=prefixed),tempfile.TemporaryDirectory() as tmp:
                 base=Path(tmp);source=base/'ensemble/msi/data';legacy(source,prefixed=prefixed)
-                atomic_json(source/'identity.json',{'worker_id':'msi','instance_id':'source-instance'})
+                atomic_json(system_path(source,"identity.json"),{'worker_id':'msi','instance_id':'source-instance'})
                 import_pending(base/'data',base/'ensemble',quiet)
                 with ensemble_session(base/'data',base/'ensemble',quiet,worker_id='mac') as progress:
                     record=progress.local_records[job_key('whoscored_events','Premier League','2024/25',11)]
@@ -122,7 +123,7 @@ class LegacyWhoScoredMigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             base=Path(tmp);old,target=legacy(base/'data')
             args=['--data-root',str(base/'data'),'--ensemble-root',str(base/'ensemble')]
-            with FileLock(str(base/'data/.collector.lock'),timeout=0):
+            with FileLock(str(base/'data/_system/locks/collector.lock'),timeout=0):
                 self.assertEqual(migrate(args),2)
             self.assertTrue(old.exists())
             self.assertEqual(migrate(args),0)

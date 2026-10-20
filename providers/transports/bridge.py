@@ -9,7 +9,7 @@ import secrets
 import threading
 import time
 
-from .httpClient import ProviderError, ProviderRequestError
+from ..httpClient import ProviderError, ProviderRequestError
 
 _ACTIVE = ContextVar('sofascore_extension_bridge', default=None)
 MAX_BODY = 16 * 1024 * 1024
@@ -32,7 +32,7 @@ class ExtensionBridge:
         self.user_paused = False
         self.unavailable = False
         self.waiting_seconds = 0.0
-        from .extensionDiagnostics import ExtensionDiagnostics
+        from .diagnostics import ExtensionDiagnostics
         self.diagnostics = ExtensionDiagnostics(diagnostics_dir, report) if diagnostics_dir is not None else None
 
     def record(self, event, **fields):
@@ -67,7 +67,7 @@ class ExtensionBridge:
                 self.end_headers()
                 try:
                     self.wfile.write(body)
-                except (BrokenPipeError, ConnectionResetError):
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError):
                     pass
 
             def authorized(self, *, client=True):
@@ -194,7 +194,7 @@ class ExtensionBridge:
         if self.diagnostics is not None:
             self.record('started')
             self.report(f'Extension diagnostic log: {self.diagnostics.path}', flush=True)
-        self.report('Open Sofascore or WhoScored in your normal Chrome, open Soccer Collector, and paste this connection code:', flush=True)
+        self.report('Open Sofascore, WhoScored or FotMob in your normal Chrome, open Soccer Collector, and paste this connection code:', flush=True)
         self.report(f'http://{self.address}/#{self.token}', flush=True)
 
     def request(self, action, args=None, *, timeout=45):
@@ -212,7 +212,7 @@ class ExtensionBridge:
         return result
 
     def _request(self, action, args=None, *, timeout=45):
-        if action not in ('navigate', 'page', 'verify', 'whoscored'):
+        if action not in ('navigate', 'page', 'verify', 'whoscored', 'fotmob'):
             raise ValueError('Unknown extension action')
         self.start()
         if self.unavailable:
@@ -258,7 +258,9 @@ class ExtensionBridge:
                     self.condition.notify_all()
             if not result.get('ok', False):
                 self.record('page_failure', action=action, args=args or {}, result=result)
-                self.unavailable = True
+                # A provider page failure does not invalidate the authenticated
+                # shared connection used by the next provider. Disconnect and
+                # command timeout paths above still mark the bridge unavailable.
                 raise ProviderRequestError(str(result.get('error', 'Extension step failed')),
                                            status_code=result.get('status'), attempts=1)
             return result

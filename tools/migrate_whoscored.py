@@ -1,4 +1,5 @@
 """Migrate legacy WhoScored folders and refresh this worker's inventory offline."""
+from storage.layout import system_path
 import argparse
 import json
 from pathlib import Path
@@ -21,7 +22,7 @@ def main(argv=None):
         marker=root/'.soccer-scraper.json'
         if not marker.exists() or json.loads(marker.read_text(encoding='utf-8')).get('format')!=1:
             raise ValueError('Choose an existing marked scraper data folder')
-        with FileLock(str(root/'.collector.lock'),timeout=0):
+        with FileLock(str(system_path(root,'.collector.lock')),timeout=0):
             count=migrate_legacy(root)
             progress=PortableProgress(ensemble/'provenance.json',root)
             progress.scan()

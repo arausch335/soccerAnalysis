@@ -54,7 +54,7 @@ class DatasetBuildTests(unittest.TestCase):
             root = Path(folder)
             source = collection_directory(root / 'data', 'bundesliga-2024-25')
             source.mkdir(parents=True)
-            (source / 'job.json').write_text('{}')
+            (source / 'job.json').write_text(json.dumps({'workflow_version':3,'providers':['sofascore','fotmob','whoscored']}))
             old = root / 'dataset/bundesliga/2024-2025/events.csv'
             old.parent.mkdir(parents=True)
             old.write_text('previous dataset\n')
@@ -75,7 +75,7 @@ class DatasetBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             source = collection_directory(folder, 'bundesliga-2024-25')
             source.mkdir(parents=True)
-            (source / 'job.json').write_text('{}')
+            (source / 'job.json').write_text(json.dumps({'workflow_version':3,'providers':['sofascore','fotmob','whoscored']}))
             with patch('main.COMPETITIONS', ['Bundesliga']), patch('main.SEASONS', ['2024/25']), \
                     patch.dict(main.config.TRANSPORT,{'sofascore_mode':'auto'}), \
                     patch('main._collection_complete', return_value=True), \

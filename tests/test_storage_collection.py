@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 import pandas as pd
 from providers import SofaScoreLoader, SofaScoreRequestError
-from collection import CollectionConfig, CollectionRunner
 from models import FootballDataset, Player, Competition, derive_traits
 from storage import PandasStore
 
@@ -135,67 +134,3 @@ class StorageTests(unittest.TestCase):
         frames['matches'].loc[0, 'home_team_id'] = 999
         with self.assertRaisesRegex(ValueError, 'Broken table reference'):
             PandasStore.from_frames(frames)
-
-
-class RunnerTests(unittest.TestCase):
-    def test_first_ten_finished_matches_resume_without_network(self):
-        with tempfile.TemporaryDirectory() as folder:
-            client = Client()
-            runner = CollectionRunner(client, folder, report=lambda _: None)
-            excluded = event(0); excluded['status']['type'] = 'notstarted'
-            events = [event(i) for i in range(12, 0, -1)] + [excluded, event(999, 9), event(1)]
-            summary = runner.run(events)
-            self.assertEqual(client.calls, list(range(1, 11)))
-            self.assertTrue(summary.status.eq('complete').all())
-            self.assertEqual(len(runner.dataset.matches), 10)
-            self.assertEqual(len(runner.dataset.players[7].performances), 10)
-            new = CollectionRunner(client, folder, report=lambda _: None)
-            new.run()
-            self.assertEqual(client.calls, list(range(1, 11)))
-            self.assertEqual(len(new.dataset.matches), 10)
-
-    def test_failed_match_is_retried_without_replacing_selection(self):
-        with tempfile.TemporaryDirectory() as folder:
-            client = Client(); client.fail.add(1)
-            config = CollectionConfig(limit=2)
-            runner = CollectionRunner(client, folder, config, report=lambda _: None)
-            summary = runner.run([event(1), event(2), event(3)])
-            self.assertEqual(summary.status.tolist(), ['failed', 'complete'])
-            self.assertEqual(list(runner.dataset.matches), [2])
-            client.fail.clear()
-            retry = CollectionRunner(client, folder, config, report=lambda _: None)
-            summary = retry.run()
-            self.assertEqual(client.calls, [1, 2, 1])
-            self.assertTrue(summary.status.eq('complete').all())
-            self.assertEqual(summary.attempts.tolist(), [2, 1])
-
-    def test_raw_response_survives_storage_failure(self):
-        with tempfile.TemporaryDirectory() as folder:
-            client = Client(); config = CollectionConfig(limit=1)
-            runner = CollectionRunner(client, folder, config, report=lambda _: None)
-            with patch.object(runner.store, 'to_csv', side_effect=OSError('disk full')):
-                with self.assertRaises(OSError): runner.run([event(1)])
-            retry = CollectionRunner(client, folder, config, report=lambda _: None)
-            self.assertTrue(retry.run().status.eq('complete').all())
-            self.assertEqual(client.calls, [1])
-
-    def test_incomplete_lineup_is_not_marked_complete(self):
-        with tempfile.TemporaryDirectory() as folder:
-            client = Client(); client.incomplete.add(1)
-            config = CollectionConfig(limit=1)
-            runner = CollectionRunner(client, folder, config, report=lambda _: None)
-            self.assertEqual(runner.run([event(1)]).status.tolist(), ['failed'])
-            self.assertFalse(runner.store.exists)
-            client.incomplete.clear()
-            self.assertEqual(CollectionRunner(client, folder, config, report=lambda _: None).run().status.tolist(), ['complete'])
-            self.assertEqual(client.calls, [1, 1])
-
-    def test_config_cannot_reuse_another_collection_folder(self):
-        with tempfile.TemporaryDirectory() as folder:
-            CollectionRunner(Client(), folder, CollectionConfig(limit=1), report=lambda _: None).run([event(1)])
-            runner = CollectionRunner(Client(), folder, CollectionConfig(limit=2), report=lambda _: None)
-            with self.assertRaisesRegex(ValueError, 'different collection'):
-                runner.run([event(1), event(2)])
-
-
-if __name__ == '__main__': unittest.main()

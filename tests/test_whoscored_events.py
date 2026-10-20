@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from collection.whoScoredEvents import WhoScoredEventRunner
+from tests.legacy_collectors import WhoScoredEventRunner
 from providers.httpClient import ProviderRequestError
 
 
@@ -44,63 +44,3 @@ class WhoScoredOnly:
 
 def quiet(*args,**kwargs):
     pass
-
-
-class StandaloneEventsTests(unittest.TestCase):
-    def test_discovers_multiple_stages_preserves_raw_payload_and_resumes_without_requests(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            client = WhoScoredOnly()
-            runner = WhoScoredEventRunner(client,tmp,quiet)
-            self.assertEqual(runner.run('EPL','2024/25'),0)
-            saved_paths = list((Path(tmp)/'raw'/'whoscored').glob('*.json'))
-            self.assertEqual(len(saved_paths),2)
-            for path in saved_paths:
-                saved = json.loads(path.read_text())
-                self.assertEqual(saved['provider'],'whoscored')
-                mid = saved['payload']['match_id']
-                self.assertEqual(saved['key'],f'match/{mid}')
-                self.assertEqual(saved['payload'],client.match_details(mid))
-                self.assertEqual(saved['payload']['matchCentreData']['events'][0]['eventId'],7)
-            self.assertEqual(list(Path(tmp).glob('*.csv')),[])
-            client.calls.clear()
-            self.assertEqual(runner.run('EPL','2024/25'),0)
-            self.assertEqual(client.calls,[])
-
-    def test_refusal_stops_requests_and_resume_retries_failed_match(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            client = WhoScoredOnly()
-            client.block = True
-            runner = WhoScoredEventRunner(client,tmp,quiet)
-            self.assertEqual(runner.run('EPL','2024/25'),2)
-            self.assertEqual([c for c in client.calls if c[0]=='match'],[('match',11)])
-            failures = json.loads((Path(tmp)/'whoscored_failures.json').read_text())
-            self.assertEqual(set(failures),{'11'})
-            self.assertEqual(list((Path(tmp)/'raw').glob('whoscored/*.json')),[])
-            client.block = False
-            self.assertEqual(runner.run('EPL','2024/25'),0)
-            self.assertEqual(json.loads((Path(tmp)/'whoscored_failures.json').read_text()),{})
-
-    def test_rejects_wrong_match_before_caching(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            client = WhoScoredOnly()
-            payload = client.match_details(999)
-            client.match_details = lambda mid:deepcopy(payload)
-            runner = WhoScoredEventRunner(client,tmp,quiet)
-            self.assertEqual(runner.run('EPL','2024/25'),2)
-            self.assertEqual(list((Path(tmp)/'raw').glob('whoscored/*.json')),[])
-
-    def test_job_identity_and_explicit_schedule_refresh(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            client = WhoScoredOnly()
-            runner = WhoScoredEventRunner(client,tmp,quiet)
-            runner.run('EPL','2024/25',limit=1)
-            with self.assertRaisesRegex(ValueError,'selection differs'):
-                runner.run('Bundesliga','2024/25')
-            client.calls.clear()
-            self.assertEqual(runner.run('EPL','2024/25',refresh_schedule=True),0)
-            self.assertTrue(any(c[0]=='seasons' for c in client.calls))
-            self.assertFalse(client.refresh_cache)
-
-
-if __name__ == '__main__':
-    unittest.main()

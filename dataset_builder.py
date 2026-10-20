@@ -15,7 +15,7 @@ import pandas as pd
 
 import config
 
-from collection.runner import atomic_csv
+from collection.files import atomic_csv
 from collection.paths import collection_directory, collection_name, discover_collections
 from collection.selection import is_qualification_event, season_label
 from collection.jsonFiles import read_json

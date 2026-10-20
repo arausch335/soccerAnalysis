@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 from storage.pandasStore import atomic_json
+from storage.requestCache import saved_response_batch
 
 
 class ResponseCache:
@@ -21,7 +22,8 @@ class ResponseCache:
             if saved['key'] != key or saved['provider'] != provider:
                 raise ValueError('Cache identity mismatch')
             return saved['payload']
-        payload = request()
-        atomic_json(path, {'provider':provider, 'key':key,
-                          'fetched_at':datetime.now(timezone.utc).isoformat(), 'payload':payload})
+        with saved_response_batch():
+            payload = request()
+            atomic_json(path, {'provider':provider, 'key':key,
+                              'fetched_at':datetime.now(timezone.utc).isoformat(), 'payload':payload})
         return payload

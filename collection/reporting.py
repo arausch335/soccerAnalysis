@@ -3,6 +3,7 @@
 Only this module owns the reporting databases. Other computers use the HTTP API,
 never a shared SQLite file. No third-party service or extra dependency is needed.
 """
+from storage.layout import system_path,organize_data_root
 from contextlib import contextmanager, closing
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -66,7 +67,7 @@ def validate_url(value):
 
 
 def load_local(root):
-    path = Path(root) / 'reporting.json'
+    path = system_path(Path(root),'reporting.json')
     if not path.exists():
         return None
     saved = json.loads(path.read_text(encoding='utf-8'))
@@ -107,7 +108,7 @@ def inventory_paths(ensemble, *, local_worker=None):
 class ReportingStore:
     """Main-owned state, imported historical inventories and bounded remote log tails."""
     def __init__(self, root, ensemble):
-        self.path = Path(root) / 'worker_runtime' / 'reporting.sqlite'
+        self.path = system_path(Path(root),'worker_runtime') / 'reporting.sqlite'
         self.ensemble = Path(ensemble)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
@@ -224,7 +225,7 @@ class ReportingStore:
 
 
 def read_logs(root, worker='', level='', search='', limit=200, after=0, *, focus=''):
-    path = Path(root) / 'worker_runtime' / 'reporting.sqlite'
+    path = system_path(Path(root),'worker_runtime') / 'reporting.sqlite'
     if not path.exists():
         return {'rows': [], 'latest_id': 0}
     # Read-only: dashboard never creates or modifies the reporting database.
@@ -343,10 +344,10 @@ class Reporter:
     def __init__(self, root, ensemble, worker, options, heartbeat=30):
         self.root = Path(root); self.ensemble = Path(ensemble); self.worker = worker
         self.options = options; self.url = validate_url(options['url']) if options.get('url') else None; self.heartbeat = heartbeat
-        self.identity = json.loads((self.root / 'identity.json').read_text(encoding='utf-8'))
+        self.identity = json.loads((system_path(self.root,'identity.json')).read_text(encoding='utf-8'))
         if options['worker_id'] != worker or self.identity['worker_id'] != worker:
             raise ValueError('Reporting token is configured for a different worker')
-        self.path = self.root / 'worker_runtime' / 'reporting-outbox.sqlite'
+        self.path = system_path(self.root,'worker_runtime') / 'reporting-outbox.sqlite'
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock(); self.wake = threading.Event(); self.stop = threading.Event(); self.thread = None; self.peer_thread = None
         self.opener = build_opener(ProxyHandler({}), NoRedirect())
@@ -373,7 +374,7 @@ class Reporter:
     def enqueue(self, *, inventory=True, reset=False):
         with self.lock, self.connect() as db:
             payload = {}
-            runtime = self.root / 'worker_runtime' / (self.worker + '.json')
+            runtime = system_path(self.root,'worker_runtime') / (self.worker + '.json')
             if runtime.exists():
                 payload['runtime'] = json.loads(runtime.read_text(encoding='utf-8'))
             path = self.ensemble / 'workers' / (self.worker + '.json')
@@ -510,7 +511,7 @@ def diagnose(root):
     root=Path(root);options=load_local(root)
     if not options:
         print('Reporting is not configured. Run the client/server setup command first.');return 2
-    identity_path=root/'identity.json'
+    identity_path=system_path(root,'identity.json')
     identity=json.loads(identity_path.read_text()) if identity_path.exists() else {}
     worker=identity.get('worker_id',options.get('worker_id','main'))
     print('Worker:',worker)
@@ -518,12 +519,12 @@ def diagnose(root):
         url=f"http://{options['bind']}:{options['port']}";token=options['tokens'].get(worker,'')
     else:url=options['url'];token=options['token']
     print('Main address:',url)
-    state_path=root/'worker_runtime'/(worker+'.json')
+    state_path=system_path(root,'worker_runtime')/(worker+'.json')
     if state_path.exists():
         state=json.loads(state_path.read_text())
         print('Local worker state:',state.get('state'))
         print('Last reporting status:',state.get('reporting',{}).get('message','Not reported yet'))
-    outbox=root/'worker_runtime/reporting-outbox.sqlite';stream=None
+    outbox=system_path(root,'worker_runtime')/'reporting-outbox.sqlite';stream=None
     if outbox.exists():
         with closing(sqlite3.connect(outbox.resolve().as_uri()+'?mode=ro',uri=True)) as db:
             print('Queued reports/log batches:',db.execute('SELECT COUNT(*) FROM queue').fetchone()[0])
@@ -563,6 +564,7 @@ def console_level(line, default='INFO'):
     # A summary with zero failures is informational, not an error.
     text=re.sub(r'\b0\s+(?:failed|errors?)\b','',line,flags=re.I)
     if re.search(r'\b(error|exception|traceback|failed)\b',text,re.I):return 'ERROR'
+    if ': partial (' in text:return 'WARNING'
     if re.search(r'\b(warn|warning|paused|retry)\b',text,re.I):return 'WARNING'
     return default
 
@@ -621,7 +623,8 @@ def main(argv=None):
     client.add_argument('--url', required=True)
     args = parser.parse_args(argv)
     if args.command=='status':return diagnose(args.data_root)
-    path = args.data_root / 'reporting.json'
+    organize_data_root(args.data_root)
+    path = system_path(args.data_root,'reporting.json')
     if args.command == 'server':
         if not private_ip(args.bind) or not 1024 <= args.port <= 65535:
             parser.error('Use a private/Tailscale IPv4 address and port 1024–65535')

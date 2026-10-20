@@ -1,5 +1,6 @@
-import {connectionCode, sofaUrl, matchUrl, matchId, whoUrl, whoEndpoint} from './protocol.js';
+import {connectionCode, sofaUrl, matchUrl, matchId, whoUrl, whoEndpoint, fotmobUrl} from './protocol.js';
 import {pageOperation} from './page.js';
+import {fotmobPageOperation} from './fotmob_page.js';
 import {whoPageOperation} from './who_page.js';
 
 let polling = false;
@@ -27,7 +28,7 @@ async function api(s, path, value) {
 
 async function selectedTab(s) {
   const tab = await chrome.tabs.get(s.tabId);
-  if (!tab.url || !(sofaUrl(tab.url) || whoUrl(tab.url))) throw new Error('The chosen tab left the supported website. Reconnect a Sofascore or WhoScored tab.');
+  if (!tab.url || !(sofaUrl(tab.url) || whoUrl(tab.url) || fotmobUrl(tab.url))) throw new Error('The chosen tab left the supported website. Reconnect a Sofascore, WhoScored or FotMob tab.');
   return tab;
 }
 
@@ -107,7 +108,11 @@ export async function execute(s, command) {
   }
   const initialTab = await selectedTab(s);
   if (command.action === 'whoscored') return executeWho(s, command.args);
-  if (!sofaUrl(initialTab.url) && command.action !== 'navigate') throw new Error('This collection needs a Sofascore tab. Reopen Sofascore in the selected tab.');
+  if (command.action === 'fotmob') return executeFotmob(s, command.args);
+  if (!sofaUrl(initialTab.url) && command.action !== 'navigate') {
+    await chrome.tabs.update(s.tabId,{url:'https://www.sofascore.com/'});
+    await waitForProvider(s,sofaUrl);
+  }
   if (command.action === 'verify') {
     const mid = Number(command.args.endpoint?.match(/^event\/(\d+)/)?.[1]);
     const candidate = command.args.match_url || initialTab.url;
@@ -369,7 +374,7 @@ async function message(msg, sender) {
     if (old.connected) throw new Error('Disconnect before choosing another tab.');
     const connection = connectionCode(msg.code);
     const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
-    if (!tab?.url || !(sofaUrl(tab.url) || whoUrl(tab.url))) throw new Error('Open Sofascore or WhoScored in this tab before connecting.');
+    if (!tab?.url || !(sofaUrl(tab.url) || whoUrl(tab.url) || fotmobUrl(tab.url))) throw new Error('Open Sofascore, WhoScored or FotMob in this tab before connecting.');
     const same = old.base === connection.base && old.token === connection.token;
     const s = {...connection, tabId: tab.id, clientId: same && old.clientId || crypto.randomUUID().replaceAll('-', '')};
     controller?.abort();
@@ -462,4 +467,28 @@ export async function executeWho(s,args) {
     await new Promise(r=>setTimeout(r,500));
   }
   return result || {ok:true,status:408,source_url:(await selectedTab(s)).url};
+}
+
+async function waitForProvider(s,accept) {
+  const deadline=Date.now()+30000;
+  while (Date.now()<deadline) {
+    const tab=await selectedTab(s);
+    if (accept(tab.url)) {
+      if (tab.status==='complete') return tab;
+      try {
+        const frames=await chrome.scripting.executeScript({target:{tabId:s.tabId},world:'MAIN',func:()=>document.readyState});
+        if (frames.some(f=>f.frameId===0 && ['interactive','complete'].includes(f.result))) return tab;
+      } catch (_) { /* The previous document may be unloading. */ }
+    }
+    await new Promise(resolve=>setTimeout(resolve,250));
+  }
+  throw new Error('Provider page did not finish opening; reconnect and resume.');
+}
+export async function executeFotmob(s,args) {
+  const initial=await selectedTab(s);
+  if (!['leagues','matchDetails','matches'].includes(args.endpoint)) throw new Error('Unknown FotMob endpoint.');
+  if (!fotmobUrl(initial.url)) await chrome.tabs.update(s.tabId,{url:'https://www.fotmob.com/'});
+  await waitForProvider(s,fotmobUrl);
+  const frames=await chrome.scripting.executeScript({target:{tabId:s.tabId},world:'MAIN',func:fotmobPageOperation,args:[args]});
+  return frames.find(f=>f.frameId===0)?.result || {ok:false,error:'FotMob returned no page data.'};
 }

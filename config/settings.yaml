@@ -6,11 +6,7 @@ paths:
   dataset: dataset
 
 collection:
-  # Run any combination; choose combined OR sofascore because they share data.
-  # combined = Sofascore baseline + FotMob/WhoScored enrichment
-  # sofascore = Sofascore only (HTTP, visible browser, or automatic fallback)
-  # whoscored_events = standalone WhoScored raw events
-  # fotmob_players = standalone FotMob player_match_stats with fmb_ columns/IDs
+  # All three APIs first; the shared Chrome extension handles access failures.
   types: [combined]
   action: auto                 # auto, start, resume, export, status, probe
   competitions:
@@ -26,8 +22,6 @@ collection:
   build_dataset: false        # Package combined/Sofascore seasons after collection
   show_timing: true            # Per-game duration, season ETA, full collection ETA
 
-  # How Sofascore is accessed; this used to be called "transport".
-  sofascore_access: extension  # http, browser (visible), auto fallback, or extension (normal Chrome)
   http:
     profiles: [chrome, chrome131]  # One coherent identity, saved across resumes
     languages: ["en-US,en;q=0.9"]
@@ -35,14 +29,12 @@ collection:
     delay_min_seconds: 8
     delay_max_seconds: 15
     attempts: 2                   # Never retries 401/403/429
-  browser:
-    channel: chrome              # Installed chrome/msedge, or Playwright chromium
+  extension:
     delay_min_seconds: 0.5        # Spacing between navigation, clicks and resource fetches
-    delay_max_seconds: 1
+    delay_max_seconds: 2
     timeout_seconds: 30
     manual_wait_seconds: 120
   whoscored:
-    access: auto              # http, browser, auto fallback, or extension
     request_delay_min_seconds: 15
     request_delay_max_seconds: 30
     # Verified stage IDs skip competition/season HTML discovery.

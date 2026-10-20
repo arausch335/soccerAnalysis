@@ -1,3 +1,4 @@
+from storage.layout import system_path
 """Coherent HTTP identities and optional per-session proxy routing."""
 import json
 from http.cookiejar import MozillaCookieJar
@@ -33,7 +34,7 @@ def make_session(root,provider,referer,settings):
     profiles=settings['profiles']
     if set(profiles)-supported:
         raise ProviderError('Unsupported curl_cffi browser profile; update the profile list or curl_cffi')
-    path=Path(root)/'http_sessions'/provider/'identity.json'
+    path=system_path(root,'http_sessions')/provider/'identity.json'
     identity=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     changed=(identity.get('profile') not in profiles or identity.get('language') not in settings['languages'])
     if changed:

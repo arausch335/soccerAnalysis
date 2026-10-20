@@ -1,4 +1,5 @@
 """Run the Git-shared assignment for one computer, resuming saved collector jobs."""
+from storage.layout import system_path,organize_data_root
 from contextlib import ExitStack
 import argparse
 import hashlib
@@ -31,11 +32,11 @@ def fingerprint(job,settings):
 
 def prepare_extension(root,jobs,monitor):
     """Publish the local code early; no browser command or connection wait yet."""
-    if monitor or config.TRANSPORT['sofascore_mode']!='extension':return
+    if monitor:return
     if not any(set(job.collection_types)&{'sofascore','combined'} for job in jobs):return
-    from providers.extensionBridge import acquire_bridge
-    bridge,_=acquire_bridge(connect_timeout=config.TRANSPORT['browser']['manual_wait_seconds'],
-                            diagnostics_dir=root/'extension_diagnostics'/'sofascore')
+    from providers.transports.bridge import acquire_bridge
+    bridge,_=acquire_bridge(connect_timeout=config.TRANSPORT['extension']['manual_wait_seconds'],
+                            diagnostics_dir=system_path(root,'extension_diagnostics')/'sofascore')
     bridge.start()
 
 
@@ -54,7 +55,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
     parser.add_argument('--once',action='store_true',help='Run the pending plan once, then exit')
     parser.add_argument('--retry',action='store_true',help='Revisit previously finished/paused assignments using saved checkpoints')
     options=parser.parse_args(argv);plan=load_plan(options.plan)
-    root=options.data_root.resolve();ensemble=options.ensemble_root.resolve()
+    root=options.data_root.resolve();organize_data_root(root);ensemble=options.ensemble_root.resolve()
     worker=options.worker_id or read_worker_id(root)
     if not options.dashboard:plan.for_worker(worker)
     info=plan.workers.get(worker,{})
@@ -75,19 +76,19 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
         if root.exists() and any(root.iterdir()) and not (root/'.soccer-scraper.json').exists():
             raise ValueError('Worker data root must be a marked scraper directory')
         root.mkdir(parents=True,exist_ok=True)
-        stack.enter_context(FileLock(str(root/'.worker.lock'),timeout=0))
-        with FileLock(str(root/'.collector.lock'),timeout=0):
+        stack.enter_context(FileLock(str(system_path(root,'.worker.lock')),timeout=0))
+        with FileLock(str(system_path(root,'.collector.lock')),timeout=0):
             if not (root/'.soccer-scraper.json').exists():atomic_json(root/'.soccer-scraper.json',{'format':1})
             inventory=ensemble/'workers'/(worker+'.json')
             historical=ensemble/'reporting'/'workers'/(worker+'.json')
             if not inventory.exists() and historical.exists():
                 atomic_json(inventory,read_progress(historical))
-            identity_file=root/'identity.json'
+            identity_file=system_path(root,'identity.json')
             previous=json.loads(identity_file.read_text(encoding='utf-8')) if identity_file.exists() else {}
             if inventory.exists() and read_progress(inventory).get('instance_id')!=previous.get('instance_id'):
                 raise ValueError('This worker ID belongs to another data folder; use the original data folder or choose a new worker ID')
             ensure_identity(root,worker)
-        from providers.extensionBridge import extension_scope
+        from providers.transports.bridge import extension_scope
         stack.enter_context(extension_scope())
         prepare_extension(root,plan.for_worker(worker),monitor)
         state=Runtime(root,ensemble,worker)

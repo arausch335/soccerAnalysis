@@ -34,7 +34,7 @@ class WorkerPlanTests(unittest.TestCase):
         self.document['workers']['msi']['assignments']=[item]
         with self.assertRaisesRegex(config.ConfigError,'Overlapping'):self.load(self.document)
         item['collection_types']=['fotmob_players']
-        self.assertEqual(len(self.load(self.document).for_worker('msi')),7)
+        with self.assertRaises(config.ConfigError):self.load(self.document)
 
     def test_unknown_worker_and_unsafe_fields_rejected(self):
         with self.assertRaisesRegex(config.ConfigError,'not in'):self.load(self.document).for_worker('unknown')

@@ -1,4 +1,3 @@
-from .runner import CollectionConfig, CollectionRunner
+"""Combined season collection and worker coordination."""
 from .seasonRunner import SeasonRunner
-
-__all__ = ['CollectionConfig', 'CollectionRunner', 'SeasonRunner']
+__all__=["SeasonRunner"]

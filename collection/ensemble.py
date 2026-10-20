@@ -1,4 +1,5 @@
 """Offline, journaled ingestion of another computer's complete data folder."""
+from storage.layout import system_path
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import csv
@@ -17,7 +18,7 @@ from .ensembleProgress import PortableProgress, progress_session
 from .selection import season_key, competition_by_name
 from .workerIdentity import ensure_identity, read_worker_id, read_origins, save_origins
 
-MACHINE_STATE={'safety','browser_profiles','http_sessions','.ensemble-computer.json','identity.json','worker_runtime','reporting.json'}
+MACHINE_STATE={'_system','safety','browser_profiles','http_sessions','.ensemble-computer.json','identity.json','worker_runtime','reporting.json'}
 STATUS={'not_attempted':0,'pending':0,'elsewhere':0,'failed':1,'partial':2,'visible_only':2,
         'deferred':3,'unavailable':3,'complete':4}
 
@@ -152,7 +153,7 @@ def import_folder(source, root, report=print):
             if '.ensemble_work' not in relative.parts:files.append((relative,path,digest(path)))
             if len(files) and len(files)%1000==0:report(f'Ensemble: checked {len(files)} files...',flush=True)
     batch=hashlib.sha256(json.dumps([(str(p),h) for p,_,h in files]).encode()).hexdigest()[:24]
-    archive=root/'ensemble_imports'/batch
+    archive=system_path(root,'ensemble_imports')/batch
     journal=archive/'import.json'
     stores=[]
     for relative,path,_ in files:
@@ -274,7 +275,7 @@ def import_pending(root, ensemble, report=print):
         raise ValueError('Cannot import into an unmarked data root')
     if not marker.exists():atomic_json(marker,{'format':1})
     elif json.loads(marker.read_text(encoding='utf-8')).get('format')!=1:raise ValueError('Unsupported receiving data folder format')
-    with FileLock(str(root/'.collector.lock'),timeout=0):
+    with FileLock(str(system_path(root,'.collector.lock')),timeout=0):
         for candidate in candidates:import_folder(candidate,root,report)
         from .whoScoredData import migrate_legacy
         migrate_legacy(root,report)
@@ -290,21 +291,21 @@ def ensemble_session(root, ensemble, report=print, *, skip_remote=True, worker_i
     if marked or not root.exists() or not any(root.iterdir()):
         if not marked:atomic_json(marker,{'format':1})
         elif json.loads(marker.read_text(encoding='utf-8')).get('format')!=1:raise ValueError('Unsupported data folder format')
-        with FileLock(str(root/'.collector.lock'),timeout=0):ensure_identity(root,worker_id)
+        with FileLock(str(system_path(root,'.collector.lock')),timeout=0):ensure_identity(root,worker_id)
     import_pending(root,ensemble,report)
     # An existing unmarked directory remains subject to the collector's normal
     # refusal. Do not turn an arbitrary folder into a collection implicitly.
     if root.exists() and any(root.iterdir()) and not (root/'.soccer-scraper.json').exists():
         yield None;return
     if not (root/'.soccer-scraper.json').exists():atomic_json(root/'.soccer-scraper.json',{'format':1})
-    with FileLock(str(root/'.collector.lock'),timeout=0):
+    with FileLock(str(system_path(root,'.collector.lock')),timeout=0):
         from .whoScoredData import migrate_legacy
         migrate_legacy(root,report)
         progress=PortableProgress(ensemble/'provenance.json',root,worker_id=worker_id)
         progress.skip_remote=skip_remote
         progress.scan()
     report(f'Portable collection progress: {progress.path}')
-    report(f'Worker identity: {progress.origin} ({root/"identity.json"})')
+    report(f'Worker identity: {progress.origin} ({system_path(root,"identity.json")})')
     report(f'Local worker inventory: {progress.worker_path}')
     with progress_session(progress):
         try:yield progress

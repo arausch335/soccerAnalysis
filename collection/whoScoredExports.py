@@ -118,7 +118,7 @@ def export_standalone(directory, *, compile_events=True):
     from providers.cache import ResponseCache
     from providers.whoScoredLoader import WhoScoredLoader, COUNTERS
     from .whoScoredData import validate_match
-    from .runner import atomic_csv
+    from .files import atomic_csv
     directory=Path(directory)
     from .whoScoredData import metadata_path
     settings=read_json(metadata_path(directory,'job.json'));schedule=read_json(metadata_path(directory,'schedule.json'))

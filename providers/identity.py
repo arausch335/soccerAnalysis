@@ -1,4 +1,6 @@
 """Conservative identity resolution constrained to one match and lineup side."""
+from pathlib import Path
+import json
 import re
 import unicodedata
 
@@ -92,79 +94,7 @@ REVIEWED_TEAM_IDS = {
     ('fotmob','6918'):'47214',   # USL Dunkerque
     ('fotmob','52874'):'6390',   # Red Star FC
 }
-TEAM_ALIASES={'manunited':'manchesterunited','manutd':'manchesterunited','mancity':'manchestercity',
-              'oestersundsfk':'ostersundsfk','greutherfuerth':'greutherfurth',
-              'wolves':'wolverhamptonwanderers','wolverhampton':'wolverhamptonwanderers','tottenhamhotspur':'tottenham',
-              'brightonhovealbion':'brighton','brightonandhovealbion':'brighton',
-              'nottingham':'nottinghamforest','westhamunited':'westham',
-              'newcastle':'newcastleunited','ipswich':'ipswichtown','leicester':'leicestercity',
-              'leeds':'leedsunited',
-              '1heidenheim':'heidenheim','1unionberlin':'unionberlin',
-              '1fsvmainz05':'mainz05','bayer04leverkusen':'bayerleverkusen',
-              'borussiamgladbach':'borussiamonchengladbach',
-              'bayernmunich':'bayernmunchen','scfreiburg':'freiburg',
-              'svwerderbremen':'werderbremen','tsghoffenheim':'hoffenheim',
-              'vflbochum1848':'bochum','vflwolfsburg':'wolfsburg',
-              'vfbstuttgart':'stuttgart','rbleipzig':'leipzig','rbl':'leipzig',
-              'borussiadortmund':'dortmund','hamburgersv':'hamburg',
-              '1koln':'koln',
-              # WhoScored uses shortened Bundesliga and La Liga names.
-              'bayern':'bayernmunchen','leverkusen':'bayerleverkusen',
-              'mainz':'mainz05','atletico':'atleticomadrid',
-              # Both supplemental providers omit these official-name affixes.
-              'udlaspalmas':'laspalmas','levanteud':'levante',
-              # Serie A provider naming differences.
-              'asroma':'roma','sscnapoli':'napoli','hellasverona':'verona',
-              'parmacalcio1913':'parma',
-              # WhoScored abbreviates many French and European club names in
-              # its fixture index and sometimes uses an even shorter name on
-              # the match-detail page (for example PSG).
-              'asmonaco':'monaco','rclens':'lens','rcstrasbourg':'strasbourg',
-              'stadedereims':'reims','stadebrestois':'brest','staderennais':'rennes',
-              'olympiquedemarseille':'marseille','olympiquelyonnais':'lyon',
-              'parissaintgermain':'psg',
-              'basel1893':'basel','besiktasjk':'besiktas','bodoeglimt':'bodoglimt',
-              'clubbruggekv':'clubbrugge','ferencvarostc':'ferencvaros',
-              'gnkdinamozagreb':'dinamozagreb','ifelfsborg':'elfsborg',
-              'copenhagen':'kobenhavn','krcgenk':'genk',
-              'ludogoretsrazgrad':'ludogorets','malmoeff':'malmoff',
-              'paokthessaloniki':'paok','redbullsalzburg':'salzburg',
-              'royaleunionsaintgilloise':'unionstgilloise','rscanderlecht':'anderlecht',
-              'skbrann':'brann','skslaviapraha':'slaviaprague',
-              'skslovanbratislava':'slovanbratislava','sksturmgraz':'sturmgraz',
-              'spartapraha':'spartaprague','sportingbraga':'braga',
-              'sportingcp':'sporting','bscyoungboys':'youngboys',
-              'shakhtardonetsk':'shakhtar',
-              # Domestic names used by supplemental fixture indexes.
-              'sv07elversberg':'elversberg','scpaderborn07':'paderborn',
-              'vikingfk':'viking','rodezaf':'rodez',
-              'usldunkerque':'dunkerque','redstarfc':'redstar',
-              'coventrycity':'coventry','hullcity':'hull',
-              'deportivodeacoruna':'deportivo','deportivoacoruna':'deportivo',
-              'deportivolacoruna':'deportivo','realracingclub':'racingsantander',
-              # Official-name affixes and transliterations found in the
-              # 2023-24 Premier League, Bundesliga, Serie A, and Europa runs.
-              'lutontown':'luton','sheffieldunited':'sheffutd',
-              'darmstadt98':'darmstadt','vflbochum':'bochum',
-              'ussalernitana1919':'salernitana',
-              'sherifftiraspol':'sheriff','moldefk':'molde',
-              'bkhacken':'hacken','haecken':'hacken',
-              'fktscbackatopola':'tscbackatopola',
-              # 2023-24 domestic and European qualification variants.
-              'svdarmstadt':'darmstadt',
-              'atleticclubescaldes':'atleticescaldes',
-              'fkbuducnostpodgorica':'buducnostpodgorica',
-              'sptrepenne':'trepenne','trepennegalazzano':'trepenne',
-              'breidablikkopavogur':'breidablik','breiablik':'breidablik',
-              'hskzrinjskimostar':'zrinjskimostar',
-              'fkzalgiris':'zalgirisvilnius',
-              'strugatrimlum':'struga','fkstruga':'struga',
-              'nkolimpijaljubljana':'olimpijaljubljana',
-              'amrunspartans':'hamrunspartans',
-              'klaksvikaritrottarfelag':'klaksvik',
-              'kfballkani':'ballkani','fkpartizani':'partizani',
-              'tns':'thenewsaints','zorialuhansk':'zorya',
-              'fkcukaricki':'cukaricki'}
+TEAM_ALIASES = json.loads((Path(__file__).parent/'concordance'/'teams.json').read_text(encoding='utf-8'))
 
 def words(value):
     value=(value.casefold().replace('ı','i').replace('ø','o').replace('ł','l')

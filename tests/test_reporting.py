@@ -1,3 +1,4 @@
+from tests.paths import system_path
 import io
 import json
 from pathlib import Path
@@ -20,10 +21,10 @@ class ReportingTests(unittest.TestCase):
         self.base = Path(self.temp.name); self.root = self.base/'worker'; self.ensemble = self.base/'worker-ensemble'
         self.main = self.base/'main'; self.main_ensemble = self.base/'main-ensemble'
         self.token = 'private-worker-token-' + 'x'*32
-        atomic_json(self.root/'identity.json', {'worker_id':'msi','instance_id':'original-folder'})
+        atomic_json(system_path(self.root,"identity.json"), {'worker_id':'msi','instance_id':'original-folder'})
         self.options = {'mode':'client','worker_id':'msi','url':'http://127.0.0.1:8766','token':self.token}
         self.runtime = {'format':'soccer-worker-runtime-v1','worker_id':'msi','state':'scraping','updated_at':'2026-10-19T12:00:00+00:00'}
-        atomic_json(self.root/'worker_runtime/msi.json', self.runtime)
+        atomic_json(self.root/'_system/workers/msi.json', self.runtime)
         self.saved = {'format':'soccer-analysis-progress-v1','worker_id':'msi','instance_id':'original-folder','records':{
             'one':{'namespace':'sofascore','competition':'La Liga','season':'2021-2022','match_id':'1',
                    'status':'complete','origins':['msi'],'holders':['msi'],'capabilities':['sofascore_match_stats'],
@@ -156,7 +157,7 @@ class ReportingTests(unittest.TestCase):
         self.assertEqual(validate_url('http://100.106.146.82'),'http://100.106.146.82:8766')
         for url in ('http://public.example','http://8.8.8.8','http://user:secret@127.0.0.1:8766','http://127.0.0.1:8766/path','http://127.0.0.1:bad'):
             with self.subTest(url=url),self.assertRaises(ValueError):validate_url(url)
-        atomic_json(self.root/'reporting.json',{'mode':'server','bind':'0.0.0.0','port':8766,'tokens':{'msi':self.token}})
+        atomic_json(system_path(self.root,"reporting.json"),{'mode':'server','bind':'0.0.0.0','port':8766,'tokens':{'msi':self.token}})
         with self.assertRaises(ValueError):load_local(self.root)
 
     def test_local_inventory_wins_over_remote_copy_for_own_holder(self):
@@ -165,7 +166,7 @@ class ReportingTests(unittest.TestCase):
         self.assertEqual(inventory_paths(self.ensemble),[self.ensemble/'reporting/workers/msi.json'])
 
     def test_extension_operational_diagnostics_reach_main_without_response_bodies(self):
-        from providers.extensionDiagnostics import ExtensionDiagnostics
+        from providers.transports.diagnostics import ExtensionDiagnostics
         self.receiver();client=self.reporter()
         diagnostics=ExtensionDiagnostics(self.root/'extension_diagnostics/whoscored')
         with capture_logs(client):
@@ -225,11 +226,11 @@ class ReportingTests(unittest.TestCase):
     def test_diagnostics_print_no_token_and_identify_wrong_identity(self):
         from collection.reporting import diagnose
         self.receiver();client=self.reporter();client.enqueue(reset=True);client.flush()
-        atomic_json(self.root/'reporting.json',self.options)
+        atomic_json(system_path(self.root,"reporting.json"),self.options)
         output=io.StringIO()
         with patch('sys.stdout',output):self.assertEqual(diagnose(self.root),0)
         self.assertIn('Connection OK',output.getvalue());self.assertNotIn(self.token,output.getvalue())
-        atomic_json(self.root/'identity.json',{'worker_id':'msi','instance_id':'different-folder'})
+        atomic_json(system_path(self.root,"identity.json"),{'worker_id':'msi','instance_id':'different-folder'})
         output=io.StringIO()
         with patch('sys.stdout',output):self.assertEqual(diagnose(self.root),2)
         self.assertIn('IDENTITY CONFLICT',output.getvalue())

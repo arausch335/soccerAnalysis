@@ -82,30 +82,30 @@ def load_config(path=None, *, project_root=None):
             collection['whoscored']=legacy_who
         collection.setdefault('types',['combined'])
         collection.setdefault('show_timing',True)
-        collection.setdefault('sofascore_access','auto')
+        collection.pop('sofascore_access',None)
+        old_extension=collection.pop('browser',None)
+        if old_extension is not None:
+            old_extension.pop('channel',None)
+            collection.setdefault('extension',old_extension)
         collection.setdefault('http',{'profiles':['chrome','chrome131'],'languages':['en-US,en;q=0.9'],
             'proxy_env':'SOCCER_PROXY_URL','delay_min_seconds':8,'delay_max_seconds':15,'attempts':2})
-        collection.setdefault('browser',{'channel':'chrome','delay_min_seconds':0.5,'delay_max_seconds':1,
+        collection.setdefault('extension',{'delay_min_seconds':0.5,'delay_max_seconds':1,
             'timeout_seconds':30,'manual_wait_seconds':120})
         collection.setdefault('whoscored',{'request_delay_min_seconds':15,'request_delay_max_seconds':30,
             'refresh_schedule':False})
+        collection['whoscored'].pop('access',None)
         document.setdefault('api_test', {'providers':['sofascore','whoscored','fotmob'],
             'match_ids':{'sofascore':12436870,'whoscored':1821095,'fotmob':4506485}})
     document = _section(document, ('paths', 'collection', 'dataset', 'api_test'), 'configuration')
     collection=_section(document['collection'],('action','types','competitions','seasons',
-        'spatial_capture','build_dataset','show_timing','sofascore_access','http','browser','whoscored'),'collection')
+        'spatial_capture','build_dataset','show_timing','http','extension','whoscored'),'collection')
     kinds=_strings(collection['types'],'collection.types')
-    if set(kinds)-{'combined','sofascore','whoscored_events','fotmob_players'}:
-        raise ConfigError('collection.types must contain combined, sofascore, whoscored_events, or fotmob_players')
-    if 'combined' in kinds and 'sofascore' in kinds:
-        raise ConfigError('Choose combined OR sofascore; they share the same match checkpoints')
-    transport={'sofascore_mode':collection['sofascore_access'],'http':collection['http'],'browser':collection['browser']}
-    if transport['sofascore_mode'] not in ('http','browser','auto','extension'):
-        raise ConfigError('collection.sofascore_access must be http, browser, auto, or extension')
+    if kinds!=['combined']:raise ConfigError('collection.types must be [combined]')
+    transport={'http':collection['http'],'extension':collection['extension']}
     http=_section(transport['http'],('profiles','languages','proxy_env','delay_min_seconds',
                                   'delay_max_seconds','attempts'),'collection.http')
-    browser=_section(transport['browser'],('channel','delay_min_seconds','delay_max_seconds',
-                                        'timeout_seconds','manual_wait_seconds'),'collection.browser')
+    extension=_section(transport['extension'],('delay_min_seconds','delay_max_seconds',
+                                        'timeout_seconds','manual_wait_seconds'),'collection.extension')
     _strings(http['profiles'],'collection.http.profiles')
     _strings(http['languages'],'collection.http.languages')
     if not isinstance(http['proxy_env'],str) or (http['proxy_env'] and
@@ -113,16 +113,14 @@ def load_config(path=None, *, project_root=None):
         raise ConfigError('collection.http.proxy_env must be an environment variable name or empty')
     if type(http['attempts']) is not int or not 1 <= http['attempts'] <= 3:
         raise ConfigError('collection.http.attempts must be 1 to 3')
-    if browser['channel'] not in ('chrome','msedge','chromium'):
-        raise ConfigError('collection.browser.channel must be chrome, msedge, or chromium')
-    for label,section in (('http',http),('browser',browser)):
+    for label,section in (('http',http),('extension',extension)):
         lo,hi=section['delay_min_seconds'],section['delay_max_seconds']
         if any(type(v) not in (int,float) or not math.isfinite(v) or v < 0 for v in (lo,hi)) or lo>hi:
             raise ConfigError(f'collection.{label} delays must be finite and 0 <= min <= max')
     for key in ('timeout_seconds','manual_wait_seconds'):
-        v=browser[key]
+        v=extension[key]
         if type(v) not in (int,float) or not math.isfinite(v) or v <= 0:
-            raise ConfigError(f'collection.browser.{key} must be positive and finite')
+            raise ConfigError(f'collection.extension.{key} must be positive and finite')
     api_test = _section(document['api_test'], ('providers','match_ids'), 'api_test')
     providers = _strings(api_test['providers'], 'api_test.providers')
     supported = ('sofascore','whoscored','fotmob')
@@ -133,11 +131,8 @@ def load_config(path=None, *, project_root=None):
         raise ConfigError('api_test.match_ids must be positive integer provider IDs')
     if isinstance(collection['whoscored'],dict):
         collection['whoscored'].setdefault('stage_ids',{})
-        collection['whoscored'].setdefault('access','http')
     whoscored = _section(collection['whoscored'], (
-        'request_delay_min_seconds','request_delay_max_seconds','refresh_schedule','stage_ids','access'), 'whoscored')
-    if whoscored['access'] not in ('http','auto','browser','extension'):
-        raise ConfigError('whoscored.access must be http, auto, browser, or extension')
+        'request_delay_min_seconds','request_delay_max_seconds','refresh_schedule','stage_ids'), 'whoscored')
     stage_ids=whoscored['stage_ids']
     if (not isinstance(stage_ids,dict) or any(
             not isinstance(key,str) or not isinstance(ids,list) or not ids
@@ -183,7 +178,6 @@ def load_config(path=None, *, project_root=None):
         'BUILD_DATASET': _boolean(collection['build_dataset'], 'collection.build_dataset'),
         'COLLECTION_NAMES': tuple(_strings(dataset['collections'], 'dataset.collections', allow_empty=True)),
         'WHOSCORED_STAGE_IDS':stage_ids,
-        'WHOSCORED_ACCESS':whoscored['access'],
         'WHOSCORED_MIN_DELAY':minimum,
         'API_TEST_PROVIDERS':providers,
         'API_TEST_MATCH_IDS':dict(match_ids),

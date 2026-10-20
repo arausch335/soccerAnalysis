@@ -4,7 +4,7 @@ import json
 import time
 import unittest
 
-from providers.extensionBridge import ExtensionBridge
+from providers.transports.bridge import ExtensionBridge
 from providers.httpClient import ProviderRequestError
 
 

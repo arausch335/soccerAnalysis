@@ -9,11 +9,11 @@ import pandas as pd
 import config
 from collection.playerStatsSchema import PLAYER_MATCH_COLUMNS
 from collection.seasonRunner import SeasonRunner
-from providers.extensionBridge import ExtensionBridge, acquire_bridge, extension_scope
-from providers.extensionSofaScore import ExtensionSofaScoreClient
+from providers.transports.bridge import ExtensionBridge, acquire_bridge, extension_scope
+from providers.transports.sofascore_extension import ExtensionSofaScoreClient
 from providers.httpClient import ProviderRequestError
-from providers.sofaScoreTransport import create_sofascore_client
-from tests.test_browser_transport import browser_settings
+from providers.transports.sofascore import create_sofascore_client
+from tests.test_extension_payloads import extension_settings
 from tests.test_providers import event, lineup, Sofa
 
 
@@ -53,23 +53,23 @@ class ExtensionClientTests(unittest.TestCase):
     def test_roundtrip_cache_and_offline_replay_never_launch_playwright(self):
         with tempfile.TemporaryDirectory() as folder:
             bridge=FakeBridge()
-            with patch('providers.browserSofaScore.BrowserSofaScoreClient._start',side_effect=AssertionError('No browser launch')):
-                client=ExtensionSofaScoreClient(folder,browser_settings(),bridge=bridge,report=quiet)
+            with patch('subprocess.Popen',side_effect=AssertionError('No browser launch')):
+                client=ExtensionSofaScoreClient(folder,extension_settings(),bridge=bridge,report=quiet)
                 self.assertEqual(client.event(1),{'event':event(1)})
                 self.assertEqual(client.event(1),{'event':event(1)})
                 self.assertEqual(bridge.reads,['event/1'])
-                saved=json.loads(client._cache_path('event/1').read_text())
+                saved=client.cache.read('event/1',None,'json')
                 self.assertEqual(saved['transport'],'extension')
-                replay=ExtensionSofaScoreClient(folder,browser_settings(),bridge=FakeBridge(),offline=True,report=quiet)
+                replay=ExtensionSofaScoreClient(folder,extension_settings(),bridge=FakeBridge(),offline=True,report=quiet)
                 self.assertEqual(replay.event(1),{'event':event(1)})
                 self.assertEqual(replay.bridge.calls,[])
 
     def test_wrong_match_and_unapproved_endpoint_cannot_be_saved(self):
         with tempfile.TemporaryDirectory() as folder:
             bridge=FakeBridge();bridge.wrong=True
-            client=ExtensionSofaScoreClient(folder,browser_settings(),bridge=bridge,report=quiet)
+            client=ExtensionSofaScoreClient(folder,extension_settings(),bridge=bridge,report=quiet)
             with self.assertRaisesRegex(ValueError,'different match'):client.event(1)
-            self.assertFalse(client._cache_path('event/1').exists())
+            self.assertFalse(client.cache.path('event/1',None,'json').exists())
             for endpoint in ('https://evil.test','event/1/../../cookies','player/7','event/1/login'):
                 with self.subTest(endpoint=endpoint),self.assertRaises(ValueError):client.get(endpoint)
             with self.assertRaises(ValueError):client.get('event/1',{'redirect':'evil'})
@@ -77,7 +77,7 @@ class ExtensionClientTests(unittest.TestCase):
     def test_manual_403_resume_is_bounded_and_429_is_preserved(self):
         with tempfile.TemporaryDirectory() as folder:
             bridge=FakeBridge();bridge.denied=1
-            client=ExtensionSofaScoreClient(folder,browser_settings(),bridge=bridge,report=quiet)
+            client=ExtensionSofaScoreClient(folder,extension_settings(),bridge=bridge,report=quiet)
             self.assertEqual(client.event(1),{'event':event(1)})
             self.assertEqual(sum(action=='verify' for action,_ in bridge.calls),1)
             verify=next(args for action,args in bridge.calls if action=='verify')
@@ -95,7 +95,7 @@ class ExtensionClientTests(unittest.TestCase):
     def test_one_match_exports_the_normal_schema_and_matches_normal_player_metrics(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);bridge=FakeBridge()
-            extension=ExtensionSofaScoreClient(root,browser_settings(),bridge=bridge,report=quiet)
+            extension=ExtensionSofaScoreClient(root,extension_settings(),bridge=bridge,report=quiet)
             runner=SeasonRunner({'sofascore':extension},root/'extension-season',providers=['sofascore'],
                 spatial=('average_positions',),report=quiet)
             result=runner.run('EPL','2024/25')
@@ -133,7 +133,7 @@ class ExtensionClientTests(unittest.TestCase):
                     result['payload']['events']=[event(1),event(2)]
                 return result
             bridge.request=request
-            client=ExtensionSofaScoreClient(root,browser_settings(),bridge=bridge,report=quiet)
+            client=ExtensionSofaScoreClient(root,extension_settings(),bridge=bridge,report=quiet)
             result=SeasonRunner({'sofascore':client},root/'season',providers=['sofascore'],
                 spatial=(),report=quiet).run('EPL','2024/25',build_csvs=False)
             self.assertEqual(result.status.tolist(),['failed','pending'])
@@ -150,7 +150,7 @@ class ExtensionClientTests(unittest.TestCase):
                     result['payload']['events']=[event(1),event(2)]
                 return result
             bridge.request=request
-            client=ExtensionSofaScoreClient(root,browser_settings(),bridge=bridge,report=quiet)
+            client=ExtensionSofaScoreClient(root,extension_settings(),bridge=bridge,report=quiet)
             result=SeasonRunner({'sofascore':client},root/'season',providers=['sofascore'],
                 spatial=('average_positions',),report=messages.append).run('EPL','2024/25',build_csvs=False)
             self.assertEqual(result.status.tolist(),['partial','pending'])
@@ -167,14 +167,6 @@ class ExtensionClientTests(unittest.TestCase):
             self.assertTrue(result.attrs['sofascore_blocked'])
             self.assertNotIn('event/2/lineups',bridge.reads)
 
-    def test_factory_and_batch_scope_reuse_one_connection(self):
-        with tempfile.TemporaryDirectory() as folder,extension_scope():
-            first=create_sofascore_client(folder,mode='extension')
-            second=create_sofascore_client(folder,mode='extension')
-            self.assertIsInstance(first,ExtensionSofaScoreClient)
-            self.assertIs(first.bridge,second.bridge)
-            first.close();self.assertFalse(second.bridge.closed)
-        self.assertTrue(second.bridge.closed)
 
     def test_partial_details_preserve_prior_success_and_record_missing_and_skipped(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -188,7 +180,7 @@ class ExtensionClientTests(unittest.TestCase):
                     result['payload']['statistics']['totalPass']=77
                 return result
             bridge.request=request
-            client=ExtensionSofaScoreClient(folder,browser_settings(),bridge=bridge,report=quiet)
+            client=ExtensionSofaScoreClient(folder,extension_settings(),bridge=bridge,report=quiet)
             source=lineup()
             source['home']['players'].append({'player':{'id':99,'name':'Unused substitute'},
                 'substitute':True,'statistics':{}})
@@ -199,16 +191,9 @@ class ExtensionClientTests(unittest.TestCase):
             self.assertEqual(coverage['coverage']['statistics'],'not_attempted')
             self.assertEqual(coverage['skipped']['player/99/statistics'],'not_played')
             self.assertEqual(len(coverage['errors']),1)
-            saved=json.loads(client._cache_path('event/1/lineups').read_text())
+            saved=client.cache.read('event/1/lineups',None,'json')
             self.assertEqual(saved['payload']['home']['players'][0]['statistics']['totalPass'],77)
 
-    def test_config_accepts_extension_access(self):
-        import yaml
-        with tempfile.TemporaryDirectory() as folder:
-            document=yaml.safe_load(config.CONFIG_FILE.read_text())
-            document['collection']['sofascore_access']='extension'
-            path=Path(folder)/'settings.yaml';path.write_text(yaml.safe_dump(document))
-            self.assertEqual(config.load_config(path)['TRANSPORT']['sofascore_mode'],'extension')
 
 
 if __name__=='__main__':unittest.main()
