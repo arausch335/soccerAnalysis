@@ -20,7 +20,7 @@ does not need an extension.
 ## Pace and recovery
 
 Extension navigation/click delays use `collection.extension.delay_min_seconds`
-and `delay_max_seconds` (0.5–2 seconds). WhoScored extension requests use this
+and `delay_max_seconds` (0.25–0.5 seconds). WhoScored extension requests use this
 short pace rather than its 15–30 second API request spacing.
 
 **Pause** waits after the current operation; **Resume** continues the connected

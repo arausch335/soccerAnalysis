@@ -28,7 +28,7 @@ Main normally runs `python main.py --monitor` to receive progress and logs.
 Workers run without a dashboard; `--with-dashboard` enables one if needed.
 Set assignments and roles in `config/workers.yaml`, and shared pacing, paths,
 season defaults and dataset choices in `config/settings.yaml`. Collection types
-must be `[combined]`. Extension spacing defaults to 0.5–2 seconds. API pacing is
+must be `[combined]`. Extension spacing defaults to 0.25–0.5 seconds. API pacing is
 configured separately.
 
 Manual collection and saved-data tools:

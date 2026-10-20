@@ -30,8 +30,8 @@ collection:
     delay_max_seconds: 15
     attempts: 2                   # Never retries 401/403/429
   extension:
-    delay_min_seconds: 0.5        # Spacing between navigation, clicks and resource fetches
-    delay_max_seconds: 2
+    delay_min_seconds: 0.25       # Spacing between navigation, clicks and resource fetches
+    delay_max_seconds: 0.5
     timeout_seconds: 30
     manual_wait_seconds: 120
   whoscored:

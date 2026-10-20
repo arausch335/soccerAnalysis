@@ -86,7 +86,7 @@ class WorkflowTests(unittest.TestCase):
     def test_whoscored_extension_has_short_pacing(self):
         with TemporaryDirectory() as tmp:
             gate=WhoScoredExtensionGate(tmp)
-            self.assertEqual((gate.min_delay,gate.max_delay),(.5,2))
+            self.assertEqual((gate.min_delay,gate.max_delay),(.25,.5))
 
 class StorageTests(unittest.TestCase):
     def test_raw_commit_releases_scratch_copy_and_failed_commit_keeps_it(self):
