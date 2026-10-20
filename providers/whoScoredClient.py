@@ -53,6 +53,13 @@ class WhoScoredClient(HttpClient):
         content=getattr(response,'content',None)
         return content.decode('utf-8-sig') if isinstance(content,bytes) else response.text
 
+    def player_profile(self,player_id):
+        from .playerProfiles import whoscored_profile
+        result=whoscored_profile(player_id,self.get_text(f'players/{int(player_id)}/history'))
+        if not result['birth_date'] or not result['club'] or not result['career']:
+            raise ProviderError('WhoScored profile needs its loaded career table')
+        return result
+
     def seasons(self, competition_path):
         parser=_Directory(); parser.feed(self.get_text(competition_path))
         if not parser.options: raise ProviderError('WhoScored season directory is missing')

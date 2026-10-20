@@ -29,3 +29,10 @@ test('A FotMob HTML challenge is reported as verification, never JSON stats',asy
   const result=await fotmobPageOperation({endpoint:'matchDetails',params:{matchId:123}});
   assert.equal(result.status,403);assert.equal(result.verification,true);assert.equal(result.payload,undefined);
 });
+
+test('FotMob profile lookup uses the read-only player endpoint',async()=>{
+  globalThis.location={href:'https://www.fotmob.com/',protocol:'https:',hostname:'www.fotmob.com'};
+  globalThis.fetch=async url=>{assert.equal(url,'/api/data/playerData?id=77');return {status:200,headers:{get:()=>null},text:async()=>'{"id":"77","birthDate":{"utcTime":"2002-07-03T00:00:00Z"}}'};};
+  const result=await fotmobPageOperation({endpoint:'playerData',params:{id:77}});
+  assert.equal(result.payload.id,'77');assert.equal((await fotmobPageOperation({endpoint:'playerData',params:{id:'../77'}})).ok,false);
+});

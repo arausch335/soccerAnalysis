@@ -84,6 +84,18 @@ def validate(proposal):
         raise ValueError('Invalid identity evidence')
     score=proposal.get('score',0)
     if type(score) not in (int,float) or not 0<=score<=1:raise ValueError('Invalid suggestion score')
+    investigation=proposal.get('investigation')
+    if investigation is not None:
+        if not isinstance(investigation,dict) or len(json.dumps(investigation))>65000:
+            raise ValueError('Invalid profile investigation')
+        if not isinstance(investigation.get('checked_at'),str) or not investigation.get('checked_at'):
+            raise ValueError('Profile lookup timestamp is required')
+        errors=investigation.get('errors',[])
+        if not isinstance(errors,list) or len(errors)>5 or any(not isinstance(e,str) or len(e)>400 for e in errors):raise ValueError('Invalid profile lookup errors')
+        from .playerProfiles import compare_profiles,checked_profile
+        for key,provider,pid in (('source',proposal['provider'],proposal['source_id']),('baseline','sofascore',proposal['target_id'])):
+            if key in investigation:checked_profile(investigation[key],provider,pid)
+        compare_profiles(proposal)
     key='|'.join(proposal[k] for k in ('kind','provider','source_id','target_id'))
     return {**proposal,'id':hashlib.sha256(key.encode()).hexdigest()[:24]}
 
@@ -109,10 +121,26 @@ class ReviewStore:
             for p in proposals:
                 old=db.execute('SELECT payload FROM proposals WHERE id=?',(p['id'],)).fetchone()
                 prior=json.loads(old[0]) if old else {}
+                if prior.get('investigation',{}).get('checked_at','')>p.get('investigation',{}).get('checked_at',''):
+                    p['investigation']=prior['investigation']
                 contexts=prior.get('contexts',[])+[{**c,'worker':worker} for c in p.get('contexts',[])]
                 unique={json.dumps(c,sort_keys=True):c for c in contexts}
                 p={**p,'contexts':list(unique.values())[-5:],'first_seen':prior.get('first_seen',stamp()),'last_seen':stamp()}
                 db.execute('INSERT OR REPLACE INTO proposals VALUES(?,?)',(p['id'],json.dumps(p)))
+
+        if proposals:self.auto_confirm()
+
+    def auto_confirm(self):
+        from .playerProfiles import compare_profiles
+        reviewed={d['id'] for d in decisions(self.root)};groups={}
+        for p in self.proposals():
+            if p['kind']=='player':groups.setdefault((p['provider'],p['source_id']),[]).append(p)
+        for group in groups.values():
+            if any(not p.get('investigation') for p in group):continue
+            verified=[p for p in group if all(v=='match' for v in compare_profiles(p,self.root).values())]
+            if len(verified)!=1 or verified[0]['id'] in reviewed:continue
+            try:self.decide(verified[0]['id'],'confirm',automatic=True)
+            except ValueError:continue  # Preserve human rejections and conflicting reviewed IDs.
 
     def proposals(self):
         with self.connect() as db:return [json.loads(r[0]) for r in db.execute('SELECT payload FROM proposals')]
@@ -124,12 +152,18 @@ class ReviewStore:
         pending.sort(key=lambda p:(-p.get('score',0),p['source_name'],p['target_name']))
         return {'pending':pending[:200],'total':len(pending),'decisions':ds,'revision':revision(self.root)}
 
-    def decide(self,pid,action):
+    def decide(self,pid,action,*,automatic=False):
         if action not in ('confirm','reject'):raise ValueError('Choose confirm or reject')
         with self.connect() as db:
             row=db.execute('SELECT payload FROM proposals WHERE id=?',(pid,)).fetchone()
             if not row:raise ValueError('Suggestion no longer exists; refresh the queue')
             p=validate(json.loads(row[0]))
+            if action=='confirm' and p['kind']=='player' and not p.get('investigation'):
+                raise ValueError('Birthday, club and career lookup is still queued')
+            if automatic:
+                from .playerProfiles import compare_profiles
+                if not all(v=='match' for v in compare_profiles(p,self.root).values()):raise ValueError('Profile evidence is incomplete or conflicting')
+                if db.execute('SELECT 1 FROM decisions WHERE id=?',(pid,)).fetchone():raise ValueError('Preserve the existing review decision')
             existing=[json.loads(r[0]) for r in db.execute('SELECT payload FROM decisions')]
             if action=='confirm':
                 for d in existing:
@@ -148,7 +182,7 @@ class ReviewStore:
                         if target in seen:raise ValueError('Team alias would create a cycle')
                         seen.add(target);target=aliases[target]
                     if target==p['source_id']:raise ValueError('Team alias would create a cycle')
-            value={**p,'action':action,'reviewed_at':stamp()}
+            value={**p,'action':action,'reviewed_at':stamp(),'review_method':'profile_evidence' if automatic else 'manual'}
             db.execute('INSERT OR REPLACE INTO decisions VALUES(?,?)',(pid,json.dumps(value)))
         _decisions.cache_clear()
         return value
@@ -173,7 +207,7 @@ def similarity(a,b):
 
 
 def suggest_players(root,provider,entry,candidates,context):
-    if provider not in PROVIDERS or not entry.get('appeared',False):return
+    if provider not in PROVIDERS or not entry.get('appeared',False):return []
     rows=[]
     for candidate in candidates:
         if candidate.starter!=entry.get('starter'):continue
@@ -186,6 +220,7 @@ def suggest_players(root,provider,entry,candidates,context):
             contexts=[{**context,'provider_shirt':entry.get('shirt_number'),'baseline_shirt':candidate.shirt_number}]))
     rows.sort(key=lambda p:-p['score'])
     if rows:ReviewStore(review_root(root)).ingest(rows[:3])
+    return rows[:3]
 
 
 def suggest_teams(root,provider,event,fixtures):

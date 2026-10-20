@@ -11,6 +11,7 @@ from ..httpClient import ProviderError, ProviderRequestError
 ENDPOINT = re.compile(
     r'(?:event/\d+(?:/(?:lineups|statistics|incidents|graph/momentum|average-positions|shotmap|'
     r'player/\d+/(?:statistics|heatmap|rating-breakdown)))?|'
+    r'player/\d+(?:/transfer-history)?|'
     r'unique-tournament/\d+/(?:seasons|season/\d+/events/(?:last|next)/\d+))$')
 
 
@@ -130,6 +131,8 @@ class ExtensionSofaScoreClient(SofaScoreExtensionPayloads):
                 self._fail_status(endpoint, 403)
         result = self._read(endpoint, params)
         self.network_requests += 1
+        if result.get('status')==403 and endpoint.startswith('player/'):
+            raise ProviderRequestError('Sofascore profile needs verification; identity evidence unavailable',endpoint=endpoint,status_code=403)
         if result.get('status') == 403 and not verified:
             self._verify(endpoint, result)
             prepared = self._prepare(endpoint)

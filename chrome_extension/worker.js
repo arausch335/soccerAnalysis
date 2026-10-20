@@ -448,8 +448,10 @@ export async function executeWho(s,args) {
     // Wait for the intended document; never read the previous game's source.
     const currentPath=new URL(current.url).pathname.toLowerCase().replace(/\/$/,'');
     const wantedPath=new URL(url).pathname.toLowerCase().replace(/\/$/,'');
+    const expectedPlayer=args.endpoint.match(/^players\/(\d+)\/history$/i)?.[1];
+    const playerPath=expectedPlayer && new RegExp(`^/players/${expectedPlayer}/history(?:/|$)`,'i').test(currentPath);
     const expectedMatch=args.endpoint.match(/^matches\/(\d+)\/live$/i)?.[1];
-    const correctPath=expectedMatch ? new RegExp(`^/matches/${expectedMatch}/live(?:/|$)`).test(currentPath) : currentPath===wantedPath;
+    const correctPath=expectedPlayer ? playerPath : expectedMatch ? new RegExp(`^/matches/${expectedMatch}/live(?:/|$)`).test(currentPath) : currentPath===wantedPath;
     if (args.kind==='text' && !correctPath) {
       await new Promise(r=>setTimeout(r,500));continue;
     }
@@ -463,6 +465,7 @@ export async function executeWho(s,args) {
     if (result?.status===200 && args.kind==='text' && /^matches\//.test(args.endpoint) &&
         (!/\bmatchCentreData["']?\s*[:=]\s*\{/.test(result.text || '') ||
          result.text.match(/\bmatchId["']?\s*[:=]\s*(\d+)/)?.[1]!==expectedMatch)) {await new Promise(r=>setTimeout(r,500));continue;}
+    if (result?.status===200 && expectedPlayer && (!/player-table-statistics-body[\s\S]*?<tr\b/i.test(result.text || '') || !/player-picture/.test(result.text || ''))) {await new Promise(r=>setTimeout(r,500));continue;}
     if (result) return {...result,waiting_seconds:waitingSince===null ? 0 : (Date.now()-waitingSince)/1000};
     await new Promise(r=>setTimeout(r,500));
   }
@@ -486,7 +489,7 @@ async function waitForProvider(s,accept) {
 }
 export async function executeFotmob(s,args) {
   const initial=await selectedTab(s);
-  if (!['leagues','matchDetails','matches'].includes(args.endpoint)) throw new Error('Unknown FotMob endpoint.');
+  if (!['leagues','matchDetails','matches','playerData'].includes(args.endpoint)) throw new Error('Unknown FotMob endpoint.');
   if (!fotmobUrl(initial.url)) await chrome.tabs.update(s.tabId,{url:'https://www.fotmob.com/'});
   await waitForProvider(s,fotmobUrl);
   const frames=await chrome.scripting.executeScript({target:{tabId:s.tabId},world:'MAIN',func:fotmobPageOperation,args:[args]});

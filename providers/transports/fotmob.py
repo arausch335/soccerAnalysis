@@ -27,7 +27,7 @@ class ExtensionFotMobClient(FotMobClient):
     def _get(self,endpoint,params=None):
         if self._closed:raise ProviderError('FotMob extension client is closed')
         params=params or {}
-        rules={'leagues':({'id','ccode3','season'},{'id'}),'matchDetails':({'matchId'},{'matchId'}),'matches':({'date'},{'date'})}
+        rules={'playerData':({'id'},{'id'}),'leagues':({'id','ccode3','season'},{'id'}),'matchDetails':({'matchId'},{'matchId'}),'matches':({'date'},{'date'})}
         allowed,required=rules.get(endpoint,(set(),{'invalid'}))
         if not required<=set(params) or set(params)-allowed:raise ValueError('Unknown FotMob extension endpoint/parameters')
         saved=self.cache.read(endpoint,params,'json') if not self.refresh_cache else None
@@ -88,6 +88,7 @@ class FotMobTransport(FotMobClient):
     def seasons(self,competition_id):return self._call('seasons',competition_id)
     def season_events(self,competition_id,season):return self._call('season_events',competition_id,season)
     def match_details(self,match_id):return self._call('match_details',match_id)
+    def player_profile(self,pid):return self._call('player_profile',pid)
     def event(self,match_id):return self.match_details(match_id)
     def scheduled_events(self,date):return self._call('scheduled_events',date)
 

@@ -23,7 +23,7 @@ from tests.test_worker import NoSync
 
 def proposal(**values):
     return dict(kind='player',provider='fotmob',source_id='77',target_id='7',
-                source_name='N. Uno',target_name='Player One',score=.8,
+                source_name='N. Uno',target_name='Player One',score=.8,investigation={'status':'incomplete','checked_at':'2026-10-20T00:00:00+00:00','errors':['Profile not available']},
                 contexts=[{'match_id':'1','match':'Liverpool vs Other','side':'home'}],**values)
 
 
@@ -73,6 +73,7 @@ class IdentityReviewTests(unittest.TestCase):
             loader=FotMobLoader();loader.enrich(match,payload,allow_partial=True)
             self.assertTrue(match.metadata['identity_mismatches']['fotmob'])
             store=ReviewStore(tmp);p=store.snapshot()['pending'][0];self.assertEqual(p['target_id'],'7')
+            store.ingest([{**p,'investigation':{'status':'incomplete','checked_at':'2026-10-20T00:00:00+00:00','errors':['Profile not available']}}])
             store.decide(p['id'],'confirm');loader.enrich(match,payload,allow_partial=True)
             self.assertEqual(match.metadata['identity_mismatches']['fotmob'],[])
             self.assertEqual(match.home_lineup.players[0].stats.raw['_providers']['fotmob']['identity_method'],'dashboard_reviewed_provider_id')

@@ -44,6 +44,10 @@ class FotMobClient(HttpClient):
             raise ProviderError('FotMob returned a different match')
         return payload
 
+    def player_profile(self,player_id):
+        from .playerProfiles import fotmob_profile
+        return fotmob_profile(player_id,self.get('playerData',{'id':int(player_id)}))
+
     def event(self, match_id):
         return self.match_details(match_id)
 

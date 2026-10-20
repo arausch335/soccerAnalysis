@@ -79,7 +79,7 @@ class ExtensionWhoScoredClient(WhoScoredClient):
 
     def _fetch(self,endpoint,params,kind):
         endpoint=endpoint.lstrip('/')
-        if '..' in endpoint or '\\' in endpoint or not re.fullmatch(r'(?:matches/\d+/live|regions/\d+/tournaments/\d+/[a-zA-Z0-9-]+|regions/\d+/tournaments/\d+/seasons/\d+(?:/(?:stages/\d+/(?:show|fixtures)/)?[a-zA-Z0-9-]+)?|seasons/\d+/[^?#]+|tournaments/\d+/data/|stages/\d+/[^?#]+)',endpoint,re.I):
+        if '..' in endpoint or '\\' in endpoint or not re.fullmatch(r'(?:players/\d+/history|matches/\d+/live|regions/\d+/tournaments/\d+/[a-zA-Z0-9-]+|regions/\d+/tournaments/\d+/seasons/\d+(?:/(?:stages/\d+/(?:show|fixtures)/)?[a-zA-Z0-9-]+)?|seasons/\d+/[^?#]+|tournaments/\d+/data/|stages/\d+/[^?#]+)',endpoint,re.I):
             raise ValueError('Endpoint is outside the WhoScored collection contract')
         if params and (kind!='json' or set(params)!={'d','isAggregate'} or not re.fullmatch(r'\d{6}',str(params['d'])) or params['isAggregate']!='false'):
             raise ValueError('Invalid WhoScored fixture parameters')
@@ -152,6 +152,7 @@ class WhoScoredTransport(WhoScoredClient):
     def season_events(self,stage,month):return self._call('season_events',stage,month)
     def match_details(self,mid):return self._call('match_details',mid)
     def match_teams(self,mid):return self._call('match_teams',mid)
+    def player_profile(self,pid):return self._call('player_profile',pid)
 
 
 create_whoscored_client=WhoScoredTransport

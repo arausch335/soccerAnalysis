@@ -146,6 +146,11 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                          or (identity_revision and state.value['jobs'].get(job.id,{}).get('exit_code',0) not in (0,130)
                              and state.value['jobs'].get(job.id,{}).get('identity_revision','')!=identity_revision)]
                 if not pending:
+                    if not monitor and not options.once:
+                        from providers.playerProfiles import investigate_queue
+                        if investigate_queue(root):
+                            publish(inventory=False)
+                            continue
                     state.save(state='monitoring' if monitor else 'paused' if any(state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in plan.for_worker(worker)) else 'idle' if plan.for_worker(worker) else 'unassigned',current=None,git=sync.status)
                     if reporting:state.save(reporting=reporting.status)
                     if options.once:return max((state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in plan.for_worker(worker)),default=0)

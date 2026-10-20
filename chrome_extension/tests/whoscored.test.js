@@ -38,3 +38,8 @@ test('fixture requests use only the current stage, retain browser cookies and pr
   const denied=await whoPageOperation(args);assert.equal(denied.status,429);assert.equal(denied.retryAfter,'900');
   location.pathname='/stages/12/fixtures';await assert.rejects(whoPageOperation(args));
 });
+
+test('WhoScored profile lookups are constrained to public player history',()=>{
+  assert.ok(whoEndpoint('players/463353/history','text'));
+  for(const endpoint of ['players/463353/account','players/463353/history?url=evil','players/../history'])assert.equal(whoEndpoint(endpoint,'text'),false);
+});

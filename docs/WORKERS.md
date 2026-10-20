@@ -293,3 +293,41 @@ errors are not retried this way. Fixture months already downloaded successfully
 remain usable if another month fails. The review tab separates these provider
 errors from identity suggestions; absent qualification coverage is not repaired by
 merging unrelated names.
+
+### Automatic player identity investigation
+
+Before a player-name mismatch can be confirmed manually, a worker looks up both
+player profiles. Profile requests use the existing API-first transports and the
+same connected Chrome extension when needed. Soccer Collector 0.7.0 adds only
+public player profiles, transfer history, and career-table reads to its existing
+provider allowlists. Prepare and reload the extension after pulling this update.
+
+An identity is automatically confirmed only when the full birth dates and current
+clubs agree and dated career histories agree across at least two distinct clubs.
+Career comparison uses reviewed club-name concordances, requires overlapping
+dates, rejects substantive conflicting stints, and ignores administrative entries
+lasting no more than seven days. A shared club, matching shirt numbers, or a fuzzy
+name match alone cannot confirm an identity. Sparse WhoScored historical coverage
+stays incomplete; missing history is never interpreted as agreement. Multiple
+qualifying candidates and existing human rejections prevent automatic confirmation.
+Existing same-side, unique-player and starter checks still apply when enriching a
+match.
+
+The dashboard shows birthdays, clubs, dated histories, source links and the result
+of each check. Successful checks appear as **Automatically verified** in decision
+history; unavailable or conflicting evidence goes to manual review. Queued profile
+checks are labelled and cannot be confirmed prematurely. Workers also receive
+Main’s older unchecked suggestions through direct reporting, investigate one group
+between games or while idle, and send back the evidence. Main stays a monitor.
+
+Only compact normalized profile records are kept in the existing identity SQLite
+file: successful lookups are reused for seven days and failed lookups for six
+hours. Request scratch data uses the existing bounded cache. No separate player
+page archive or large permanent HTML cache is created. An optional denied Sofascore
+profile read does not trigger the long match-verification reload workflow.
+
+Reviewed Zini club-name variants `APO Levadiakos` / `Levadiakos` and `AEK B` /
+`AEK Athens B` are included in the shared team concordance. The public
+[Sofascore profile](https://www.sofascore.com/football/player/zini/1002334) and
+[FotMob profile](https://www.fotmob.com/players/1106943/zini) provide the matching
+birth date and dated club history used to check this example.

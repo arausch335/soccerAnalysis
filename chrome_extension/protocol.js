@@ -40,7 +40,7 @@ export function whoEndpoint(endpoint,kind,params={}) {
   if (kind==='json') return /^tournaments\/\d+\/data\/$/.test(endpoint) &&
     Object.keys(params).sort().join(',')==='d,isAggregate' && /^\d{6}$/.test(params.d) && params.isAggregate==='false';
   return kind==='text' && Object.keys(params).length===0 &&
-    /^(?:matches\/\d+\/live|regions\/\d+\/tournaments\/\d+\/[a-z0-9-]+|regions\/\d+\/tournaments\/\d+\/seasons\/\d+(?:\/(?:stages\/\d+\/(?:show|fixtures)\/)?[a-z0-9-]+)?|seasons\/\d+\/[a-z0-9-]+|stages\/\d+\/[a-z0-9-]+)$/i.test(endpoint);
+    /^(?:players\/\d+\/history|matches\/\d+\/live|regions\/\d+\/tournaments\/\d+\/[a-z0-9-]+|regions\/\d+\/tournaments\/\d+\/seasons\/\d+(?:\/(?:stages\/\d+\/(?:show|fixtures)\/)?[a-z0-9-]+)?|seasons\/\d+\/[a-z0-9-]+|stages\/\d+\/[a-z0-9-]+)$/i.test(endpoint);
 }
 
 export function fotmobUrl(text) {

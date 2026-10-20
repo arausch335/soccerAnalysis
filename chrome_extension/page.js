@@ -22,7 +22,7 @@ export async function pageOperation(args) {
   if (args.operation === 'inspect') return {ok: true, ...source(), diagnostics: observe()};
   if (challenged()) return verification();
   if (args.operation === 'read') {
-    const allowed = /^(?:event\/\d+(?:\/(?:lineups|statistics|incidents|graph\/momentum|average-positions|shotmap|player\/\d+\/(?:statistics|heatmap|rating-breakdown)))?|unique-tournament\/\d+\/(?:seasons|season\/\d+\/events\/(?:last|next)\/\d+))$/;
+    const allowed = /^(?:event\/\d+(?:\/(?:lineups|statistics|incidents|graph\/momentum|average-positions|shotmap|player\/\d+\/(?:statistics|heatmap|rating-breakdown)))?|player\/\d+(?:\/transfer-history)?|unique-tournament\/\d+\/(?:seasons|season\/\d+\/events\/(?:last|next)\/\d+))$/;
     if (typeof args.endpoint !== 'string' || !allowed.test(args.endpoint) ||
         (args.params != null && (typeof args.params !== 'object' || Object.keys(args.params).length))) {
       throw new Error('Resource is outside the collection contract.');

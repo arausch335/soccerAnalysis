@@ -48,6 +48,10 @@ class SofaScoreClient(HttpClient):
     def player(self, player_id: int) -> dict:
         return self._get(f"player/{player_id}")
 
+    def player_profile(self, player_id):
+        from .playerProfiles import sofa_profile
+        return sofa_profile(player_id,self.player(player_id),self._get(f'player/{int(player_id)}/transfer-history'))
+
     def team(self, team_id: int) -> dict:
         return self._get(f"team/{team_id}")
 

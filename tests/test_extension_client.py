@@ -70,7 +70,7 @@ class ExtensionClientTests(unittest.TestCase):
             client=ExtensionSofaScoreClient(folder,extension_settings(),bridge=bridge,report=quiet)
             with self.assertRaisesRegex(ValueError,'different match'):client.event(1)
             self.assertFalse(client.cache.path('event/1',None,'json').exists())
-            for endpoint in ('https://evil.test','event/1/../../cookies','player/7','event/1/login'):
+            for endpoint in ('https://evil.test','event/1/../../cookies','player/7/private','event/1/login'):
                 with self.subTest(endpoint=endpoint),self.assertRaises(ValueError):client.get(endpoint)
             with self.assertRaises(ValueError):client.get('event/1',{'redirect':'evil'})
 

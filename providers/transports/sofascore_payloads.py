@@ -13,6 +13,9 @@ from storage.requestCache import RequestCache
 
 def validate_payload(endpoint,payload):
     if not isinstance(payload,dict):raise ValueError('Expected a Sofascore JSON object')
+    profile=re.fullmatch(r'player/(\d+)',endpoint)
+    if profile and payload.get('player',{}).get('id')!=int(profile[1]):raise ValueError('Sofascore profile identity differs')
+    if re.fullmatch(r'player/\d+/transfer-history',endpoint) and not isinstance(payload.get('transferHistory'),list):raise ValueError('Sofascore transfer history missing')
     match=re.fullmatch(r'event/(\d+)',endpoint)
     if match and payload.get('event',{}).get('id')!=int(match[1]):
         raise ValueError('Sofascore browser returned a different match')

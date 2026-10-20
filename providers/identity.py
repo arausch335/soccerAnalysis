@@ -126,7 +126,7 @@ class IdentityError(ValueError):
 class IdentityResolver:
     """Overrides: {provider: {provider_player_id: baseline_player_id}}."""
     def __init__(self, overrides=None, review_root=None):
-        self.overrides=overrides or {};self.review_root=review_root
+        self.overrides=overrides or {};self.review_root=review_root;self.investigator=None
 
     def player(self, provider, entry, candidates, provider_match_id=None):
         contextual=REVIEWED_MATCH_PLAYER_IDS.get(

@@ -2,7 +2,7 @@
 export async function fotmobPageOperation(args) {
   const source_url=location.href;
   if (location.protocol!=='https:' || location.hostname!=='www.fotmob.com') return {ok:false,error:'Open FotMob in the selected tab.'};
-  const rules={leagues:{allowed:['id','ccode3','season'],required:['id']},matchDetails:{allowed:['matchId'],required:['matchId']},matches:{allowed:['date'],required:['date']}};
+  const rules={playerData:{allowed:['id'],required:['id']},leagues:{allowed:['id','ccode3','season'],required:['id']},matchDetails:{allowed:['matchId'],required:['matchId']},matches:{allowed:['date'],required:['date']}};
   const rule=rules[args.endpoint],params=args.params || {};
   if (!rule || Object.keys(params).some(k=>!rule.allowed.includes(k)) || rule.required.some(k=>!(k in params))) return {ok:false,error:'Unsupported FotMob request.'};
   if (('matchId' in params && !/^\d+$/.test(String(params.matchId))) || ('id' in params && !/^\d+$/.test(String(params.id))) || ('date' in params && !/^\d{8}$/.test(params.date))) return {ok:false,error:'Invalid FotMob identifier.'};

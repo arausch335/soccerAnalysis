@@ -38,7 +38,7 @@ test('page reads only known resources and keeps credentials in the browser', asy
   const result=await pageOperation({operation:'read',endpoint:'event/1',timeout_ms:1000});
   assert.equal(result.payload.event.id,1);
   assert.equal(request.url,'/api/v1/event/1');assert.equal(request.args.credentials,'same-origin');
-  for (const endpoint of ['https://evil.test','../cookies','event/1/../../settings','player/7']) {
+  for (const endpoint of ['https://evil.test','../cookies','event/1/../../settings','player/7/private']) {
     await assert.rejects(pageOperation({operation:'read',endpoint,timeout_ms:1000}));
   }
 });
@@ -100,4 +100,13 @@ test('each click samples its configured delay and reports the actual wait', asyn
       delay_min_seconds:2,delay_max_seconds:4});
     assert.deepEqual(result.diagnostics.actions.filter(a=>a.action==='wait').map(a=>a.milliseconds),[2000,3000]);
   } finally {globalThis.setTimeout=originalTimer;Math.random=originalRandom;}
+});
+
+test('profile reads allow only birthday and transfer-history resources',async()=>{
+  page();const endpoints=[];
+  globalThis.fetch=async url=>{endpoints.push(url);return {status:200,text:async()=>'{"player":{"id":7}}',headers:{get:()=>null}};};
+  await pageOperation({operation:'read',endpoint:'player/7',timeout_ms:1000});
+  await pageOperation({operation:'read',endpoint:'player/7/transfer-history',timeout_ms:1000});
+  assert.deepEqual(endpoints,['/api/v1/player/7','/api/v1/player/7/transfer-history']);
+  for(const endpoint of ['player/7/account','player/7/../../settings','player/7?path=private'])await assert.rejects(pageOperation({operation:'read',endpoint,timeout_ms:1000}));
 });

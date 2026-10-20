@@ -232,7 +232,8 @@ class ReportingStore:
                 current[row['worker']] = row['version']
                 if versions.get(row['worker']) != row['version']:
                     result[row['worker']] = json.loads(row['inventory'])
-        return {'inventories': result, 'versions': current,'identity_decisions':decisions(self.root)}
+        return {'inventories': result, 'versions': current,'identity_decisions':decisions(self.root),
+                'identity_tasks':[p for p in self.identities.snapshot()['pending'] if p['kind']=='player' and not p.get('investigation')][:100]}
 
 
 def read_logs(root, worker='', level='', search='', limit=200, after=0, *, focus=''):
@@ -467,6 +468,9 @@ class Reporter:
             if saved.get('worker_id') != worker or saved.get('format') != INVENTORY_FORMAT or not isinstance(saved.get('records'), dict):
                 raise ValueError('Received inventory identity differs')
             atomic_json(self.ensemble / 'reporting' / 'workers' / (worker + '.json'), saved)
+        if value.get('identity_tasks'):
+            from providers.identityReview import ReviewStore
+            ReviewStore(self.root).ingest(value['identity_tasks'],'shared')
         if 'identity_decisions' in value:
             from providers.identityReview import ReviewStore,decisions
             if decisions(self.root)!=value['identity_decisions']:
