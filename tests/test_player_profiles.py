@@ -9,7 +9,7 @@ from unittest.mock import Mock,patch
 
 from providers.playerProfiles import (compare_profiles,sofa_profile,fotmob_profile,whoscored_profile,
                                      checked_profile,ProfileVerifier)
-from providers.identityReview import ReviewStore,identity_scope,player_link
+from providers.identityReview import ReviewStore,identity_scope,player_link,revision
 from providers.identity import IdentityResolver,IdentityError
 from providers.httpClient import ProviderError,ProviderRequestError
 from providers.transports.sofascore import SofaScoreTransport
@@ -65,6 +65,9 @@ class PlayerProfileTests(unittest.TestCase):
             store=ReviewStore(tmp);store.ingest([investigated()]);snapshot=store.snapshot()
             self.assertEqual(snapshot['pending'],[]);self.assertEqual(snapshot['decisions'][0]['review_method'],'profile_evidence')
             self.assertEqual(player_link('fotmob',77),'7')
+            before=revision(tmp);p=investigated();p['investigation']['checked_at']='2026-10-21T00:00:00+00:00'
+            store.ingest([p]);self.assertEqual(revision(tmp),before)
+            self.assertEqual(store.snapshot()['decisions'][0]['investigation']['checked_at'],'2026-10-21T00:00:00+00:00')
         with TemporaryDirectory() as tmp,identity_scope(tmp):
             store=ReviewStore(tmp);store.ingest([proposal()]);pid=store.snapshot()['pending'][0]['id']
             with self.assertRaises(ValueError):store.decide(pid,'confirm')
@@ -105,6 +108,9 @@ class PlayerProfileTests(unittest.TestCase):
             verifier.investigate([proposal()]);verifier.investigate([proposal()])
             self.assertEqual(fot.player_profile.call_count,1);self.assertEqual(sofa.player_profile.call_count,1)
             self.assertEqual(player_link('fotmob',77),'7')
+            before=revision(tmp);p=investigated();p['investigation']['checked_at']='2026-10-21T00:00:00+00:00'
+            store.ingest([p]);self.assertEqual(revision(tmp),before)
+            self.assertEqual(store.snapshot()['decisions'][0]['investigation']['checked_at'],'2026-10-21T00:00:00+00:00')
         with TemporaryDirectory() as tmp,identity_scope(tmp):
             fot.player_profile.side_effect=ProviderRequestError('HTTP 502',status_code=502)
             verifier=ProfileVerifier({'sofascore':sofa,'fotmob':fot},tmp,lambda *a:None)

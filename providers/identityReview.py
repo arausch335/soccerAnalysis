@@ -63,8 +63,8 @@ def team_aliases(root=None):
 
 
 def revision(root=None):
-    links=[d for d in decisions(root) if d['action']=='confirm']
-    return hashlib.sha256(json.dumps(links,sort_keys=True).encode()).hexdigest() if links else ''
+    links=sorted(tuple(d[k] for k in ('kind','provider','source_id','target_id')) for d in decisions(root) if d['action']=='confirm')
+    return hashlib.sha256(json.dumps(links).encode()).hexdigest() if links else ''
 
 
 def validate(proposal):
@@ -127,6 +127,10 @@ class ReviewStore:
                 unique={json.dumps(c,sort_keys=True):c for c in contexts}
                 p={**p,'contexts':list(unique.values())[-5:],'first_seen':prior.get('first_seen',stamp()),'last_seen':stamp()}
                 db.execute('INSERT OR REPLACE INTO proposals VALUES(?,?)',(p['id'],json.dumps(p)))
+                reviewed=db.execute('SELECT payload FROM decisions WHERE id=?',(p['id'],)).fetchone()
+                if reviewed and p.get('investigation'):
+                    decision=json.loads(reviewed[0]);decision['investigation']=p['investigation']
+                    db.execute('UPDATE decisions SET payload=? WHERE id=?',(json.dumps(decision),p['id']))
 
         if proposals:self.auto_confirm()
 
