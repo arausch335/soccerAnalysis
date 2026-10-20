@@ -110,9 +110,13 @@ def canonical_player_name(name):
     value=str(name).strip()
     return PLAYER_DISPLAY_NAMES.get(name_key(value),value)
 
-def team_key(name):
+def team_key(name,review_root=None):
+    from .identityReview import team_aliases
     value=''.join(w for w in words(name) if w not in ('fc','afc','cf','ac'))
-    return TEAM_ALIASES.get(value,value)
+    aliases={**TEAM_ALIASES,**team_aliases(review_root)};seen=set()
+    while value in aliases and value not in seen:
+        seen.add(value);value=aliases[value]
+    return value
 
 
 class IdentityError(ValueError):
@@ -121,13 +125,15 @@ class IdentityError(ValueError):
 
 class IdentityResolver:
     """Overrides: {provider: {provider_player_id: baseline_player_id}}."""
-    def __init__(self, overrides=None):
-        self.overrides=overrides or {}
+    def __init__(self, overrides=None, review_root=None):
+        self.overrides=overrides or {};self.review_root=review_root
 
     def player(self, provider, entry, candidates, provider_match_id=None):
         contextual=REVIEWED_MATCH_PLAYER_IDS.get(
             (provider,provider_match_id,str(entry['id'])))
         explicit=self.overrides.get(provider,{}).get(str(entry['id']))
+        from .identityReview import player_link,rejected_player_links
+        shared=player_link(provider,entry['id'],self.review_root)
         reviewed=REVIEWED_PLAYER_IDS.get((provider,str(entry['id'])))
         if contextual is not None:
             found=[p for p in candidates if p.player.id==int(contextual)]
@@ -135,6 +141,9 @@ class IdentityResolver:
         elif explicit is not None:
             found=[p for p in candidates if p.player.id==int(explicit)]
             method='explicit_id_mapping'
+        elif shared is not None:
+            found=[p for p in candidates if p.player.id==int(shared)]
+            method='dashboard_reviewed_provider_id'
         elif reviewed is not None:
             found=[p for p in candidates if p.player.id==int(reviewed)]
             method='reviewed_provider_id_mapping'
@@ -147,7 +156,7 @@ class IdentityResolver:
                        and tokens.intersection(words(p.player.name))]
                 method='unique_shirt_and_shared_name_token'
             found=[p for p in found if
-                   (provider,str(entry['id']),str(p.player.id)) not in REJECTED_PLAYER_ID_LINKS]
+                   (provider,str(entry['id']),str(p.player.id)) not in (REJECTED_PLAYER_ID_LINKS|rejected_player_links(self.review_root))]
         if len(found)!=1:
             raise IdentityError(f'{provider}: cannot uniquely match {entry["name"]} (ID {entry["id"]}); add an identity-map entry')
         player=found[0]
@@ -158,11 +167,14 @@ class IdentityResolver:
         return player,method
 
 
-def match_fixture(event, fixtures):
+def match_fixture(event, fixtures, *, provider=None, review_root=None):
     date=event['startTimestamp']//86400
-    wanted=(team_key(event['homeTeam']['name']),team_key(event['awayTeam']['name']))
+    wanted=(team_key(event['homeTeam']['name'],review_root),team_key(event['awayTeam']['name'],review_root))
     found=[f for f in fixtures if f['startTimestamp']//86400==date
-           and (team_key(f['homeTeam']['name']),team_key(f['awayTeam']['name']))==wanted]
+           and (team_key(f['homeTeam']['name'],review_root),team_key(f['awayTeam']['name'],review_root))==wanted]
     if len(found)!=1:
+        if not found and provider:
+            from .identityReview import suggest_teams
+            suggest_teams(review_root,provider,event,fixtures)
         raise IdentityError(f'Expected one fixture for {event["homeTeam"]["name"]} vs {event["awayTeam"]["name"]}; found {len(found)}')
     return found[0]

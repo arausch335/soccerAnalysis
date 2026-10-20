@@ -41,7 +41,7 @@ class ProgressTests(unittest.TestCase):
         self.assertIn('season remaining ~1m 0s',self.messages[-1])
         self.assertIn('collection remaining ~7m 0s',self.messages[-1])
         self.assertIn('calibrating 1/3',self.messages[-3])
-        self.assertIn('3 recent scraped games',self.messages[-1])
+        self.assertIn('3 recent collected games',self.messages[-1])
 
     def test_rolling_estimate_adapts_and_cache_and_failures_do_not_train(self):
         job=self.job('first',count=25)
@@ -65,12 +65,14 @@ class ProgressTests(unittest.TestCase):
         self.assertIn('waiting 1d 0h 0m excluded from ETA',self.messages[-1])
         self.assertIn('season remaining ~9m 0s',self.messages[-1])
 
-    def test_one_stuck_match_and_partial_failure_do_not_distort_typical_speed(self):
+    def test_partial_work_trains_timing_and_one_outlier_does_not_distort_typical_speed(self):
         job=self.job('first',count=10)
         self.scrape(job,0,60);self.scrape(job,1,60);self.scrape(job,2,4000000)
         self.assertEqual(self.progress.rate('sofascore','http'),(60,3,False))
-        self.scrape(job,3,4000000,status='partial')
-        self.assertEqual(self.progress.rate('sofascore','http'),(60,3,False))
+        self.scrape(job,3,60,status='partial')
+        self.assertEqual(self.progress.rate('sofascore','http'),(60,4,False))
+        self.assertEqual(job.partial,1)
+        self.assertEqual(self.progress.remaining(),(360,False))
 
     def test_unknown_future_schedule_and_other_provider_are_provisional(self):
         job=self.job('first')

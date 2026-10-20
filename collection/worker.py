@@ -50,7 +50,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
     parser.add_argument('--plan',type=Path,default=config.PROJECT_ROOT/'config/workers.yaml')
     parser.add_argument('--data-root',type=Path,default=config.DATA_ROOT)
     parser.add_argument('--ensemble-root',type=Path,default=config.PROJECT_ROOT/'ensemble_data')
-    parser.add_argument('--dashboard',action='store_true',help='Read-only dashboard; do not collect or sync Git')
+    parser.add_argument('--dashboard',action='store_true',help='Dashboard only; do not collect or sync Git')
     parser.add_argument('--no-dashboard',action='store_true')
     parser.add_argument('--once',action='store_true',help='Run the pending plan once, then exit')
     parser.add_argument('--retry',action='store_true',help='Revisit previously finished/paused assignments using saved checkpoints')
@@ -62,6 +62,8 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
     monitor=options.monitor or (not options.worker and info.get('role')=='monitor')
     stop=stop or threading.Event()
     with ExitStack() as stack:
+        from providers.identityReview import identity_scope,seed_existing
+        stack.enter_context(identity_scope(root))
         if ((plan.dashboard['enabled'] and info.get('dashboard',False) or options.with_dashboard) and not options.no_dashboard) or options.dashboard:
             from dashboard.server import start_server
             server=start_server(root,ensemble,options.plan,worker,plan.dashboard['port'])
@@ -93,6 +95,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
         prepare_extension(root,plan.for_worker(worker),monitor)
         state=Runtime(root,ensemble,worker)
         if options.retry:state.value['jobs']={}
+        seed_existing(root)
         reporting=None
         local_reporting=load_local(root) if plan.reporting['enabled'] else None
         if local_reporting:
@@ -136,8 +139,12 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                 if current_plan.revision!=plan.revision or config.CONFIG_FILE.read_bytes()!=settings:
                     state.save(state='restart_required',current=None)
                     return RESTART if current_plan.git['auto_restart'] else 3
+                from providers.identityReview import revision
+                identity_revision=revision(root)
                 pending=[job for job in ([] if monitor else plan.for_worker(worker))
-                         if state.value['jobs'].get(job.id,{}).get('fingerprint')!=fingerprint(job,settings)]
+                         if state.value['jobs'].get(job.id,{}).get('fingerprint')!=fingerprint(job,settings)
+                         or (identity_revision and state.value['jobs'].get(job.id,{}).get('exit_code',0) not in (0,130)
+                             and state.value['jobs'].get(job.id,{}).get('identity_revision','')!=identity_revision)]
                 if not pending:
                     state.save(state='monitoring' if monitor else 'paused' if any(state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in plan.for_worker(worker)) else 'idle' if plan.for_worker(worker) else 'unassigned',current=None,git=sync.status)
                     if reporting:state.save(reporting=reporting.status)
@@ -161,11 +168,13 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                         if progress is not None and value['event']=='match_started':progress.records=shared_progress(progress.path,local_worker=worker)
                         if value['event'] in ('schedule','match_saved','job_finished','provider_started'):publish(inventory=value['event'] in ('match_saved','job_finished'))
                         return
+                # Capture the revision before running: approvals received mid-job also get a later backfill.
+                attempted_identity_revision=identity_revision
                 with observe_progress(observe):code=runner(job.args(root))
                 if reporting:
                     milestone='completed' if code==0 else 'paused'
                     reporting.log(f'[Season {milestone}] {job.competition} {job.as_dict()["season"]}', 'INFO' if code==0 else 'WARNING')
-                state.value['jobs'][job.id]={'fingerprint':fingerprint(job,settings),'exit_code':code,
+                state.value['jobs'][job.id]={'fingerprint':fingerprint(job,settings),'exit_code':code,'identity_revision':attempted_identity_revision,
                                              'state':'finished' if code==0 else 'paused'}
                 state.save(state='between_jobs',job_ended_at=now(),current=None,git=sync.status)
                 if reporting:publish()

@@ -71,7 +71,7 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(response.status,200);self.assertIn('workers',json.load(response))
             self.assertEqual(response.headers['X-Content-Type-Options'],'nosniff')
         for suffix,method,host,code in [('/../config/settings.yaml','GET',None,404),
-             ('/api/status','POST',None,501),('/api/status','GET','attacker.invalid',403)]:
+             ('/api/status','POST',None,403),('/api/status','GET','attacker.invalid',403)]:
             request=Request(server.url+suffix,method=method,headers={'Host':host} if host else {})
             with self.subTest(suffix=suffix,method=method),self.assertRaises(HTTPError) as error:urlopen(request)
             self.assertEqual(error.exception.code,code)

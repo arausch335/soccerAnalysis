@@ -461,12 +461,12 @@ export async function executeWho(s,args) {
       await new Promise(r=>setTimeout(r,1000));continue;
     }
     if (result?.status===200 && args.kind==='text' && /^matches\//.test(args.endpoint) &&
-        (!/matchCentreData/.test(result.text || '') ||
+        (!/\bmatchCentreData["']?\s*[:=]\s*\{/.test(result.text || '') ||
          result.text.match(/\bmatchId["']?\s*[:=]\s*(\d+)/)?.[1]!==expectedMatch)) {await new Promise(r=>setTimeout(r,500));continue;}
     if (result) return {...result,waiting_seconds:waitingSince===null ? 0 : (Date.now()-waitingSince)/1000};
     await new Promise(r=>setTimeout(r,500));
   }
-  return result || {ok:true,status:408,source_url:(await selectedTab(s)).url};
+  return {ok:true,status:408,source_url:(await selectedTab(s)).url};
 }
 
 async function waitForProvider(s,accept) {

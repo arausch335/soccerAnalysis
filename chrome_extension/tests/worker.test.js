@@ -401,3 +401,15 @@ test('one chosen tab switches from WhoScored to FotMob and back to a Sofascore s
   assert.equal(sofa.status,200);assert.equal(sofa.source_url,'https://www.sofascore.com/');
   assert.deepEqual(moves,['https://www.fotmob.com/','https://www.sofascore.com/']);
 });
+
+test('WhoScored waits past null match-data initialization for the actual object',async()=>{
+  const url='https://www.whoscored.com/matches/11/live';let reads=0;
+  chrome.tabs.get=async()=>({id:1,url,status:'complete'});
+  chrome.scripting={executeScript:async()=>{
+    reads++;
+    return [{frameId:0,result:{ok:true,status:200,source_url:url,
+      text:reads===1?'matchId: 11, matchCentreData: null':'matchId: 11, matchCentreData: {"events":[]}'}}];
+  }};
+  const result=await execute({tabId:1},{id:'who-ready',action:'whoscored',args:{kind:'text',endpoint:'matches/11/live',params:{},manual_wait_ms:1500}});
+  assert.equal(reads,2);assert.equal(result.status,200);assert.match(result.text,/\{"events"/);
+});

@@ -18,13 +18,16 @@ def refresh_timing(runtime):
         starts={};samples=[]
         for event in selected:
             if event.get('event')=='match_started':starts[event.get('match_id')]=event
-            if event.get('event')!='match_saved' or event.get('status')!='complete':continue
+            if event.get('event')!='match_saved' or event.get('status') not in ('complete','partial'):continue
             cached=event.get('cached_match',event.get('cached') if type(event.get('cached')) is bool else False)
             if cached:continue
             duration=event.get('active_match_seconds')
             if duration is None and event.get('match_id') in starts:
                 duration=event.get('elapsed_seconds',0)-starts[event['match_id']].get('elapsed_seconds',0)
             if type(duration) in (int,float) and duration>0:samples.append(duration)
+        phase['processed']=sum(phase.get(k,0) for k in ('scraped','cached','partial','failed','elsewhere') if type(phase.get(k,0)) is int)
+        phase['rate_samples']=max(phase.get('rate_samples',0),len(samples[-12:]))
+        if phase.get('partial',0):phase['eta_provisional']=True
         rate=phase.get('rate_seconds')
         if rate is None and samples:rate=median(samples[-12:])
         # Historical workers trusted old CSV flags even while revisiting data.
@@ -42,9 +45,13 @@ def refresh_timing(runtime):
             phase['eta_seconds']=None
         elif remaining and rate is not None:
             phase['eta_seconds']=rate*remaining
-            phase['eta_basis']='recent matches this run'
+            phase['eta_basis']='current pass; includes partial matches' if phase.get('partial',0) else 'recent matches this run'
         elif remaining and phase.get('eta_seconds',0) and phase['eta_seconds']>0:
             pass
         elif not phase.get('finished'):
             phase['eta_seconds']=None
+    current=runtime.get('current')
+    if isinstance(current,dict):
+        key='|'.join(str(current.get(k,'')) for k in ('competition','season','kind'))
+        if key in phases:runtime['current']={**current,**phases[key]}
     return runtime

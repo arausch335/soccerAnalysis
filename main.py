@@ -237,7 +237,7 @@ def _main(argv=None):
             job=progress.job(directory,'combined',competition_by_name(competition).name,season_label(season))
             job.revisit_complete=_normal_requirements(directory,args)[0]
             prime_job(job,directory,limit=limit.limit);targets.append(job)
-    progress.emit('[Timing] ETAs use recent successful matches; extension verification waits are excluded.')
+    progress.emit('[Timing] ETAs estimate this pass from recent collected matches, including partials; verification waits are excluded.')
     with progress_scope(progress), extension_scope():
         try:
             result=_normal_main(args)

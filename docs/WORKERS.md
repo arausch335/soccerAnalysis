@@ -252,3 +252,44 @@ python main.py --inventory
 Then start the normal supervisor to report the refreshed inventory. Explicit
 manual collection commands and standalone launchers retain their prior behavior;
 direct reporting and remote logs are provided by the shared supervisor.
+
+### Reviewing identities on Main
+
+Open **Identity review** in Main’s dashboard. Suggestions show the provider and
+Sofascore player IDs, names, match, lineup side, and shirt numbers when available.
+Team suggestions require a match on the same date with an independently matched
+opponent. Scores rank suggestions; they are not probabilities. Confirm the same
+identity or reject the proposed link. Suggestions are never applied automatically.
+Starter disagreements, missing players, and unavailable provider responses remain
+partial until the underlying evidence is corrected; a confirmation does not simply
+change a completion flag.
+
+Decisions and the review queue live in `data/_system/identity/review.sqlite` on
+Main. Back up this file with Main’s other operational state. They travel through
+authenticated direct reporting, separately from Git, and are cached on each worker.
+Workers receive decisions at their next inventory poll (normally 30 seconds), use
+them when resolving subsequent matches, and run one saved-checkpoint pass over
+previously incomplete assignments per new confirmed revision. Raw provider results
+are reused; completed jobs are left alone. A confirmation received during a job also
+permits a follow-up pass, so earlier matches in that job are not missed. Rejections
+hide that proposed link and do not trigger recollection.
+
+Install the updated collector on Main and workers, then restart them. Previously
+exported player mismatches seed the queue at startup; newly encountered player and
+team mismatches report suggestions after a saved match. To revisit all old paused
+assignments immediately, start the worker with `python main.py --worker-id msi
+--retry` (replace `msi` with its worker ID). The flag applies to that launch only.
+
+Current jobs show **matches processed**, with complete, partial, failed, cached,
+and held-elsewhere counts separately. ETA uses recent non-cached complete and
+partial matches that performed network collection, excluding explicit verification
+waits. It estimates the current pass, including partial results, rather than the
+time needed to resolve every outstanding provider problem. Main can also rebuild
+this estimate from older workers’ existing reports.
+
+Temporary fixture-discovery outages get at most two additional attempts during a
+season, after five minutes and then fifteen minutes. Authentication and rate-limit
+errors are not retried this way. Fixture months already downloaded successfully
+remain usable if another month fails. The review tab separates these provider
+errors from identity suggestions; absent qualification coverage is not repaired by
+merging unrelated names.

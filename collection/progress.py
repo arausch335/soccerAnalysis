@@ -30,9 +30,10 @@ def notify(job,event,**values):
         rate,samples,rough=job.owner.rate(job.kind,job.mode)
         eta=(rate*job.remaining if rate is not None and job.remaining else 0 if job.finished and job.remaining==0 else None) if not job.paused else None
         callback({'elapsed_seconds':max(0,job.owner.clock()-(job.setup_started if job.setup_started is not None else job.owner.started)),
+                  'processed':job.scraped+job.cached+job.failed+job.partial+job.elsewhere,
                   'scraped':job.scraped,'cached':job.cached,'failed':job.failed,'partial':job.partial,'elsewhere':job.elsewhere,
                   'eta_seconds':eta,'rate_seconds':rate,'finished':job.finished,'paused':job.paused,
-                  'provider':job.provider,'provider_active':job.provider_active,'eta_provisional':rough or samples<3,'rate_samples':samples,'event':event,'kind':job.kind,'competition':job.competition,'season':job.season,
+                  'provider':job.provider,'provider_active':job.provider_active,'eta_provisional':rough or samples<3 or job.partial>0,'rate_samples':samples,'event':event,'kind':job.kind,'competition':job.competition,'season':job.season,
                   'match_id':job.current,'total':job.total,'remaining':job.remaining,**values})
 
 
@@ -152,13 +153,13 @@ class JobProgress:
         is_cached=cached or (self.before is not None and after==self.before) or (self.before is None and self.known_cached)
         if self.pending is not None:self.pending.discard(self.current)
         if mode is not None:self.mode=mode
-        if status=='complete' and not is_cached:
+        if status in ('complete','partial') and not is_cached and active>0:
             self.owner.samples[(self.kind,self.mode)].append(active)
         rate,count,rough=self.owner.rate(self.kind,self.mode)
         season_eta=(0 if self.remaining==0 else
                     rate*self.remaining if rate is not None and self.remaining is not None else None)
         total_eta,provisional=self.owner.remaining()
-        calibration=f'calibrating {count}/3' if count<3 else f'{count} recent scraped games'
+        calibration=f'calibrating {count}/3' if count<3 else f'{count} recent collected games'
         paused=sum(j.paused for j in self.owner.jobs.values())
         self.owner.emit(f'[Timing] {self.competition} {self.season} | match {self.current} '
             f'{status if status not in ("complete","partial") else "cached/skipped" if is_cached else status}: {duration(elapsed)}'

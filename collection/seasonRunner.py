@@ -163,10 +163,10 @@ class SeasonRunner:
             if blocked:break
         return errors,blocked,completed
 
-    def _fixtures(self,competition,season,selected):
+    def _fixtures(self,competition,season,selected,only=None):
         result={};errors={}
         for provider in self.providers:
-            if provider==self.baseline_provider:continue
+            if provider==self.baseline_provider or (only is not None and provider not in only):continue
             if provider=='sofascore':
                 errors[provider]='Sofascore cannot supplement a non-Sofascore baseline without a fixture ID map'
                 self.report(f'sofascore fixture discovery skipped: {errors[provider]}')
@@ -212,12 +212,14 @@ class SeasonRunner:
                             stage_key=('stages-v2/' if multi_stage else 'stage/')+path
                             discovered=self._fetch(provider,stage_key,lambda path=path:client.season_stages(path))
                             stages.extend([discovered] if isinstance(discovered,int) else discovered)
+                    result[provider]=list(events.values())
                     for stage in dict.fromkeys(stages):
                         for month in months_between(selected):
                             raw=self._fetch(provider,f'fixtures/{stage}/{month}',
                                 lambda stage=stage,month=month:client.season_events(stage,month))
                             for row in raw:
                                 if row.get('status')==6:events[row['id']]=whoscored_fixture(row)
+                            result[provider]=list(events.values())
                     result[provider]=list(events.values())
                 if len({e['id'] for e in result[provider]})!=len(result[provider]):raise ValueError('Duplicate fixture IDs')
                 self.report(f'{provider}: {len(result[provider])} finished fixtures available.')
@@ -366,6 +368,9 @@ class SeasonRunner:
         selected=events[:limit] if limit else events
         self.report(f'{competition.name} {canonical}: {len(events)} finished matches; collecting {len(selected)}.')
         fixtures,disabled=self._fixtures(competition,canonical,selected) if selected else ({},{})
+        import time
+        discovery_retries={p:0 for p in disabled}
+        retry_at={p:time.monotonic()+300 for p in disabled}
         atomic_json(self.directory/'provider_discovery.json',{'errors':disabled,'counts':{k:len(v) for k,v in fixtures.items()}})
         status_path=self.directory/'collection.csv'
         old=pd.read_csv(status_path,keep_default_na=False).to_dict('records') if status_path.exists() else []
@@ -463,11 +468,22 @@ class SeasonRunner:
             for provider in self.providers:
                 if provider==self.baseline_provider:continue
                 if match.metadata['provider_status'].get(provider)=='complete' and not self.refresh:continue
+                if (provider in discovery_retries and provider in disabled and discovery_retries[provider]<2
+                        and time.monotonic()>=retry_at[provider]
+                        and not any(code in disabled[provider] for code in ('401','403','429'))
+                        and getattr(self.clients[provider],'requires_manual_attention',False) is not True):
+                    self.report(f'{provider}: retrying unavailable fixture discovery before this match.')
+                    recovered,unavailable=self._fixtures(competition,canonical,selected,only={provider})
+                    discovery_retries[provider]+=1;retry_at[provider]=time.monotonic()+900
+                    if recovered.get(provider):fixtures[provider]=recovered[provider]
+                    if provider not in unavailable:disabled.pop(provider,None)
+                    else:disabled[provider]=unavailable[provider]
+                    atomic_json(self.directory/'provider_discovery.json',{'errors':disabled,'counts':{k:len(v) for k,v in fixtures.items()}})
                 if provider in disabled:
                     errors.append(f'{provider}: {disabled[provider]}');match.metadata['provider_status'][provider]='failed';continue
                 timing.set_provider(provider)
                 try:
-                    fixture=match_fixture(event,fixtures[provider]);pid=fixture['id'];client=self.clients[provider]
+                    fixture=match_fixture(event,fixtures[provider],provider=provider,review_root=self.identity_resolver.review_root);pid=fixture['id'];client=self.clients[provider]
                     if provider=='whoscored' and not self.refresh and not self.cache.path(provider,f'match/{pid}').exists():
                         from .whoScoredData import reuse_match
                         reuse_match(self.directory,pid,fixture)

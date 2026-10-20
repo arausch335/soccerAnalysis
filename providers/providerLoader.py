@@ -50,9 +50,16 @@ class ProviderLoader(MatchLoader):
         ev=decoded['event']; pending=[];mismatches=[];lineup_differences=[]
         if ev['startTimestamp']//86400!=int(match.kickoff.timestamp())//86400:
             raise IdentityError(f'{self.provider}: match date mismatch')
+        if not standalone and match.metadata.get('id_namespace','sofascore')=='sofascore':
+            from .identityReview import suggest_teams
+            baseline={'id':match.id,'startTimestamp':int(match.kickoff.timestamp()),
+                      'homeTeam':{'name':match.home_team.name},'awayTeam':{'name':match.away_team.name}}
+            if any(team_key(baseline[s+'Team']['name'],self.identity_resolver.review_root)!=
+                   team_key(ev[s+'Team']['name'],self.identity_resolver.review_root) for s in ('home','away')):
+                suggest_teams(self.identity_resolver.review_root,self.provider,baseline,[ev])
         for side in ('home','away'):
             lineup=getattr(match,side+'_lineup')
-            if lineup is None or team_key(lineup.team.name)!=team_key(ev[side+'Team']['name']):
+            if lineup is None or team_key(lineup.team.name,self.identity_resolver.review_root)!=team_key(ev[side+'Team']['name'],self.identity_resolver.review_root):
                 raise IdentityError(f'{self.provider}: match team mismatch')
             score=getattr(match,side+'_score')
             if ev.get(side+'Score',{}).get('current') != score:
@@ -89,6 +96,14 @@ class ProviderLoader(MatchLoader):
                         record['issue']=f'{self.provider}: unused provider substitute differs from baseline lineup'
                         lineup_differences.append(record)
                         continue
+                    if 'cannot uniquely match' in str(exc) and match.metadata.get('id_namespace','sofascore')=='sofascore':
+                        from .identityReview import suggest_players
+                        suggest_players(self.identity_resolver.review_root,self.provider,entry,
+                            [p for p in lineup.players if p.player.id not in used],
+                            {'match_id':str(match.id),'provider_match_id':str(ev['id']),'side':side,
+                             'competition':match.season.competition.name,'season':match.season.name,
+                             'date':match.kickoff.date().isoformat(),
+                             'match':match.home_team.name+' vs '+match.away_team.name,'issue':str(exc)})
                     mismatches.append(record)
                     continue
                 used.add(appearance.player.id)

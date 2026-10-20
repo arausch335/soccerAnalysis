@@ -29,15 +29,17 @@ class _Directory(HTMLParser):
 
 def embedded_json(text, key):
     # The provider's object values are JSON; the enclosing assignment is JS.
-    found=re.search(r'\b'+re.escape(key)+r'[\"\']?\s*[:=]\s*',text)
+    found=list(re.finditer(r'\b'+re.escape(key)+r'[\"\']?\s*[:=]\s*',text))
     if not found:
         raise ProviderError(f'WhoScored page is missing {key}; it may be blocked or its format changed')
-    try:
-        value, _=json.JSONDecoder().raw_decode(text[found.end():])
-    except ValueError as exc:
-        raise ProviderError(f'Invalid WhoScored {key} JSON') from exc
-    if not isinstance(value,dict): raise ProviderError(f'Expected an object for {key}')
-    return value
+    objects=[]
+    for occurrence in found:
+        try:value,_=json.JSONDecoder().raw_decode(text[occurrence.end():])
+        except ValueError:continue
+        if isinstance(value,dict) and value not in objects:objects.append(value)
+    if len(objects)>1:raise ProviderError(f'Ambiguous WhoScored {key} objects')
+    if not objects:raise ProviderError(f'Expected an object for {key}; page data is incomplete')
+    return objects[0]
 
 
 class WhoScoredClient(HttpClient):

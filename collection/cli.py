@@ -75,6 +75,8 @@ def main(argv=None):
     # collections belong under outputs/old_data and remain outside this root.
     try:
         with FileLock(str(system_path(root,'.collector.lock')), timeout=0), ExitStack() as stack:
+            from providers.identityReview import identity_scope
+            stack.enter_context(identity_scope(root))
             stack.enter_context(extension_scope())
             if not args.offline and args.command not in ('export','status'):
                 bridge,_=acquire_bridge(connect_timeout=config.TRANSPORT['extension']['manual_wait_seconds'],diagnostics_dir=system_path(root,'extension_diagnostics')/'collector')

@@ -110,6 +110,9 @@ class ReportingStore:
     def __init__(self, root, ensemble):
         self.path = system_path(Path(root),'worker_runtime') / 'reporting.sqlite'
         self.ensemble = Path(ensemble)
+        self.root=Path(root)
+        from providers.identityReview import ReviewStore
+        self.identities=ReviewStore(root)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         with self.connect() as db:
@@ -196,6 +199,10 @@ class ReportingStore:
                 runtime = event.get('runtime')
                 if runtime is not None and (not isinstance(runtime, dict) or runtime.get('worker_id') != worker or runtime.get('format') != RUNTIME_FORMAT):
                     raise ValueError('Runtime identity differs from the authenticated worker')
+                from providers.identityReview import validate
+                suggestions=event.get('identity_suggestions',[])
+                if not isinstance(suggestions,list) or len(suggestions)>500:raise ValueError('Invalid identity suggestions')
+                for suggestion in suggestions:validate(suggestion)
                 logs = event.get('logs', [])
                 if not isinstance(logs, list) or len(logs) > 100:
                     raise ValueError('Invalid logs')
@@ -208,11 +215,15 @@ class ReportingStore:
                            (worker, instance, stream, sequence, encode(inventory) if inventory is not None else None,
                             version, encode(runtime) if runtime is not None else row['runtime'] if row else None, now()))
             db.execute('DELETE FROM logs WHERE worker=? AND id NOT IN (SELECT id FROM logs WHERE worker=? ORDER BY id DESC LIMIT 10000)', (worker, worker))
+        # Idempotent replay repairs suggestions as well as runtime views after an interrupted export.
+        for event in events:
+            self.identities.ingest(event.get('identity_suggestions',[]),worker)
         # Retry also repairs materialized views if a previous response/export was interrupted.
         self.materialize({worker}, inventories=changed_inventory or any(e.get('inventory') is not None for e in events))
         return events[-1]['sequence']
 
     def inventories(self, versions, exclude=None):
+        from providers.identityReview import decisions
         result = {}; current = {}
         with self.lock, self.connect() as db:
             for row in db.execute('SELECT worker,inventory,version FROM workers WHERE inventory IS NOT NULL'):
@@ -221,7 +232,7 @@ class ReportingStore:
                 current[row['worker']] = row['version']
                 if versions.get(row['worker']) != row['version']:
                     result[row['worker']] = json.loads(row['inventory'])
-        return {'inventories': result, 'versions': current}
+        return {'inventories': result, 'versions': current,'identity_decisions':decisions(self.root)}
 
 
 def read_logs(root, worker='', level='', search='', limit=200, after=0, *, focus=''):
@@ -391,6 +402,15 @@ class Reporter:
                     payload.update(inventory={**saved, 'records': changed}, reset=reset, removed=removed)
                     db.execute('DELETE FROM known')
                     db.executemany('INSERT INTO known VALUES(?,?)', hashes.items())
+            from providers.identityReview import ReviewStore
+            proposals=ReviewStore(self.root).proposals()
+            proposals=sorted(proposals,key=lambda p:p['id'])
+            digest=hashlib.sha256(encode(proposals).encode()).hexdigest()
+            prior=db.execute("SELECT value FROM meta WHERE key='identity_suggestions_hash'").fetchone()
+            if reset or prior is None or prior[0]!=digest:
+                # Separate durable batches are never coalesced with heartbeats.
+                for index in range(0,len(proposals),500):self._insert(db,'identities',{'identity_suggestions':proposals[index:index+500]})
+                db.execute("INSERT OR REPLACE INTO meta VALUES('identity_suggestions_hash',?)",(digest,))
             # Coalesce unsent heartbeats, while retaining every saved-match report and log.
             kind = 'snapshot' if inventory else 'heartbeat'
             if kind == 'heartbeat':
@@ -447,6 +467,11 @@ class Reporter:
             if saved.get('worker_id') != worker or saved.get('format') != INVENTORY_FORMAT or not isinstance(saved.get('records'), dict):
                 raise ValueError('Received inventory identity differs')
             atomic_json(self.ensemble / 'reporting' / 'workers' / (worker + '.json'), saved)
+        if 'identity_decisions' in value:
+            from providers.identityReview import ReviewStore,decisions
+            if decisions(self.root)!=value['identity_decisions']:
+                ReviewStore(self.root).replace_decisions(value['identity_decisions'])
+                print('[Identity review] Shared decisions updated; incomplete matches will be revalidated in a saved-checkpoint pass.',flush=True)
         self.versions = value['versions']
 
     def start(self):

@@ -49,7 +49,7 @@ def resource_states(row):
 class DashboardModel:
     def __init__(self,root,ensemble,plan_path,worker,*,clock=time.monotonic):
         self.root=Path(root);self.ensemble=Path(ensemble);self.plan_path=Path(plan_path);self.worker=worker
-        self.clock=clock;self.loaded=-100;self.snapshot=None;self.rows=[];self.lock=threading.Lock()
+        self.clock=clock;self.loaded=-100;self.snapshot=None;self.rows=[];self.lock=threading.Lock();self.review_seeded=False
 
     def status(self):
         with self.lock:
@@ -164,3 +164,35 @@ class DashboardModel:
             return {'total':len(rows),'offset':offset,'rows':[
                 {key:row.get(key) for key in ('holder','namespace','competition','season','match_id','origins','resources','updated_at')}
                 for row in rows[offset:offset+limit]]}
+
+    def reviews(self):
+        from providers.identityReview import ReviewStore,seed_existing
+        with self.lock:
+            if not self.review_seeded:
+                seed_existing(self.root);self.review_seeded=True
+        value=ReviewStore(self.root).snapshot()
+        value['can_review']=self.worker==load_plan(self.plan_path).coordinator
+        logs=read_logs(self.root,limit=1000,focus='warnings')['rows']
+        # Show outages separately: a reviewed name cannot repair an unavailable response.
+        issues={}
+        for row in reversed(logs):
+            message=row['message']
+            if ': partial (' not in message and 'fixture discovery failed' not in message:continue
+            if 'HTTP 502' in message:kind='WhoScored unavailable (HTTP 502)'
+            elif 'Expected one fixture' in message:kind='Provider fixture missing or team identity unresolved'
+            elif 'match team mismatch' in message:kind='Provider match team disagreement'
+            elif 'identity mismatch' in message:kind='Player identity needs review'
+            elif 'matchCentreData' in message:kind='WhoScored page data incomplete'
+            else:continue
+            key=(row['worker'],kind)
+            if key not in issues:issues[key]={'worker':row['worker'],'reason':kind,'example':message,'at':row['at'],'count':0}
+            issues[key]['count']+=1
+        value['issues']=list(issues.values())
+        return value
+
+    def decide_identity(self,value):
+        from providers.identityReview import ReviewStore
+        if self.worker!=load_plan(self.plan_path).coordinator:
+            raise ValueError('Confirm shared identities on the Main dashboard')
+        if not isinstance(value,dict):raise ValueError('Invalid review decision')
+        return ReviewStore(self.root).decide(value.get('id'),value.get('action'))

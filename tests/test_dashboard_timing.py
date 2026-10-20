@@ -50,3 +50,15 @@ class DashboardTimingTests(unittest.TestCase):
             result=next(iter(refresh_timing(runtime)['phase_stats'].values()))
             self.assertTrue(result['finished']);self.assertEqual(result['paused'],code!=0)
             self.assertEqual(result['remaining'],0)
+
+    def test_all_partial_run_reports_processed_count_and_provisional_pass_eta(self):
+        runtime=self.runtime();phase=next(iter(runtime['phase_stats'].values()))
+        phase.update(scraped=0,cached=0,partial=3,remaining=7)
+        for event in runtime['activity']:
+            if event['event']=='match_saved':event.update(status='partial',cached_match=False)
+        runtime['current']={**phase,'competition':'Premier League','season':'2022-2023','kind':'combined'}
+        value=refresh_timing(runtime);result=next(iter(value['phase_stats'].values()))
+        self.assertEqual(result['processed'],3);self.assertEqual(result['rate_samples'],3)
+        self.assertEqual(result['eta_seconds'],84);self.assertTrue(result['eta_provisional'])
+        self.assertEqual(value['current']['eta_seconds'],84)
+        self.assertIn('current pass',result['eta_basis'])
