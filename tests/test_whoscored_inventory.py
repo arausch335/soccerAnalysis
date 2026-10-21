@@ -59,6 +59,21 @@ class WhoScoredInventoryTests(unittest.TestCase):
         self.assertEqual(self.raw.read_bytes(),original)
         self.assertFalse(integrated_who(self.source,1))
 
+    def test_cached_checkpoint_rechecks_changed_linked_raw_events(self):
+        PortableProgress(None,self.root).scan()
+        payload=deepcopy(self.payload);payload['matchCentreData']['startDate']='1999-01-01'
+        self.write(payload)
+        with self.assertRaisesRegex(ValueError,'date differs'):PortableProgress(None,self.root).scan()
+
+    def test_cached_checkpoint_detects_previously_missing_raw_events(self):
+        self.raw.unlink()
+        first=PortableProgress(None,self.root);first.scan()
+        self.assertFalse(any(r['namespace']=='whoscored_events' for r in first.local_records.values()))
+        self.write(self.payload)
+        second=PortableProgress(None,self.root);second.scan()
+        self.assertEqual(second.scan_summary['validated'],1)
+        self.assertTrue(any(r['namespace']=='whoscored_events' for r in second.local_records.values()))
+
     def test_wrong_match_date_unfinished_and_empty_events_still_fail(self):
         payloads=[]
         for key,value,reason in [('startDate','1999-01-01','date differs'),('statusCode',0,'not marked finished'),('events',[],'events are missing')]:

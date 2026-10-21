@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
+from copy import deepcopy
 
 from storage.pandasStore import atomic_json, PandasStore
 from .selection import season_label, competition_by_name
@@ -65,6 +66,7 @@ class PortableProgress:
         self.path=Path(path) if path is not None else None;self.root=Path(root);self.scanning=False;self.skip_remote=True
         self.records=shared_progress(self.path,local_worker=worker_id or read_worker_id(root)) if self.path is not None else {}
         self.local_records={};self.previous_local={};self.worker_path=None
+        self._capture=None;self._inventory_cache=None;self.scan_summary={}
         self.origins=read_origins(self.root)
         if self.path is None:self.origin=read_worker_id(self.root);return
         identity=ensure_identity(self.root,worker_id)
@@ -108,6 +110,7 @@ class PortableProgress:
         if all(previous.get(field)==value for field,value in row.items() if field!='updated_at'):
             row['updated_at']=previous['updated_at']
         self.local_records[key]=row
+        if self._capture is not None:self._capture[key]=deepcopy(row)
         merge_records(self.records,{key:row})
         if not self.scanning:self.save()
 
@@ -120,15 +123,41 @@ class PortableProgress:
             'note':'Validated data held by this worker. origins identifies its original collectors.'},indent=2,sort_keys=True)
         save_origins(self.root,self.origins)
 
-    def scan(self):
+    def scan(self,*,full=False,cache=True,cancel=None):
+        from .inventoryCache import InventoryCache
+        self.origins=read_origins(self.root)
         self.local_records={}
+        if self.path is None:self.records={}
+        if self.worker_path and self.worker_path.exists():
+            self.previous_local=read_progress(self.worker_path)['records']
+        receipts=InventoryCache(self.root,self.origin,full=full) if cache else None
         self.scanning=True
-        try:self._scan()
-        finally:self.scanning=False
+        self._inventory_cache=receipts
+        self._scan_cancel=cancel
+        try:
+            self._scan()
+            if receipts:receipts.prune()
+            self.scan_summary={'reused':receipts.hits if receipts else 0,
+                               'validated':receipts.checked if receipts else len(self.local_records)}
+        finally:
+            self.scanning=False;self._capture=None;self._inventory_cache=None
+            if receipts:receipts.close()
         self.save()
         if self.path is not None:
             self.records=shared_progress(self.path)
             self.save()
+
+    def _restore(self,anchor,context=''):
+        cache=self._inventory_cache
+        if cache is None:return False
+        rows=cache.restore(anchor,context)
+        if rows is None:return False
+        for key,saved in rows.items():
+            row=deepcopy(saved)
+            row['origins']=sorted(set(row['origins'])|set(self.origins.get(key,[])))
+            self.origins[key]=row['origins'];self.local_records[key]=row
+            merge_records(self.records,{key:row})
+        return True
 
     def inventory_summary(self, report=print):
         counts={}
@@ -139,6 +168,8 @@ class PortableProgress:
         for (competition,season,namespace),count in sorted(counts.items()):
             report(f'{competition} {season} | {namespace}: {count} local match records')
         report('Run review_data.py for percentages and resource completeness; shared claims do not count as local data.')
+        report(f'Inventory checks: {self.scan_summary.get("reused",0)} unchanged artifacts reused; '
+               f'{self.scan_summary.get("validated",0)} new/changed artifacts validated.')
 
     def _scan(self):
         # Validate actual artifacts rather than trusting a copied status CSV.
@@ -146,7 +177,22 @@ class PortableProgress:
         from providers.cache import ResponseCache
         from .legacyFotmobRows import player_rows
         for marker in self.root.glob('*/*/match_checkpoints/*/CURRENT.json'):
-            dataset=PandasStore(marker.parent).from_csv()
+            self._check_cancelled()
+            if self._restore(marker):continue
+            store=PandasStore(marker.parent)
+            from storage.pandasStore import SCHEMA
+            folder=store.current_directory
+            paths=[marker,*[folder/(name+'.csv') for name in SCHEMA]]
+            cache=self._inventory_cache
+            dependencies=cache.dependencies(paths) if cache else {}
+            dataset=store.from_csv()
+            for match in dataset.matches.values():
+                directory=marker.parent.parent.parent
+                relative=match.metadata.get('raw_response_files',{}).get('whoscored')
+                if relative:paths.append(directory/relative)
+            if cache:
+                dependencies.update(cache.dependencies(paths[len(SCHEMA)+1:]))
+            self._capture={}
             for match in dataset.matches.values():
                 directory=marker.parent.parent.parent
                 slug=re.sub(r'[^a-z0-9]+','-',match.season.competition.name.lower()).strip('-')
@@ -154,6 +200,8 @@ class PortableProgress:
                         or directory.name!=season_label(match.season.name)):
                     raise ValueError(f'Checkpoint does not belong to its match/competition/season path: {marker}')
                 self.record_match(match)
+            if cache:cache.remember(marker,dependencies,self._capture)
+            self._capture=None
         for subtree,namespace,provider in (('whoscored_events','whoscored_events','whoscored'),
                                           ('whoscored','whoscored_events','whoscored'),
                                           ('','whoscored_events','whoscored'),
@@ -173,8 +221,14 @@ class PortableProgress:
                     raise ValueError(f'Provider collection namespace/selection mismatch: {directory}')
                 cache=ResponseCache(directory/'raw')
                 for event in json.loads(schedule.read_text(encoding='utf-8'))['events']:
+                    self._check_cancelled()
                     mid=event['id'];path=cache.path(provider,f'match/{mid}')
                     if not path.exists():continue
+                    context=json.dumps([namespace,competition,season,event],sort_keys=True)
+                    if self._restore(path,context):continue
+                    receipts=self._inventory_cache
+                    dependencies=receipts.dependencies([path]) if receipts else {}
+                    self._capture={}
                     saved=json.loads(path.read_text(encoding='utf-8'))
                     if saved.get('provider')!=provider or saved.get('key')!=f'match/{mid}':
                         raise ValueError('Imported cache identity differs from its path')
@@ -183,6 +237,13 @@ class PortableProgress:
                         if not who_valid(payload,mid,event):raise ValueError(f'Invalid WhoScored raw events: {path}')
                     else:player_rows(payload,competition,season,event)
                     self.record(namespace,competition,season,mid)
+                    if receipts:receipts.remember(path,dependencies,self._capture,context)
+                    self._capture=None
+
+    def _check_cancelled(self):
+        if self._scan_cancel is not None and self._scan_cancel.is_set():
+            from .inventoryCache import InventoryInterrupted
+            raise InventoryInterrupted()
 
     def _integrated_events(self,match,collected_here):
         from .whoScoredData import integrated_error

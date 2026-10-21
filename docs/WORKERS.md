@@ -241,12 +241,29 @@ based on the latest report; the dashboard does not invent progress while a
 worker is disconnected. Targets come from saved schedules and reported fixture
 lists. A season with no discovered target is never presented as 100% complete.
 
-Inventory audits validate old data before a pending job. This can take several
-minutes on a large archive. Monitor/unassigned computers do not automatically
-scan their full archive. To rebuild explicitly, stop the scraper first:
+Inventory audits use saved validation receipts in
+`data/_system/cache/inventory.sqlite`. The first audit validates existing data;
+later starts reuse unchanged matches without reopening checkpoint tables or
+provider responses. New, changed or removed files are checked, including linked
+WhoScored raw events. Identity decisions, Reep changes and relevant validation
+code changes invalidate the receipts. Imported data always receives an
+independent validation; receipts copied from another computer are not trusted.
+
+Main continuously checks its local inventory every 30 seconds in the background
+and reports changed holdings. It never starts collectors in monitor mode. Checks
+wait if a collector or import holds the data lock. Worker reports continue to
+arrive independently, and the dashboard refreshes every five seconds.
+
+To run an incremental audit explicitly, stop the scraper first:
 
 ```bash
 python main.py --inventory
+```
+
+To force a complete audit and refresh the receipts:
+
+```bash
+python main.py --inventory --full-inventory
 ```
 
 Then start the normal supervisor to report the refreshed inventory. Explicit

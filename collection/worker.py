@@ -12,6 +12,7 @@ import time
 import webbrowser
 
 from filelock import FileLock
+from .inventoryMonitor import InventoryMonitor
 import config
 from config.workerPlan import load_plan
 from .ensemble import ensemble_session
@@ -122,11 +123,17 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
         initialized=False;progress=None;last_boundary=0
         settings=config.CONFIG_FILE.read_bytes()
         state.save(state='starting',role='monitor' if monitor else 'worker',plan_revision=plan.revision,git=sync.status)
+        inventory_watch=None
+        if monitor and not options.once:
+            inventory_watch=InventoryMonitor(root,ensemble,worker,
+                on_change=(lambda:reporting.enqueue()) if reporting else None).start()
+            stack.callback(inventory_watch.close)
         if runner is None:
             from main import _main
             runner=_main
         try:
             while not stop.is_set():
+                if inventory_watch:state.save(inventory=inventory_watch.status)
                 # A completed job is the only place source files may change.
                 changed=[]
                 if clock()-last_boundary>=plan.git['poll_seconds'] or state.value['state'] in ('starting','between_jobs') or sync.status.get('state')=='update_pending':

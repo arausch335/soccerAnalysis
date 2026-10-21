@@ -166,7 +166,7 @@ def import_folder(source, root, report=print):
                 for row in csv.DictReader(handle):
                     if None in row or None in row.values():raise ValueError(f'Invalid imported CSV: {relative}')
     source_progress=PortableProgress(None,source)
-    source_progress.scan()
+    source_progress.scan(cache=False)
     local_progress=PortableProgress(None,root)
     local_progress.scan()
     for relative in stores:
@@ -251,7 +251,7 @@ def import_folder(source, root, report=print):
             for key,row in progress.local_records.items():
                 origins[key]=sorted(set(origins.get(key,[]))|set(row['origins']))
         save_origins(root,origins)
-        PortableProgress(None,root).scan()
+        PortableProgress(None,root).scan(cache=False)
         atomic_json(journal,{**json.loads(journal.read_text(encoding='utf-8')),'state':'complete'})
         if all(path.exists() and digest(path)==checksum for _,path,checksum in files):
             shutil.rmtree(source)
@@ -282,7 +282,7 @@ def import_pending(root, ensemble, report=print):
 
 
 @contextmanager
-def ensemble_session(root, ensemble, report=print, *, skip_remote=True, worker_id=None):
+def ensemble_session(root, ensemble, report=print, *, skip_remote=True, worker_id=None,full_inventory=False):
     root=Path(root).resolve();ensemble=Path(ensemble).resolve()
     if root==ensemble or root in ensemble.parents or ensemble in root.parents:
         raise ValueError('ensemble_data and the regular data root must be separate folders')
@@ -303,7 +303,9 @@ def ensemble_session(root, ensemble, report=print, *, skip_remote=True, worker_i
         migrate_legacy(root,report)
         progress=PortableProgress(ensemble/'provenance.json',root,worker_id=worker_id)
         progress.skip_remote=skip_remote
-        progress.scan()
+        progress.scan(full=full_inventory)
+        report(f'Inventory: {progress.scan_summary["reused"]} unchanged artifacts reused; '
+               f'{progress.scan_summary["validated"]} new/changed artifacts validated.')
     report(f'Portable collection progress: {progress.path}')
     report(f'Worker identity: {progress.origin} ({system_path(root,"identity.json")})')
     report(f'Local worker inventory: {progress.worker_path}')

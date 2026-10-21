@@ -254,8 +254,11 @@ def main(argv=None):
     parser.add_argument('--import-only',action='store_true')
     parser.add_argument('--ignore-provenance',action='store_true')
     parser.add_argument('--inventory',action='store_true',help='Validate local data and rebuild this worker inventory without scraping')
+    parser.add_argument('--full-inventory',action='store_true',help='With --inventory, bypass saved validation receipts')
     parser.add_argument('--worker-id',help='Unique name for this computer, such as main-mac or laptop')
     transfer,args=parser.parse_known_args(args)
+    if transfer.full_inventory and not transfer.inventory:
+        parser.error('--full-inventory requires --inventory')
     if '--help' in args or '-h' in args:
         print('Shared worker: run without arguments; --worker --help; --dashboard for a read-only view.')
         print('Worker inventory: --inventory --worker-id main-mac; transfers: --ensemble-root PATH --import-only --ignore-provenance')
@@ -278,7 +281,7 @@ def main(argv=None):
 def _ensemble_main(args,transfer):
     try:
         with ensemble_session(_selection(args).data_root,transfer.ensemble_root,skip_remote=not transfer.ignore_provenance,
-                              worker_id=transfer.worker_id) as progress:
+                              worker_id=transfer.worker_id,full_inventory=transfer.full_inventory) as progress:
             if transfer.inventory:
                 if progress is None:raise ValueError('Inventory requires a marked collection data root')
                 progress.inventory_summary()
