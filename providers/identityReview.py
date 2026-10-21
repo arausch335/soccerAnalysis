@@ -64,7 +64,9 @@ def team_aliases(root=None):
 
 def revision(root=None):
     links=sorted(tuple(d[k] for k in ('kind','provider','source_id','target_id')) for d in decisions(root) if d['action']=='confirm')
-    return hashlib.sha256(json.dumps(links).encode()).hexdigest() if links else ''
+    from .reep import version
+    reep=version(root)
+    return hashlib.sha256(json.dumps([links,reep]).encode()).hexdigest() if links or reep else ''
 
 
 def validate(proposal):

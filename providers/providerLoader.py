@@ -1,7 +1,7 @@
 """Shared standalone loading and transactional enrichment of a baseline match."""
 from copy import deepcopy
 from .matchLoader import MatchLoader
-from .identity import IdentityResolver, IdentityError, name_key, team_key
+from .identity import IdentityResolver, IdentityError, name_key, team_key, teams_match
 from .statistics import synthesize
 
 
@@ -53,13 +53,16 @@ class ProviderLoader(MatchLoader):
         if not standalone and match.metadata.get('id_namespace','sofascore')=='sofascore':
             from .identityReview import suggest_teams
             baseline={'id':match.id,'startTimestamp':int(match.kickoff.timestamp()),
-                      'homeTeam':{'name':match.home_team.name},'awayTeam':{'name':match.away_team.name}}
-            if any(team_key(baseline[s+'Team']['name'],self.identity_resolver.review_root)!=
-                   team_key(ev[s+'Team']['name'],self.identity_resolver.review_root) for s in ('home','away')):
+                      'homeTeam':{'id':match.home_team.id,'name':match.home_team.name},
+                      'awayTeam':{'id':match.away_team.id,'name':match.away_team.name}}
+            if any(not teams_match(baseline[s+'Team'],ev[s+'Team'],self.provider,
+                                   self.identity_resolver.review_root) for s in ('home','away')):
                 suggest_teams(self.identity_resolver.review_root,self.provider,baseline,[ev])
         for side in ('home','away'):
             lineup=getattr(match,side+'_lineup')
-            if lineup is None or team_key(lineup.team.name,self.identity_resolver.review_root)!=team_key(ev[side+'Team']['name'],self.identity_resolver.review_root):
+            if lineup is None or not teams_match({'id':lineup.team.id,'name':lineup.team.name},
+                    ev[side+'Team'],self.provider,self.identity_resolver.review_root,
+                    match.metadata.get('id_namespace','sofascore') if not standalone else self.provider):
                 raise IdentityError(f'{self.provider}: match team mismatch')
             score=getattr(match,side+'_score')
             if ev.get(side+'Score',{}).get('current') != score:
@@ -71,7 +74,7 @@ class ProviderLoader(MatchLoader):
                     if standalone:
                         appearance=next(p for p in lineup.players if p.player.id==entry['id']);method='provider_native_id'
                     else:
-                        try:appearance,method=self.identity_resolver.player(self.provider,entry,lineup.players,provider_match_id=ev['id'])
+                        try:appearance,method=self.identity_resolver.player(self.provider,entry,lineup.players,provider_match_id=ev['id'],baseline=namespace)
                         except IdentityError:
                             verifier=self.identity_resolver.investigator
                             if verifier and match.metadata.get('id_namespace','sofascore')=='sofascore' and entry.get('appeared',False):
@@ -82,7 +85,7 @@ class ProviderLoader(MatchLoader):
                                      'competition':match.season.competition.name,'season':match.season.name,
                                      'date':match.kickoff.date().isoformat(),'match':match.home_team.name+' vs '+match.away_team.name})
                                 verifier.investigate(proposals)
-                                appearance,method=self.identity_resolver.player(self.provider,entry,lineup.players,provider_match_id=ev['id'])
+                                appearance,method=self.identity_resolver.player(self.provider,entry,lineup.players,provider_match_id=ev['id'],baseline=namespace)
                             else:raise
                     if appearance.player.id in used: raise IdentityError('Duplicate player match')
                     if appearance.starter != entry['starter']:

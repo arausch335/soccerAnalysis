@@ -331,3 +331,46 @@ Reviewed Zini club-name variants `APO Levadiakos` / `Levadiakos` and `AEK B` /
 [Sofascore profile](https://www.sofascore.com/football/player/zini/1002334) and
 [FotMob profile](https://www.fotmob.com/players/1106943/zini) provide the matching
 birth date and dated club history used to check this example.
+
+### Reep ID concordance
+
+On Main, run `python -m tools.refresh_reep` to refresh Reep's public bulk ID
+bridges and rebuild the exported references. No Reep account or hosted API key
+is needed. Bulk downloads are temporary; the retained index lives at
+`data/_system/identity/reep.json`. It contains all published team bridges for
+our three providers, plus player and match bridges relevant to saved local IDs
+and reported worker match inventories. Refresh again after collecting new IDs.
+The release, checksums and CC0 license are recorded in the index.
+
+Main distributes a changed index automatically through direct reporting. Update
+and restart Main and workers to enable this feature. A new index changes the
+identity revision, making paused seasons eligible for a checkpoint retry.
+Reep joins are typed (player, team, match), follow published redirects, and
+never overwrite explicit reviewed player mappings. Unique team-ID bridges can
+resolve different club names. Date, home/away side, score and lineup checks
+still apply. Ambiguous or contradictory IDs are not guessed; existing name and
+profile investigation remains available for identities absent from Reep.
+
+`python dataset_builder.py --references-only` uses the saved index without
+downloading anything. The four-source exports are:
+
+- `dataset/concordance/match_ids.csv`
+- `dataset/concordance/team_ids.csv`
+- `dataset/concordance/player_ids.csv`
+- `dataset/concordance/manifest.json` (release and coverage counts)
+
+Each CSV includes `sofascore_id`, `fotmob_id`, `whoscored_id`, `reep_id` and
+`identity_status`. Status is `linked`, `partly_verified` (some observed IDs have
+no published bridge), `unmapped`, or `conflict`. Missing IDs remain blank, and
+conflicting observed IDs are retained for review with no assigned Reep ID.
+Player rows retain each club/season stint. Team exports also retain clubs that
+have no FotMob ID yet. The existing top-level three-provider CSVs remain builder
+references. These tables describe saved local collections: progress reporting
+sends worker match IDs, not workers' complete player/statistics datasets. Import
+those datasets before rebuilding a combined export across all computers.
+
+If a worker reports `Chrome extension not connected` and then pauses, stop that
+worker, pull the latest code, restart with `python main.py --worker-id msi --retry`
+(use `headless` on Headless), and paste its newly printed connection code into
+Soccer Collector in Chrome. Keep the extension connected. Saved checkpoints are
+reused; a paused plan does not mean every match completed.

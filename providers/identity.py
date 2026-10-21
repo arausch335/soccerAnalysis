@@ -119,6 +119,29 @@ def team_key(name,review_root=None):
     return value
 
 
+def teams_match(left, right, provider, review_root=None, baseline='sofascore'):
+    """Prefer reviewed/native ID evidence; retain aliases for uncovered clubs."""
+    from .reep import index
+    left_id, right_id = left.get('id'), right.get('id')
+    if left_id is not None and right_id is not None and provider:
+        if baseline == provider:
+            return str(left_id) == str(right_id)
+        reviewed = REVIEWED_TEAM_IDS.get((provider, str(left_id))) if baseline == 'sofascore' else None
+        if reviewed is not None:
+            return str(right_id) == str(reviewed)
+        # A dashboard-confirmed alias is an explicit human decision.
+        from .identityReview import team_aliases
+        aliases = team_aliases(review_root)
+        keys = [''.join(w for w in words(t.get('name', '')) if w not in ('fc','afc','cf','ac'))
+                for t in (left, right)]
+        if any(k in aliases for k in keys) and team_key(left.get('name',''),review_root) == team_key(right.get('name',''),review_root):
+            return True
+        linked = index(review_root).same('team', baseline, left_id, provider, right_id)
+        if linked is not None:
+            return linked
+    return team_key(left.get('name',''),review_root) == team_key(right.get('name',''),review_root)
+
+
 class IdentityError(ValueError):
     pass
 
@@ -128,13 +151,13 @@ class IdentityResolver:
     def __init__(self, overrides=None, review_root=None):
         self.overrides=overrides or {};self.review_root=review_root;self.investigator=None
 
-    def player(self, provider, entry, candidates, provider_match_id=None):
+    def player(self, provider, entry, candidates, provider_match_id=None, baseline='sofascore'):
         contextual=REVIEWED_MATCH_PLAYER_IDS.get(
-            (provider,provider_match_id,str(entry['id'])))
+            (provider,provider_match_id,str(entry['id']))) if baseline=='sofascore' else None
         explicit=self.overrides.get(provider,{}).get(str(entry['id']))
         from .identityReview import player_link,rejected_player_links
-        shared=player_link(provider,entry['id'],self.review_root)
-        reviewed=REVIEWED_PLAYER_IDS.get((provider,str(entry['id'])))
+        shared=player_link(provider,entry['id'],self.review_root) if baseline=='sofascore' else None
+        reviewed=REVIEWED_PLAYER_IDS.get((provider,str(entry['id']))) if baseline=='sofascore' else None
         if contextual is not None:
             found=[p for p in candidates if p.player.id==int(contextual)]
             method='reviewed_match_id_mapping'
@@ -148,15 +171,21 @@ class IdentityResolver:
             found=[p for p in candidates if p.player.id==int(reviewed)]
             method='reviewed_provider_id_mapping'
         else:
-            found=[p for p in candidates if name_key(p.player.name)==name_key(entry['name'])]
-            method='name_or_reviewed_alias'
+            from .reep import index
+            bridges=index(self.review_root)
+            found=[p for p in candidates if bridges.same('player',provider,entry['id'],baseline,p.player.id) is True]
+            method='reep_provider_id'
+            if not found:
+                found=[p for p in candidates if name_key(p.player.name)==name_key(entry['name'])]
+                method='name_or_reviewed_alias'
             if not found and entry.get('shirt_number') is not None:
                 tokens=set(words(entry['name']))
                 found=[p for p in candidates if str(p.shirt_number)==str(entry['shirt_number'])
                        and tokens.intersection(words(p.player.name))]
                 method='unique_shirt_and_shared_name_token'
             found=[p for p in found if
-                   (provider,str(entry['id']),str(p.player.id)) not in (REJECTED_PLAYER_ID_LINKS|rejected_player_links(self.review_root))]
+                   (baseline!='sofascore' or (provider,str(entry['id']),str(p.player.id)) not in (REJECTED_PLAYER_ID_LINKS|rejected_player_links(self.review_root)))
+                   and bridges.same('player',provider,entry['id'],baseline,p.player.id) is not False]
         if len(found)!=1:
             raise IdentityError(f'{provider}: cannot uniquely match {entry["name"]} (ID {entry["id"]}); add an identity-map entry')
         player=found[0]
@@ -167,11 +196,14 @@ class IdentityResolver:
         return player,method
 
 
-def match_fixture(event, fixtures, *, provider=None, review_root=None):
+def match_fixture(event, fixtures, *, provider=None, review_root=None, baseline='sofascore'):
     date=event['startTimestamp']//86400
-    wanted=(team_key(event['homeTeam']['name'],review_root),team_key(event['awayTeam']['name'],review_root))
+    from .reep import index
+    bridges=index(review_root)
     found=[f for f in fixtures if f['startTimestamp']//86400==date
-           and (team_key(f['homeTeam']['name'],review_root),team_key(f['awayTeam']['name'],review_root))==wanted]
+           and all(teams_match(event[s+'Team'],f[s+'Team'],provider,review_root,baseline)
+                   for s in ('home','away'))
+           and (not provider or bridges.same('match',baseline,event.get('id'),provider,f.get('id')) is not False)]
     if len(found)!=1:
         if not found and provider:
             from .identityReview import suggest_teams

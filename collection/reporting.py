@@ -222,7 +222,7 @@ class ReportingStore:
         self.materialize({worker}, inventories=changed_inventory or any(e.get('inventory') is not None for e in events))
         return events[-1]['sequence']
 
-    def inventories(self, versions, exclude=None):
+    def inventories(self, versions, exclude=None, reep_version=''):
         from providers.identityReview import decisions
         result = {}; current = {}
         with self.lock, self.connect() as db:
@@ -232,7 +232,10 @@ class ReportingStore:
                 current[row['worker']] = row['version']
                 if versions.get(row['worker']) != row['version']:
                     result[row['worker']] = json.loads(row['inventory'])
+        from providers.reep import snapshot
+        reep=snapshot(self.root)
         return {'inventories': result, 'versions': current,'identity_decisions':decisions(self.root),
+                'reep_index':reep if reep and reep['version']!=reep_version else None,
                 'identity_tasks':[p for p in self.identities.snapshot()['pending'] if p['kind']=='player' and not p.get('investigation')][:100]}
 
 
@@ -310,7 +313,8 @@ class ReportingServer:
                     versions = json.loads(self.headers.get('X-Inventory-Versions', '{}'))
                     if not isinstance(versions, dict):
                         raise ValueError('Invalid inventory versions')
-                    self.reply(200, store.inventories(versions, exclude=worker))
+                    self.reply(200, store.inventories(versions, exclude=worker,
+                                                     reep_version=self.headers.get('X-Reep-Version','')))
                 except (ValueError, TypeError):
                     self.reply(400, {'error': 'Invalid request'})
 
@@ -460,7 +464,11 @@ class Reporter:
         return True
 
     def pull(self):
-        value = self.request('/v1/inventories', headers={'X-Inventory-Versions': encode(self.versions)})
+        from providers.reep import version,install
+        value = self.request('/v1/inventories', headers={'X-Inventory-Versions': encode(self.versions),
+                                                      'X-Reep-Version':version(self.root)})
+        if value.get('reep_index'):
+            install(self.root,value['reep_index'])
         for worker, saved in value['inventories'].items():
             valid_worker_id(worker)
             if worker == self.worker:

@@ -197,7 +197,7 @@ class SeasonRunner:
                     if local and not self.refresh:
                         result[provider]=local
                         try:
-                            for fixture in selected:match_fixture(fixture,local)
+                            for fixture in selected:match_fixture(fixture,local,provider='whoscored',review_root=self.identity_resolver.review_root,baseline=self.baseline_provider)
                         except (ValueError,IdentityError):pass
                         else:
                             self.report(f'whoscored: reusing {len(local)} locally saved fixtures.')
@@ -489,7 +489,7 @@ class SeasonRunner:
                     errors.append(f'{provider}: {disabled[provider]}');match.metadata['provider_status'][provider]='failed';continue
                 timing.set_provider(provider)
                 try:
-                    fixture=match_fixture(event,fixtures[provider],provider=provider,review_root=self.identity_resolver.review_root);pid=fixture['id'];client=self.clients[provider]
+                    fixture=match_fixture(event,fixtures[provider],provider=provider,review_root=self.identity_resolver.review_root,baseline=self.baseline_provider);pid=fixture['id'];client=self.clients[provider]
                     if provider=='whoscored' and not self.refresh and not self.cache.path(provider,f'match/{pid}').exists():
                         from .whoScoredData import reuse_match
                         reuse_match(self.directory,pid,fixture)
@@ -912,7 +912,7 @@ class SeasonRunner:
                  'whoscored':WhoScoredLoader(identity_resolver=self.identity_resolver)}
         for provider,loader in loaders.items():
             try:
-                fixture=match_fixture(event,cached_fixtures.get(provider,[]))
+                fixture=match_fixture(event,cached_fixtures.get(provider,[]),provider=provider,review_root=self.identity_resolver.review_root,baseline=self.baseline_provider)
                 relative=match.metadata.get('raw_response_files',{}).get(provider)
                 path=(self.directory/relative if relative else
                       self.cache.path(provider,f'match/{fixture["id"]}'))

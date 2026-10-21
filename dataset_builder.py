@@ -324,7 +324,7 @@ def _cached_provider_fixtures(source, provider):
     return list(fixtures.values())
 
 
-def _source_id_rows(source, player_rows, team_rows, match_rows):
+def _source_id_rows(source, player_rows, team_rows, match_rows, review_root=None):
     source = Path(source);
     config = json.loads((source / 'config.json').read_text(encoding='utf-8'))
     competition = config['competition'];
@@ -399,7 +399,7 @@ def _source_id_rows(source, player_rows, team_rows, match_rows):
         fixtures = _cached_provider_fixtures(source, provider)
         for event in events.values():
             try:
-                fixture = match_fixture(event, fixtures)
+                fixture = match_fixture(event, fixtures, provider=provider, review_root=review_root, baseline=baseline)
             except IdentityError:
                 continue
             match_id = _identifier(event.get('id'))
@@ -452,7 +452,9 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
     player_rows = {};
     team_rows = {};
     match_rows = {}
-    for source in sources: _source_id_rows(source, player_rows, team_rows, match_rows)
+    for number, source in enumerate(sources, 1):
+        print(f'Indexing IDs [{number}/{len(sources)}]: {source.parent.name}/{source.name}', flush=True)
+        _source_id_rows(source, player_rows, team_rows, match_rows, data_root)
     _backfill_unambiguous_ids(player_rows);
     _backfill_unambiguous_ids(team_rows)
     output = Path(output_root);
@@ -484,6 +486,48 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
                   f'{incomplete} have missing provider IDs '
                   f'(SofaScore: {int(missing.sofascore_id.sum())}, '
                   f'WhoScored: {int(missing.whoscored_id.sum())}).', flush=True)
+    frames = {kind: pending[kind + ' IDs'][0] for kind in ('player','team','match')
+              if kind + ' IDs' in pending}
+    written.update(export_concordance(frames, data_root, output,
+                                     source_teams=source_teams if build_team_ids else None))
+    return written
+
+
+def export_concordance(frames, data_root, output, *, source_teams=None):
+    """Join validated provider tables to Reep without rereading raw responses."""
+    from providers.reep import index
+    from storage.pandasStore import atomic_json
+    bridges = index(data_root)
+    concordance = Path(output) / 'concordance'
+    written = {}
+    manifest = {'format':'soccer-concordance-v1','reep':bridges.metadata,'tables':{}}
+    for kind in ('player','team','match'):
+        if kind not in frames:
+            continue
+        frame = frames[kind]
+        columns = list(frame.columns)
+        if kind == 'team' and source_teams is not None:
+            frame = pd.concat([frame, source_teams[list(TEAM_ID_COLUMNS)]], ignore_index=True)
+        records = []
+        seen = set()
+        for record in frame.to_dict('records'):
+            clean = {k:'' if pd.isna(v) else str(v) for k,v in record.items()}
+            resolved = bridges.resolve(kind, clean)
+            if kind == 'team':
+                key = (resolved['reep_id'],) if resolved['reep_id'] and resolved['identity_status']=='linked' else tuple(resolved[p+'_id'] for p in ('sofascore','fotmob','whoscored'))
+                if key in seen:
+                    continue
+                seen.add(key)
+            records.append(resolved)
+        exported = pd.DataFrame(records, columns=[*columns,'reep_id','identity_status'])
+        path = concordance / (kind + '_ids.csv')
+        atomic_csv(exported, path)
+        written[kind + ' concordance'] = path
+        manifest['tables'][kind] = {'rows':len(exported),
+            'reep_linked':int(exported.reep_id.ne('').sum()),
+            'conflicts':int(exported.identity_status.eq('conflict').sum()),
+            'missing_ids':{p:int(exported[p+'_id'].eq('').sum()) for p in ('sofascore','fotmob','whoscored')}}
+    atomic_json(concordance / 'manifest.json', manifest)
     return written
 
 
@@ -635,9 +679,9 @@ def _build_settings():
 
 def _build_reference_csvs(root, output, settings):
     if settings['REFRESH_PUBLISHED_TEAM_IDS'] and settings['BUILD_TEAM_IDS']:
-        from providers.team_crosswalk import refresh_team_crosswalk
-        count = refresh_team_crosswalk(output / 'fixtures.csv', TEAM_CROSSWALK)
-        print(f'Checked published provider links for {count} fixture teams.', flush=True)
+        from providers.reep import refresh
+        value = refresh(root, output, config.PROJECT_ROOT / 'ensemble_data')
+        print(f"Reep {value['release']}: retained {len(value['rows'])} typed bridges.", flush=True)
     written = build_id_tables(root, output,
                              build_player_ids=settings['BUILD_PLAYER_IDS'],
                              build_team_ids=settings['BUILD_TEAM_IDS'],
@@ -661,8 +705,6 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
         raise ValueError('Data and dataset roots must be separate directories')
     if settings['STANDARDIZE_FIXTURE_TEAM_NAMES'] and not (output / 'fixtures.csv').is_file():
         raise ValueError('Standardizing fixture names requires dataset/fixtures.csv from the fixture builder')
-    if settings['REFRESH_PUBLISHED_TEAM_IDS'] and settings['BUILD_TEAM_IDS'] and not (output / 'fixtures.csv').is_file():
-        raise ValueError('Refreshing published team IDs requires dataset/fixtures.csv from the fixture builder')
     reference_names = [name.removeprefix('BUILD_').lower() for name in
                        ('BUILD_PLAYER_IDS', 'BUILD_TEAM_IDS', 'BUILD_MATCH_IDS') if settings[name]]
     print('Dataset types: ' + ', '.join([*tables, *reference_names]), flush=True)

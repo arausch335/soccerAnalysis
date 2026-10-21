@@ -118,7 +118,7 @@ class DatasetManagerTests(unittest.TestCase):
             for path in paths.values():path.unlink()
             paths=dataset_builder.build_id_tables(root/'data',root/'dataset',
                 build_player_ids=False,build_team_ids=False,build_match_ids=True)
-            self.assertEqual(set(paths),{'match IDs'})
+            self.assertEqual(set(paths),{'match IDs','match concordance'})
             self.assertTrue((root/'dataset'/'match_ids.csv').exists())
             self.assertFalse((root/'dataset'/'player_ids.csv').exists())
             self.assertFalse((root/'dataset'/'team_ids.csv').exists())
