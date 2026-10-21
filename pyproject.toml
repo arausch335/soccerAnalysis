@@ -7,7 +7,7 @@ name = "soccerAnalysis"
 version = "0.2.0"
 description = "Football collection, dataset building, and offline analysis"
 requires-python = ">=3.10"
-dependencies = ["curl_cffi>=0.13,<0.17", "pandas>=2.2,<4", "matplotlib>=3.8,<4", "filelock>=3.13,<4", "PyYAML>=6,<7"]
+dependencies = ["curl_cffi>=0.13,<0.17", "pandas>=2.2,<4", "matplotlib>=3.8,<4", "filelock>=3.13,<4", "PyYAML>=6,<7", "psutil>=5.9,<8"]
 
 [project.optional-dependencies]
 analysis = ["scipy", "scikit-learn", "plotly", "pyarrow"]

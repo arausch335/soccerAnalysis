@@ -100,6 +100,42 @@ class PlayerProfileTests(unittest.TestCase):
         self.assertEqual(p['career'],[{'club':'AEK Athens','start':'2023-07-01','end':'2024-06-30','precision':'season'}])
         with self.assertRaises(ProviderError):whoscored_profile(10,html)
 
+    def test_fotmob_null_current_team_and_nullable_career_fields_stay_missing(self):
+        histories=[None,{'careerItems':None},{'careerItems':{'senior':None}},
+                   {'careerItems':{'senior':{'teamEntries':None}}}]
+        for history in histories:
+            with self.subTest(history=history):
+                value=fotmob_profile(77,{'id':77,'primaryTeam':None,'careerHistory':history})
+                checked_profile(value,'fotmob','77')
+                self.assertIsNone(value['club']);self.assertEqual(value['career'],[])
+        with self.assertRaises(ProviderError):fotmob_profile(77,{'id':77,'primaryTeam':'bad shape'})
+
+    def test_sofascore_null_team_and_transfer_destination_do_not_crash(self):
+        value=sofa_profile(7,{'player':{'id':7,'team':None}},
+            {'transferHistory':[{'player':{'id':7},'transferTo':None,'toTeamName':'Former Club','transferDateTimestamp':1609459200}]})
+        self.assertIsNone(value['club']);self.assertEqual(value['career'][0]['club'],'Former Club')
+        checked_profile(value,'sofascore','7')
+
+    def test_optional_profile_decode_failures_leave_review_pending_and_are_cached(self):
+        for error in (AttributeError('Unexpected nullable provider field'),IndexError('Missing provider row')):
+            with TemporaryDirectory() as tmp,identity_scope(tmp),self.subTest(error=type(error).__name__):
+                fot=Mock();fot.player_profile.side_effect=error
+                sofa=Mock();sofa.player_profile.return_value=profile('sofascore',7)
+                verifier=ProfileVerifier({'fotmob':fot,'sofascore':sofa},tmp,lambda *a:None)
+                rows=verifier.investigate([proposal()]);verifier.investigate([proposal()])
+                self.assertEqual(rows[0]['investigation']['status'],'incomplete')
+                self.assertTrue(rows[0]['investigation']['errors'])
+                self.assertIsNone(player_link('fotmob',77));self.assertEqual(fot.player_profile.call_count,1)
+
+    def test_missing_current_club_never_verifies_an_identity_automatically(self):
+        with TemporaryDirectory() as tmp,identity_scope(tmp):
+            fot=Mock();fot.player_profile.return_value=profile('fotmob',77,club=None)
+            sofa=Mock();sofa.player_profile.return_value=profile('sofascore',7)
+            rows=ProfileVerifier({'fotmob':fot,'sofascore':sofa},tmp,lambda *a:None).investigate([proposal()])
+            self.assertEqual(rows[0]['investigation']['status'],'incomplete')
+            self.assertEqual(rows[0]['investigation']['checks']['club'],'missing')
+            self.assertIsNone(player_link('fotmob',77))
+
     def test_lookup_cache_reuses_profiles_and_source_errors_leave_manual_evidence(self):
         with TemporaryDirectory() as tmp,identity_scope(tmp):
             fot=Mock();fot.player_profile.return_value=profile('fotmob',77)

@@ -71,7 +71,7 @@ class ExtensionWhoScoredClient(WhoScoredClient):
             from .bridge import acquire_bridge
             self.bridge,self._owns_bridge=acquire_bridge(report=self.report,
                 connect_timeout=self.settings['manual_wait_seconds'],
-                diagnostics_dir=self.root/'extension_diagnostics'/'collector')
+                diagnostics_dir=system_path(self.root,'extension_diagnostics')/'collector')
         result=self.bridge.request('whoscored',args,
             timeout=self.settings['timeout_seconds']+self.settings['manual_wait_seconds']+15)
         self._waiting_seconds+=max(0,float(result.get('waiting_seconds',0)))

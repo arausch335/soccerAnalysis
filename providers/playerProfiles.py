@@ -10,6 +10,12 @@ from .httpClient import ProviderError
 HOSTS={'sofascore':'www.sofascore.com','fotmob':'www.fotmob.com','whoscored':'www.whoscored.com'}
 
 
+def _object(value,label):
+    if value is None:return {}
+    if not isinstance(value,dict):raise ProviderError(label+' is not an object')
+    return value
+
+
 def day(value):
     if value in (None,''):return None
     try:
@@ -23,6 +29,8 @@ def checked_profile(value,provider,pid):
     if not isinstance(value,dict) or value.get('provider')!=provider or str(value.get('id'))!=str(pid):
         raise ValueError('Profile identity differs from requested player')
     if len(json.dumps(value))>30000:raise ValueError('Profile evidence too large')
+    if value.get('club') is not None and (not isinstance(value['club'],str) or len(value['club'])>150):
+        raise ValueError('Invalid current club')
     sources=value.get('sources',[])
     if not sources or len(sources)>3:raise ValueError('Profile source URLs are required')
     for source in sources:
@@ -45,33 +53,40 @@ def checked_profile(value,provider,pid):
 
 
 def sofa_profile(pid,payload,history):
-    p=payload.get('player',{})
+    p=_object(_object(payload,'Sofascore profile').get('player'),'Sofascore player')
     if str(p.get('id'))!=str(pid):raise ProviderError('Sofascore profile belongs to another player')
-    transfers=history.get('transferHistory')
+    transfers=_object(history,'Sofascore history').get('transferHistory')
     if not isinstance(transfers,list):raise ProviderError('Sofascore career history unavailable')
     changes=[]
     for t in transfers:
-        if str(t.get('player',{}).get('id'))!=str(pid):raise ProviderError('Sofascore transfer belongs to another player')
-        start=day(t.get('transferDateTimestamp'));club=t.get('transferTo',{}).get('name') or t.get('toTeamName')
+        t=_object(t,'Sofascore transfer')
+        if str(_object(t.get('player'),'Sofascore transfer player').get('id'))!=str(pid):raise ProviderError('Sofascore transfer belongs to another player')
+        start=day(t.get('transferDateTimestamp'));club=_object(t.get('transferTo'),'Sofascore transfer destination').get('name') or t.get('toTeamName')
         if start and club:changes.append((start,club))
     changes=sorted(set(changes))
     career=[{'club':club,'start':start,'end':changes[i+1][0] if i+1<len(changes) else None}
             for i,(start,club) in enumerate(changes)]
     return {'provider':'sofascore','id':str(pid),'name':p.get('name',''),'birth_date':day(p.get('dateOfBirthTimestamp')),
-            'club':p.get('team',{}).get('name'),'career':career,
+            'club':_object(p.get('team'),'Sofascore current team').get('name'),'career':career,
             'sources':[f'https://www.sofascore.com/api/v1/player/{pid}',f'https://www.sofascore.com/api/v1/player/{pid}/transfer-history']}
 
 
 def fotmob_profile(pid,p):
+    p=_object(p,'FotMob profile')
     if str(p.get('id'))!=str(pid):raise ProviderError('FotMob profile belongs to another player')
-    rows=p.get('careerHistory',{}).get('careerItems',{}).get('senior',{}).get('teamEntries',[])
+    history=_object(p.get('careerHistory'),'FotMob career history')
+    items=_object(history.get('careerItems'),'FotMob career items')
+    senior=_object(items.get('senior'),'FotMob senior career')
+    rows=senior.get('teamEntries') or []
+    if not isinstance(rows,list):raise ProviderError('FotMob career entries are not a list')
     career=[]
     for row in rows:
+        row=_object(row,'FotMob career entry')
         if str(row.get('participantId'))!=str(pid):raise ProviderError('FotMob career belongs to another player')
         if row.get('team') and not row.get('hasUncertainData'):
             career.append({'club':row['team'],'start':day(row.get('startDate')),'end':day(row.get('endDate'))})
     return {'provider':'fotmob','id':str(pid),'name':p.get('name',''),'birth_date':day(p.get('birthDate')),
-            'club':p.get('primaryTeam',{}).get('teamName'),'career':career,
+            'club':_object(p.get('primaryTeam'),'FotMob current team').get('teamName'),'career':career,
             'sources':[f'https://www.fotmob.com/players/{pid}']}
 
 
@@ -174,7 +189,7 @@ class ProfileVerifier:
         self.report(f'[Identity lookup] {provider} player {pid}: checking birthday, club and career.')
         try:
             value={**checked_profile(fetch(int(pid)),provider,str(pid)),'fetched_at':stamp()};ttl=timedelta(days=7)
-        except (ProviderError,ValueError,KeyError,TypeError,OSError) as exc:
+        except (ProviderError,ValueError,KeyError,TypeError,AttributeError,IndexError,OSError) as exc:
             value={'error':str(exc)[:300]};ttl=timedelta(hours=6)
         with self.store.connect() as db:
             db.execute('INSERT OR REPLACE INTO profiles VALUES(?,?,?,?)',(provider,str(pid),json.dumps(value),(datetime.now(timezone.utc)+ttl).isoformat()))

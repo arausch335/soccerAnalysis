@@ -122,7 +122,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                 reporting.enqueue(inventory=inventory)
         initialized=False;progress=None;last_boundary=0
         settings=config.CONFIG_FILE.read_bytes()
-        state.save(state='starting',role='monitor' if monitor else 'worker',plan_revision=plan.revision,git=sync.status)
+        state.save(state='starting',role='monitor' if monitor else 'worker',plan_revision=plan.revision,git=sync.status,process_id=os.getpid())
         inventory_watch=None
         if monitor and not options.once:
             inventory_watch=InventoryMonitor(root,ensemble,worker,

@@ -222,6 +222,34 @@ check the file’s write permissions; do not delete identity or provenance files
 
 ## Coverage and current jobs
 
+### Stopping workers completely
+
+In the checkout containing the running scraper, use:
+
+```bash
+python main.py --terminate
+```
+
+This stops all project Python collectors and monitors on that computer, including
+background/PyCharm copies and Python child processes. It requests a graceful
+shutdown, waits up to 10 seconds, then forces remaining processes to exit. It
+checks that no matching processes remain and that worker/collector locks can be
+acquired. Lock files are never deleted. Saved checkpoints and job history stay
+intact; an interrupted current match is retried after restart. Unrelated Python
+applications and other checkouts are outside its scope.
+
+Use `python main.py --terminate --worker-id headless` to restrict the command to
+one worker, or `--data-root PATH` for a specific data folder. `--timeout 20` allows
+a longer grace period (maximum 30 seconds). The command runs before worker
+startup, so it can stop the process that currently holds the worker lock.
+
+Install updated dependencies after pulling (`python -m pip install -r
+requirements.txt`); termination uses `psutil` for process discovery on Windows,
+macOS and Linux. Run termination locally on each worker computer. Main's
+reporting connection does not provide remote Windows process control.
+
+### Live progress
+
 The coverage grid aligns equal-width season columns across competitions, with
 player match stats (Sofascore, FotMob, WhoScored), WhoScored events, expandable
 Sofascore spatial maps, and other data. Solid worker colors indicate complete,
@@ -342,6 +370,11 @@ file: successful lookups are reused for seven days and failed lookups for six
 hours. Request scratch data uses the existing bounded cache. No separate player
 page archive or large permanent HTML cache is created. An optional denied Sofascore
 profile read does not trigger the long match-verification reload workflow.
+
+A missing current club (`primaryTeam: null` on FotMob) or missing career data
+remains missing evidence. It cannot automatically confirm a player identity.
+Malformed optional profile responses are saved as lookup errors for review;
+match collection continues instead of stopping the worker.
 
 Reviewed Zini club-name variants `APO Levadiakos` / `Levadiakos` and `AEK B` /
 `AEK Athens B` are included in the shared team concordance. The public

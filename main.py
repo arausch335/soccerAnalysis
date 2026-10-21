@@ -6,6 +6,10 @@ import re
 import sys
 from pathlib import Path
 
+if __name__=='__main__' and '--terminate' in sys.argv[1:]:
+    from collection.terminateWorkers import main as terminate_workers
+    raise SystemExit(terminate_workers(sys.argv[1:]))
+
 import config
 
 from collection.cli import main as collect
@@ -295,6 +299,11 @@ def _ensemble_main(args,transfer):
 def entrypoint(argv=None):
     """No-argument launches use the shared plan; explicit scrape commands stay compatible."""
     args=list(sys.argv[1:] if argv is None else argv)
+    if '--terminate' in args:
+        from collection.terminateWorkers import main as terminate_workers
+        return terminate_workers(args)
+    from collection.terminateWorkers import install_shutdown_handlers
+    install_shutdown_handlers()
     shared_flags=('--worker','--monitor','--with-dashboard','--dashboard','--no-dashboard','--once','--retry','--plan')
     explicit=any(a in ('start','resume','export','status','probe','--help','-h','--inventory',
                       '--import-only','--ignore-provenance','--competition','--season','--name',
