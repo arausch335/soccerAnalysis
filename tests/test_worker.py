@@ -22,12 +22,13 @@ class NoSync:
 
 class WorkerTests(unittest.TestCase):
     def setUp(self):
-        extension=patch('collection.worker.prepare_extension');extension.start();self.addCleanup(extension.stop)
+        extension=patch('collection.worker.prepare_extension',return_value=None);extension.start();self.addCleanup(extension.stop)
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.base=Path(self.temp.name);self.root=self.base/'data';self.ensemble=self.base/'ensemble'
         self.plan=self.base/'workers.yaml'
         self.document=yaml.safe_load((config.PROJECT_ROOT/'config/workers.yaml').read_text())
         self.document['dashboard']['enabled']=False;self.document['git']['enabled']=False
+        self.document['storage']['enabled']=False
         from copy import deepcopy
         self.document['workers']['main']['assignments']=deepcopy(self.document['workers']['msi']['assignments'])
         self.document['workers']['msi']['assignments']=[]
@@ -46,6 +47,39 @@ class WorkerTests(unittest.TestCase):
             path=self.ensemble/'provenance.json'
             def save(self):pass
         yield Progress()
+
+    def test_supervised_worker_without_main_does_not_scrape(self):
+        self.document['storage']['enabled']=True;self.save()
+        with patch('collection.worker.load_local',return_value=None):
+            calls=[]
+            self.assertEqual(run(self.args,runner=lambda args:calls.append(args) or 0,session=self.session,sync_factory=NoSync),2)
+            self.assertEqual(calls,[])
+            runtime=json.loads((system_path(self.root,'worker_runtime')/'main.json').read_text())
+            self.assertEqual(runtime['state'],'waiting_for_instructions')
+
+    def test_waits_for_extension_before_scraping_and_idle_identity_lookups(self):
+        from types import SimpleNamespace
+        bridge=SimpleNamespace(ready=False);stop=threading.Event();calls=[]
+        def wait(seconds):
+            self.assertEqual(calls,[]);self.assertEqual(self.sessions,1)
+            bridge.ready=True
+            return False
+        with patch('collection.worker.prepare_extension',return_value=bridge),patch.object(stop,'wait',side_effect=wait),patch('providers.playerProfiles.investigate_queue') as profiles:
+            self.assertEqual(run(self.args,runner=lambda args:calls.append(args) or 0,session=self.session,sync_factory=NoSync,stop=stop),0)
+            self.assertEqual(len(calls),2);profiles.assert_not_called()
+
+    def test_reconnect_retries_interrupted_season_from_checkpoints(self):
+        from types import SimpleNamespace
+        bridge=SimpleNamespace(ready=True);stop=threading.Event();calls=[]
+        self.document['workers']['main']['assignments'][0]['competitions']=['La Liga'];self.save()
+        def runner(args):
+            calls.append(args)
+            if len(calls)==1:bridge.ready=False;return 2
+            return 0
+        def wait(seconds):bridge.ready=True;return False
+        with patch('collection.worker.prepare_extension',return_value=bridge),patch.object(stop,'wait',side_effect=wait):
+            self.assertEqual(run(self.args,runner=runner,session=self.session,sync_factory=NoSync,stop=stop),0)
+        self.assertEqual(len(calls),2);self.assertEqual(calls[0],calls[1])
 
     def test_runs_only_assigned_jobs_single_inventory_session_and_resumes_finished_plan(self):
         jobs=[]

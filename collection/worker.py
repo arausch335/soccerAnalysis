@@ -39,6 +39,7 @@ def prepare_extension(root,jobs,monitor):
     bridge,_=acquire_bridge(connect_timeout=config.TRANSPORT['extension']['manual_wait_seconds'],
                             diagnostics_dir=system_path(root,'extension_diagnostics')/'sofascore')
     bridge.start()
+    return bridge
 
 
 def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdates,stop=None,clock=time.monotonic):
@@ -93,7 +94,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
             ensure_identity(root,worker)
         from providers.transports.bridge import extension_scope
         stack.enter_context(extension_scope())
-        prepare_extension(root,plan.for_worker(worker),monitor)
+        extension_bridge=prepare_extension(root,plan.for_worker(worker),monitor)
         state=Runtime(root,ensemble,worker)
         if options.retry:state.value['jobs']={}
         seed_existing(root)
@@ -102,7 +103,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
         if local_reporting:
             client_options=local_reporting
             if local_reporting['mode']=='server':
-                receiver=ReportingServer(root,ensemble,local_reporting).start();stack.callback(receiver.close)
+                receiver=ReportingServer(root,ensemble,local_reporting,storage_plan=plan.storage,workers=list(plan.workers),command_plan=options.plan if plan.storage['enabled'] else None).start();stack.callback(receiver.close)
                 print(f"Worker reporting listening on {local_reporting['bind']}:{local_reporting['port']}",flush=True)
                 client_options={'worker_id':worker,'url':f"http://{local_reporting['bind']}:{local_reporting['port']}",
                                 'token':local_reporting['tokens'][worker]}
@@ -120,7 +121,18 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
             if reporting:
                 state.save(reporting=reporting.status)
                 reporting.enqueue(inventory=inventory)
-        initialized=False;progress=None;last_boundary=0
+        control=None
+        if plan.storage['enabled'] and reporting and not monitor:
+            from .jobControl import AssignmentClient
+            control=AssignmentClient(root,reporting,plan)
+        storage=None
+        if plan.storage['enabled']:
+            from .storageAgent import StorageAgent
+            storage=StorageAgent(root,worker,plan.storage,dataset_root=config.DATASET_ROOT,
+                log=(lambda message:reporting.log(message)) if reporting else print).start()
+            stack.callback(storage.close)
+            storage.backfill(plan.for_worker(worker),state.value['jobs'])
+        initialized=False;progress=None;last_boundary=0;retry_extension_job=None;last_storage_boundary=0
         settings=config.CONFIG_FILE.read_bytes()
         state.save(state='starting',role='monitor' if monitor else 'worker',plan_revision=plan.revision,git=sync.status,process_id=os.getpid())
         inventory_watch=None
@@ -134,11 +146,23 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
         try:
             while not stop.is_set():
                 if inventory_watch:state.save(inventory=inventory_watch.status)
+                if control:
+                    state.save(control=control.status)
+                    # Release an earlier run's durable claim even if this worker is now unassigned.
+                    try:
+                        control.release();state.save(control=control.status)
+                    except (OSError,ValueError,KeyError):pass
+                if storage:
+                    state.save(storage=storage.status)
+                    if clock()-last_storage_boundary>=30 or state.value['state'] in ('starting','between_jobs'):
+                        incorporated=storage.boundary(on_status=lambda:(state.save(storage=storage.status),publish(inventory=False)));last_storage_boundary=clock()
+                        if incorporated and progress is not None:progress.scan()
+                        state.save(storage=storage.status)
                 # A completed job is the only place source files may change.
                 changed=[]
                 if clock()-last_boundary>=plan.git['poll_seconds'] or state.value['state'] in ('starting','between_jobs') or sync.status.get('state')=='update_pending':
                     changed=sync.boundary();last_boundary=clock()
-                    if progress is not None:progress.records=shared_progress(progress.path,local_worker=worker)
+                    if progress is not None:progress.records=shared_progress(progress.path,local_worker=worker,trusted=control is not None)
                 if changed:
                     state.save(state='restart_required',git=sync.status,current=None)
                     return RESTART if plan.git['auto_restart'] else 3
@@ -152,6 +176,22 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                          if state.value['jobs'].get(job.id,{}).get('fingerprint')!=fingerprint(job,settings)
                          or (identity_revision and state.value['jobs'].get(job.id,{}).get('exit_code',0) not in (0,130)
                              and state.value['jobs'].get(job.id,{}).get('identity_revision','')!=identity_revision)]
+                if pending and not initialized:
+                    state.save(state='validating_inventory',git=sync.status)
+                    progress=stack.enter_context(session(root,ensemble,worker_id=worker))
+                    if progress is None:raise ValueError('Use a marked scraper data root')
+                    progress.trusted_only=control is not None
+                    initialized=True
+                    continue
+                if extension_bridge is not None and not extension_bridge.ready:
+                    if state.value['state']!='waiting_for_extension':
+                        state.save(state='waiting_for_extension',current=None)
+                        print('Waiting for Soccer Collector to connect. Paste the printed code in Chrome; scraping and identity lookups will start after connection.',flush=True)
+                        publish(inventory=False)
+                    stop.wait(1);continue
+                if retry_extension_job:
+                    state.value['jobs'].pop(retry_extension_job,None);retry_extension_job=None
+                    continue
                 if not pending:
                     if not monitor and not options.once:
                         from providers.playerProfiles import investigate_queue
@@ -162,27 +202,35 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                     if reporting:state.save(reporting=reporting.status)
                     if options.once:return max((state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in plan.for_worker(worker)),default=0)
                     stop.wait(min(5,plan.git['poll_seconds']));continue
-                if not initialized:
-                    state.save(state='validating_inventory',git=sync.status)
-                    progress=stack.enter_context(session(root,ensemble,worker_id=worker))
-                    if progress is None:raise ValueError('Use a marked scraper data root')
-                    initialized=True
-                    # An inventory audit can be long. Recheck the plan before starting work.
-                    continue
                 job=pending[0]
+                if control and not control.claim(job):
+                    state.save(state='waiting_for_instructions',control=control.status,current=None)
+                    publish(inventory=False)
+                    if options.once:return 2
+                    stop.wait(5);continue
+                if control:state.save(control=control.status)
+                if control and progress is not None:progress.records=shared_progress(progress.path,local_worker=worker,trusted=control is not None)
                 state.begin_job(job.as_dict())
                 if reporting:reporting.log(f'[Season started] {job.competition} {job.as_dict()["season"]}')
                 publish()
                 def observe(value):
                     state.value['git']=sync.status
+                    if storage:state.value['storage']=storage.status
                     state.event(value)
+                    if storage and worker!=plan.storage['hub'] and worker not in plan.storage['consumers'] and value['event']=='match_saved' and not value.get('cached_match'):
+                        from .storageAgent import season_for
+                        storage.capture(season_for(job),value['match_id'])
+                        state.save(storage=storage.status)
                     if reporting:
-                        if progress is not None and value['event']=='match_started':progress.records=shared_progress(progress.path,local_worker=worker)
+                        if progress is not None and value['event']=='match_started':progress.records=shared_progress(progress.path,local_worker=worker,trusted=control is not None)
                         if value['event'] in ('schedule','match_saved','job_finished','provider_started'):publish(inventory=value['event'] in ('match_saved','job_finished'))
                         return
                 # Capture the revision before running: approvals received mid-job also get a later backfill.
                 attempted_identity_revision=identity_revision
                 with observe_progress(observe):code=runner(job.args(root))
+                if storage:storage.finished(job,code)
+                if code and extension_bridge is not None and not extension_bridge.ready:
+                    retry_extension_job=job.id
                 if reporting:
                     milestone='completed' if code==0 else 'paused'
                     reporting.log(f'[Season {milestone}] {job.competition} {job.as_dict()["season"]}', 'INFO' if code==0 else 'WARNING')

@@ -430,3 +430,127 @@ worker, pull the latest code, restart with `python main.py --worker-id msi --ret
 (use `headless` on Headless), and paste its newly printed connection code into
 Soccer Collector in Chrome. Keep the extension connected. Saved checkpoints are
 reused; a paused plan does not mean every match completed.
+
+## MSI raw archive and dataset delivery
+
+The shared `storage` section in `config/workers.yaml` assigns MSI as the archive
+hub at `http://100.116.229.51:8767` and Main as a dataset consumer. Leave Tailscale
+connected on all three machines. Allow inbound Python/TCP 8767 on MSI's Tailscale
+interface in Windows Firewall; the service binds only to that private address.
+Main's existing progress receiver remains on port 8766. No router forwarding is
+needed.
+
+For the initial upgrade, stop each worker, update the checkout, and start Main
+first, followed by MSI and Headless:
+
+```bash
+python main.py --terminate
+git pull --ff-only origin main
+python -m pip install -r requirements.txt
+```
+
+On Main:
+
+```bash
+python main.py --worker-id main
+```
+
+On MSI / Headless, use the appropriate saved worker ID:
+
+```bash
+python -m tools.extension_setup
+python main.py --worker-id msi
+# On Headless instead: python main.py --worker-id headless
+```
+
+Reload the generated extension folder in Chrome if it was already installed.
+Paste the connection code printed at startup and click Connect. The supervisor
+keeps the code alive and waits before starting scraping or profile investigations.
+An extension disconnect pauses further work; reconnecting lets an interrupted
+season resume its checkpoints. Inventory auditing and background reporting can
+continue while waiting.
+
+Storage credentials are provisioned automatically through the existing
+authenticated reporting connection. Each computer receives only its storage role
+and credentials in ignored `data/_system/config/storage.json`. Main stores the
+master storage secrets in ignored `storage-secrets.json` beside it. There is no
+new token to copy. Existing reporting configuration and worker identities stay
+in place. Provisioning and initial storage startup may take about a minute.
+
+- Headless queues a saved match's active checkpoint and referenced provider raw
+  files. A durable local queue uploads immutable, checksum-verified chunks to MSI,
+  resuming at the last accepted offset if interrupted. Completed-season snapshots
+  include the season's raw archive and active checkpoints. Retired checkpoint
+  generations, machine settings, sessions, logs and live databases are excluded.
+- MSI receives uploads while scraping. At the next safe boundary between season
+  jobs, it validates and incorporates completed seasons into
+  `data/<league>/<season>/raw/<provider>` and their existing checkpoint locations.
+  Collection credit remains with the original worker. A partially scraped season
+  is stored by MSI but does not trigger a dataset publication.
+- MSI builds the configured dataset tables and match/team/player concordance
+  after its own completed seasons and after incorporating remote completed seasons.
+  Failed builds keep the last published dataset intact and remain queued for retry.
+  When MSI is in a long season, remote-season incorporation waits for its boundary.
+- Main polls MSI every 30 seconds and downloads new prepared dataset files,
+  including `dataset/concordance/`. Its storage credentials cannot download raw
+  objects. Existing Main dataset seasons are preserved. All files in a publication
+  are verified before installation; an interrupted installation retries, and its
+  receipt is written only when all files are installed. Individual destination
+  files are replaced atomically; this is not an atomic swap of the entire dataset.
+- Worker progress and logs still go directly to Main independently of data
+  transfers. The worker cards distinguish queued uploads, received packages waiting
+  for incorporation, incorporation/building, and datasets received by Main.
+  Storage milestones appear in the default important-log filter.
+
+Saved completed jobs from the current worker plan are queued once on startup, so
+upgrading does not require re-scraping those seasons. Use the normal explicit
+`--retry` flow for paused assignments or historical seasons outside that plan.
+Keep MSI running to receive and build data even after its scraping plan finishes.
+
+Temporary transfer copies are removed after acknowledgment on the producer and
+after incorporation on MSI. **Original worker files are retained**, as are Main's
+existing raw archives. This upgrade does not delete or migrate those historical
+copies automatically. No raw files are sent from MSI to Main. Transfer state,
+receipts and temporary files live under `data/_system/storage/`; do not delete
+that directory while an upload, incorporation or build is pending.
+
+### Authority and safe assignment handoffs
+
+There is one command path for supervised collection:
+
+1. Edit and push `config/workers.yaml` from Main. It defines assignments; Git
+   distributes that plan and code. Overlapping combined assignments are rejected.
+2. Before starting a season, the worker refreshes its inventories from Main and
+   requests ownership of that assigned season. Main checks the exact plan revision,
+   worker identity and existing owner before granting a durable claim.
+3. Main receives validated, worker-owned completion inventories. In supervised
+   mode, unknown legacy aggregate claims cannot cause a skip. Completion requires
+   the provider/spatial capabilities requested by that job; assignment, upload
+   receipt and dataset availability do not count as match completion.
+4. MSI separately confirms receipt and incorporation of raw files, then publishes
+   datasets after completed seasons. Main's dashboard reports these stages separately.
+
+A claim has **no automatic expiry**. If a worker loses Main, its active season can
+continue using its last received inventories and queue reports/uploads locally.
+A new season waits for Main. A new assignee cannot take the same season while its
+old owner holds the claim, even if Main or that worker restarts. Each worker keeps
+its private current ownership receipt under `_system/workers/active-assignment.json`.
+
+Normal completion releases ownership at the next supervisor boundary. A worker
+restart also releases its saved old receipt before asking for new work. For a
+handoff, stop the old worker, update the plan, and restart it with the new plan so
+it can release the receipt. Then the new worker receives authorization. Do not run
+manual collection commands in parallel with supervised workers; manual collection
+is an explicit local workflow outside this assignment coordinator.
+
+If the old machine cannot restart, first verify its scraper is stopped. On Main,
+inspect claims and clear only that stopped worker's season:
+
+```bash
+python -m collection.jobControl status
+python -m collection.jobControl clear --worker-id headless --season premier-league/2022-2023 --confirm-stopped
+```
+
+Clearing a claim does not delete data or mark any match complete. Clearing while
+the old scraper is still running would permit duplicate collection. Ordinary
+network outages never clear ownership automatically.

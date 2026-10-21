@@ -251,7 +251,7 @@ def import_folder(source, root, report=print):
             for key,row in progress.local_records.items():
                 origins[key]=sorted(set(origins.get(key,[]))|set(row['origins']))
         save_origins(root,origins)
-        PortableProgress(None,root).scan(cache=False)
+        PortableProgress(None,root).scan()
         atomic_json(journal,{**json.loads(journal.read_text(encoding='utf-8')),'state':'complete'})
         if all(path.exists() and digest(path)==checksum for _,path,checksum in files):
             shutil.rmtree(source)

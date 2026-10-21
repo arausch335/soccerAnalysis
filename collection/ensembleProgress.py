@@ -36,16 +36,18 @@ def merge_records(target, incoming):
     return target
 
 
-def shared_progress(path, *, local_worker=None):
+def shared_progress(path, *, local_worker=None,trusted=False):
     """Read local holdings and the inventories received from Main."""
     path=Path(path);records={};workers=[]
     from .reporting import inventory_paths
-    for worker in inventory_paths(path.parent,local_worker=local_worker):
+    paths=inventory_paths(path.parent,local_worker=local_worker)
+    if trusted:paths=[p for p in paths if p.stem==local_worker or p.parent==path.parent/'reporting/workers']
+    for worker in paths:
         saved=read_progress(worker)
         if saved.get('worker_id')!=worker.stem:raise ValueError(f'Worker inventory ID differs from filename: {worker}')
         workers.append(saved)
     worker_ids={worker['worker_id'] for worker in workers}
-    if path.exists():
+    if path.exists() and not trusted:
         legacy=read_progress(path)['records']
         # A current worker snapshot supersedes stale claims from the legacy
         # aggregate. Manually supplied claims from unknown workers still work.
@@ -63,7 +65,7 @@ def job_key(namespace, competition, season, mid):
 
 class PortableProgress:
     def __init__(self, path, root, *, worker_id=None):
-        self.path=Path(path) if path is not None else None;self.root=Path(root);self.scanning=False;self.skip_remote=True
+        self.path=Path(path) if path is not None else None;self.root=Path(root);self.scanning=False;self.skip_remote=True;self.trusted_only=False
         self.records=shared_progress(self.path,local_worker=worker_id or read_worker_id(root)) if self.path is not None else {}
         self.local_records={};self.previous_local={};self.worker_path=None
         self._capture=None;self._inventory_cache=None;self.scan_summary={}
@@ -144,7 +146,7 @@ class PortableProgress:
             if receipts:receipts.close()
         self.save()
         if self.path is not None:
-            self.records=shared_progress(self.path)
+            self.records=shared_progress(self.path,local_worker=self.origin,trusted=self.trusted_only)
             self.save()
 
     def _restore(self,anchor,context=''):

@@ -253,7 +253,7 @@ def read_logs(root, worker='', level='', search='', limit=200, after=0, *, focus
             clauses.append('level=?'); args.append(level)
         milestones="(message LIKE '[Season started] %' OR message LIKE '[Season completed] %' OR message LIKE '[Season paused] %' OR message LIKE '=== START:%' OR message LIKE '=== FINISHED:%' OR message LIKE '=== PAUSED:%')"
         important={
-            'important':"(level IN ('WARNING','ERROR') OR "+milestones+")",
+            'important':"(level IN ('WARNING','ERROR') OR message LIKE '[Storage] %' OR "+milestones+")",
             'errors':"level='ERROR'",
             'warnings':"level IN ('WARNING','ERROR')",
             'seasons':"message LIKE '[Season completed] %'",
@@ -268,10 +268,17 @@ def read_logs(root, worker='', level='', search='', limit=200, after=0, *, focus
 
 
 class ReportingServer:
-    def __init__(self, root, ensemble, options):
+    def __init__(self, root, ensemble, options, *, storage_plan=None,workers=None,command_plan=None):
         self.store = ReportingStore(root, ensemble)
         tokens = options['tokens']
         store = self.store
+        provision=None;control=None
+        if command_plan is not None:
+            from .jobControl import JobControl
+            control=JobControl(root,command_plan)
+        if storage_plan and storage_plan.get('enabled'):
+            from .storageConfig import Provisioner
+            provision=Provisioner(root,storage_plan,workers or list(tokens))
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *args):
                 pass
@@ -313,8 +320,10 @@ class ReportingServer:
                     versions = json.loads(self.headers.get('X-Inventory-Versions', '{}'))
                     if not isinstance(versions, dict):
                         raise ValueError('Invalid inventory versions')
-                    self.reply(200, store.inventories(versions, exclude=worker,
-                                                     reep_version=self.headers.get('X-Reep-Version','')))
+                    value=store.inventories(versions, exclude=worker,
+                                           reep_version=self.headers.get('X-Reep-Version',''))
+                    if provision:value['storage_config']=provision.for_worker(worker)
+                    self.reply(200,value)
                 except (ValueError, TypeError):
                     self.reply(400, {'error': 'Invalid request'})
 
@@ -323,6 +332,20 @@ class ReportingServer:
                 worker = self.authorized()
                 if not worker:
                     self.reply(401, {'error': 'Worker authentication required'}); return
+                if self.path=='/v1/assignments' and control:
+                    try:
+                        length=int(self.headers.get('Content-Length','0'))
+                        if not 0<length<=16384:raise ValueError('Invalid command length')
+                        value=json.loads(self.rfile.read(length))
+                        if not isinstance(value,dict):raise ValueError('Invalid command')
+                        with store.lock,store.connect() as db:
+                            row=db.execute('SELECT instance FROM workers WHERE worker=?',(worker,)).fetchone()
+                        if row and row['instance'] and row['instance']!=value.get('instance'):
+                            self.reply(409,{'error':'Worker identity differs'});return
+                        self.reply(200,control.command(worker,value))
+                    except (ValueError,KeyError,TypeError):self.reply(400,{'error':'Invalid assignment request'})
+                    except (OSError,sqlite3.Error):self.reply(503,{'error':'Assignment coordinator unavailable; no new work authorized'})
+                    return
                 if self.path != '/v1/report':
                     self.reply(404, {'error': 'Unknown endpoint'}); return
                 try:
@@ -467,6 +490,9 @@ class Reporter:
         from providers.reep import version,install
         value = self.request('/v1/inventories', headers={'X-Inventory-Versions': encode(self.versions),
                                                       'X-Reep-Version':version(self.root)})
+        if value.get('storage_config'):
+            from .storageConfig import install as install_storage
+            install_storage(self.root,value['storage_config'])
         if value.get('reep_index'):
             install(self.root,value['reep_index'])
         for worker, saved in value['inventories'].items():

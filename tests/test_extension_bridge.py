@@ -34,6 +34,12 @@ class ExtensionBridgeTests(unittest.TestCase):
     def connect(self):
         self.assertEqual(self.http('/v1/connect',{'client_id':self.cid})[0],200)
 
+    def test_late_initial_connection_does_not_poison_future_requests(self):
+        self.bridge.connect_timeout=.01
+        with self.assertRaisesRegex(ProviderRequestError,'not connected yet'):self.bridge.request('page',{})
+        self.assertFalse(self.bridge.unavailable);self.assertFalse(self.bridge.ready)
+        self.connect();self.assertTrue(self.bridge.ready)
+
     def test_auth_origin_and_host_boundaries(self):
         for options,status in (({'token':False},401),({'origin':'https://evil.test'},403),
                                ({'host':'evil.test'},403)):

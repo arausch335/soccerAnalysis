@@ -38,6 +38,10 @@ class ExtensionBridge:
     def record(self, event, **fields):
         if self.diagnostics is not None:self.diagnostics.record(event, **fields)
 
+    @property
+    def ready(self):
+        return self.connected.is_set() and bool(self.client_id) and not self.closed and not self.unavailable
+
     def start(self):
         if self.closed:
             raise ProviderError('Extension connection is closed')
@@ -221,8 +225,10 @@ class ExtensionBridge:
         connected = self.connected.wait(self.connect_timeout)
         self.waiting_seconds += time.monotonic() - connection_started
         if not connected:
-            self.unavailable = True
-            raise ProviderRequestError('Chrome extension not connected; click Connect and run again', attempts=0)
+            # An initial missing connection is not a broken authenticated session.
+            # The worker keeps its code alive and waits instead of poisoning all
+            # later provider requests after one early optional profile lookup.
+            raise ProviderRequestError('Chrome extension not connected yet; paste the connection code and click Connect', attempts=0)
         with self.serial:
             item = {'id': secrets.token_hex(16), 'action': action, 'args': args or {}, 'result': None}
             with self.condition:

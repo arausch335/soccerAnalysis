@@ -68,6 +68,7 @@ class WorkerPlan:
     git:dict
     dashboard:dict
     reporting:dict
+    storage:dict
     coordinator:str
     revision:str
     path:Path
@@ -90,7 +91,16 @@ def load_plan(path=None):
         raise config.ConfigError(f'Cannot load worker plan: {exc}') from exc
     if not isinstance(document,dict):raise config.ConfigError('workers plan must be a YAML mapping')
     document.setdefault('reporting',{'enabled':False,'heartbeat_seconds':30})
-    section(document,('version','coordinator','git','dashboard','workers','reporting'),'workers plan')
+    document.setdefault('storage',{'enabled':False,'hub':'msi','url':'http://127.0.0.1:8767','consumers':['main'],'publish':'season'})
+    section(document,('version','coordinator','git','dashboard','workers','reporting','storage'),'workers plan')
+    storage=section(document['storage'],('enabled','hub','url','consumers','publish'),'workers.storage')
+    config._boolean(storage['enabled'],'workers.storage.enabled')
+    if storage['publish']!='season':raise config.ConfigError('Storage datasets publish after completed seasons')
+    from collection.reporting import validate_url
+    storage['url']=validate_url(storage['url'])
+    valid_worker_id(storage['hub'])
+    if not isinstance(storage['consumers'],list) or not storage['consumers']:raise config.ConfigError('Define dataset consumers')
+    for consumer in storage['consumers']:valid_worker_id(consumer)
     reporting=section(document['reporting'],('enabled','heartbeat_seconds'),'workers.reporting')
     config._boolean(reporting['enabled'],'workers.reporting.enabled')
     if type(reporting['heartbeat_seconds']) is not int or not 10<=reporting['heartbeat_seconds']<=300:raise config.ConfigError('Reporting heartbeat must be 10–300 seconds')
@@ -141,4 +151,12 @@ def load_plan(path=None):
                             seen[key]=worker
                     jobs.append(job)
     if document['coordinator'] not in workers:raise config.ConfigError('Coordinator must be a configured worker')
-    return WorkerPlan(workers,jobs,dict(git),dict(dashboard),dict(reporting),document['coordinator'],hashlib.sha256(data).hexdigest(),path)
+    if storage['enabled']:
+        if not reporting['enabled']:raise config.ConfigError('Storage setup requires direct reporting')
+        from urllib.parse import urlsplit
+        from collection.reporting import private_ip
+        address=urlsplit(storage['url'])
+        if address.scheme!='http' or not address.port or not private_ip(address.hostname):raise config.ConfigError('Storage requires an explicit private IPv4 HTTP address and port')
+        if storage['hub'] not in workers or any(w not in workers for w in storage['consumers']):raise config.ConfigError('Storage workers must be configured')
+        if storage['hub'] in storage['consumers']:raise config.ConfigError('Storage hub cannot be its own dataset consumer')
+    return WorkerPlan(workers,jobs,dict(git),dict(dashboard),dict(reporting),dict(storage),document['coordinator'],hashlib.sha256(data).hexdigest(),path)

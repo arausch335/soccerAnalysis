@@ -49,6 +49,11 @@ known local state into `_system` and preserves the worker ID, reporting token,
 queued logs, checkpoints and raw data. Conflicting destinations stop migration
 for inspection. A running old process prevents migration.
 
+MSI is the central raw archive (`100.116.229.51:8767`). Headless uploads saved
+matches in the background; MSI incorporates completed seasons and publishes
+datasets and concordance to Main. Main remains the monitor and downloads no raw
+files. See [worker setup and transfer behavior](docs/WORKERS.md#msi-raw-archive-and-dataset-delivery).
+
 Season `raw/<provider>/` files are authoritative. A single compressed request
 cache supports interrupted requests, with a 256 MiB target across providers.
 A successful raw save releases its redundant temporary response. Historical

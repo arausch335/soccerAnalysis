@@ -1,4 +1,4 @@
-# Scraped data and checkpoints stay on the computer running the scraper.
+# Raw archives, checkpoints and private transfer state stay outside Git.
 data/
 output/
 outputs/

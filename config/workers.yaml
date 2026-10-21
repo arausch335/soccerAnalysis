@@ -10,6 +10,12 @@ git:
 reporting:
   enabled: true
   heartbeat_seconds: 30
+storage:
+  enabled: true
+  hub: msi
+  url: http://100.116.229.51:8767
+  consumers: [main]
+  publish: season
 dashboard:
   enabled: true
   port: 8765

@@ -1,0 +1,232 @@
+"""Worker lifecycle for background raw delivery and season dataset publication."""
+from contextlib import closing
+import csv
+import json
+from pathlib import Path
+import shutil
+import sqlite3
+import tempfile
+import threading
+from uuid import uuid4
+
+from filelock import FileLock
+from storage.layout import system_path
+from storage.pandasStore import PandasStore, SCHEMA, atomic_json
+from .paths import collection_name
+from .storageConfig import path_for
+from .storageTransfer import (Outbox, Peer, FORMAT, digest, identifier, safe_path,
+                              validate_manifest, link_or_copy)
+from .workerRuntime import now
+
+
+def season_for(job):
+    import re
+    from .selection import season_label
+    return re.sub('[^a-z0-9]+','-',job.competition.lower()).strip('-')+'/'+season_label(job.season)
+
+
+def season_files(root,season,match_id='*'):
+    """Only active checkpoint generations; no machine state or retired caches."""
+    root=Path(root);directory=root/season;files={'.soccer-scraper.json':root/'.soccer-scraper.json'}
+    for path in directory.glob('*'):
+        if path.is_file() and path.suffix in ('.csv','.json'):files[path.relative_to(root).as_posix()]=path
+    stores=directory/'match_checkpoints'
+    markers=sorted(stores.glob('*/CURRENT.json')) if match_id=='*' else [stores/str(match_id)/'CURRENT.json']
+    for marker in markers:
+        if not marker.is_file():continue
+        store=PandasStore(marker.parent);folder=store.current_directory
+        for path in [marker,*[folder/(name+'.csv') for name in SCHEMA]]:files[path.relative_to(root).as_posix()]=path
+        if match_id!='*':
+            with (folder/'matches.csv').open(encoding='utf-8',newline='') as stream:
+                for row in csv.DictReader(stream):
+                    metadata=json.loads(row['metadata'])
+                    def paths(value):
+                        if isinstance(value,dict):
+                            for item in value.values():yield from paths(item)
+                        elif isinstance(value,list):
+                            for item in value:yield from paths(item)
+                        elif isinstance(value,str):yield value
+                    for relative in paths({k:metadata.get(k,{}) for k in ('raw_response_files','sofascore_spatial_files')}):
+                        relative=relative.replace('\\','/');target=season+'/'+relative;safe_path(target,'raw')
+                        path=root/target
+                        if path.is_file():files[target]=path
+    if match_id=='*':
+        for path in (directory/'raw').rglob('*'):
+            if path.is_file() and path.suffix in ('.csv','.json'):files[path.relative_to(root).as_posix()]=path
+    if len(files)==1:raise ValueError('No saved season files yet')
+    return files
+
+
+def dataset_files(root):
+    files={}
+    for path in Path(root).rglob('*'):
+        if not path.is_file():continue
+        relative=path.relative_to(root).as_posix()
+        try:safe_path(relative,'dataset')
+        except ValueError:continue
+        if path.is_symlink():raise ValueError('Dataset contains symbolic links')
+        files[relative]=path
+    return files
+
+
+def install_dataset(peer,manifest,output,staging_root):
+    """Verify an entire publication before publishing any file; preserve other seasons."""
+    validate_manifest(manifest)
+    if manifest['kind']!='dataset':raise ValueError('Raw data cannot be installed as a dataset')
+    output=Path(output);output.mkdir(parents=True,exist_ok=True)
+    staging_root=Path(staging_root);staging_root.mkdir(parents=True,exist_ok=True)
+    from .ensemble import atomic_copy
+    with tempfile.TemporaryDirectory(prefix='dataset-',dir=staging_root) as temporary:
+        stage=Path(temporary)
+        for item in manifest['files']:
+            relative=item['path'];target=output/relative
+            if any(p.is_symlink() for p in [target,*list(target.parents)[:len(target.relative_to(output).parts)]]):raise ValueError('Dataset destination contains symbolic links')
+            incoming=stage/relative;incoming.parent.mkdir(parents=True,exist_ok=True)
+            if target.is_file() and target.stat().st_size==item['size'] and digest(target)==item['sha256']:link_or_copy(target,incoming)
+            else:peer.download(item['sha256'],incoming)
+            if incoming.stat().st_size!=item['size'] or digest(incoming)!=item['sha256']:raise ValueError('Dataset file differs from manifest')
+        # The receipt is updated only after every publication file is installed.
+        # An interrupted installation is retried from the same verified manifest.
+        for item in manifest['files']:atomic_copy(stage/item['path'],output/item['path'])
+    return identifier(manifest)
+
+
+class StorageAgent:
+    def __init__(self,root,worker,settings,*,dataset_root,log=print):
+        self.root=Path(root).resolve();self.worker=worker;self.settings=settings;self.output=Path(dataset_root);self.log=log
+        self.directory=self.root/'_system/storage';self.directory.mkdir(parents=True,exist_ok=True)
+        self.database=self.directory/'tasks.sqlite';self.outbox=Outbox(root,worker)
+        with self.connect() as db:
+            db.execute('CREATE TABLE IF NOT EXISTS captures(season TEXT,match_id TEXT,completed INTEGER,revision TEXT,PRIMARY KEY(season,match_id))');db.commit()
+        self.stop=threading.Event();self.busy=threading.Event();self.server=None;self.options=None;self.last_error=None
+        self.status={'state':'setup_pending','message':'Waiting for storage setup from Main'}
+        self.thread=threading.Thread(target=self.run,daemon=True,name='storage-transfer')
+        receipt=self.directory/'dataset-receipt.json'
+        self.receipt=json.loads(receipt.read_text()) if receipt.exists() else {}
+
+    def connect(self):return closing(sqlite3.connect(self.database,timeout=30))
+    def start(self):self.thread.start();return self
+    def close(self):
+        self.stop.set();self.thread.join(timeout=35)
+        if self.server:self.server.close()
+
+    def capture(self,season,match_id='*',completed=False):
+        safe_path(season+'/job.json','raw')
+        if match_id!='*' and (not str(match_id).isdigit()):raise ValueError('Invalid checkpoint match ID')
+        with self.connect() as db:
+            db.execute('INSERT INTO captures VALUES(?,?,?,?) ON CONFLICT(season,match_id) DO UPDATE SET completed=max(completed,excluded.completed),revision=excluded.revision',
+                       (season,str(match_id),int(completed),uuid4().hex));db.commit()
+
+    def finished(self,job,code):
+        if code not in (0,2):return
+        season=season_for(job)
+        if self.worker==self.settings['hub']:
+            if code==0:
+                from .storageServer import Archive
+                Archive(self.root).schedule_build(season)
+        elif self.worker not in self.settings['consumers']:self.capture(season,completed=code==0)
+
+    def backfill(self,jobs,history):
+        path=self.directory/'backfilled.json'
+        previous=json.loads(path.read_text()) if path.exists() else {}
+        for job in jobs:
+            saved=history.get(job.id,{})
+            if saved.get('state')!='finished' or previous.get(job.id)==saved:continue
+            self.finished(job,0);previous[job.id]=saved
+        atomic_json(path,previous)
+
+    def tick(self):
+        path=path_for(self.root)
+        if not path.exists():return
+        options=json.loads(path.read_text())
+        if options['worker_id']!=self.worker or options['hub']!=self.settings['hub'] or options['url']!=self.settings['url']:
+            raise ValueError('Storage setup does not match shared plan')
+        self.options=options;role=options['role']
+        if role=='hub':
+            if self.server is None:
+                from .storageServer import StorageServer
+                self.server=StorageServer(self.root,options).start()
+                self.log('[Storage] MSI archive receiver listening; raw files remain on MSI.')
+            if not self.busy.is_set():self.status={'state':'listening','role':role,**self.server.archive.status()}
+            return
+        peer=Peer(options['url'],options['token'])
+        if role=='producer':
+            with self.connect() as db:task=db.execute('SELECT season,match_id,completed,revision FROM captures ORDER BY rowid LIMIT 1').fetchone()
+            if task:
+                season,match_id,completed,revision=task
+                from .workerIdentity import read_origins
+                origins=read_origins(self.root)
+                origins={k:v for k,v in origins.items() if '|'+season.replace('/','|')+'|' in k}
+                self.outbox.enqueue(season_files(self.root,season,match_id),kind='raw',season=season,completed=bool(completed),origins=origins)
+                with self.connect() as db:db.execute('DELETE FROM captures WHERE season=? AND match_id=? AND completed=? AND revision=?',task);db.commit()
+            sent=self.outbox.send_one(peer,stop=self.stop)
+            with self.connect() as db:pending=db.execute('SELECT count(*) FROM captures').fetchone()[0]
+            self.status={'state':'sending' if self.outbox.queued()+pending else 'up_to_date','role':role,'queued':self.outbox.queued()+pending,
+                         **({'last_received':now()} if sent else {'last_received':self.status.get('last_received')})}
+        else:
+            manifest=peer.request('/v1/dataset')['manifest']
+            if manifest and manifest.get('worker')!=self.settings['hub']:raise ValueError('Unexpected dataset publisher')
+            if manifest and identifier(manifest)!=self.receipt.get('id'):
+                self.status={'state':'downloading','role':role}
+                mid=install_dataset(peer,manifest,self.output,self.directory/'downloads')
+                self.receipt={'id':mid,'received_at':now()};atomic_json(self.directory/'dataset-receipt.json',self.receipt)
+                self.log('[Storage] Updated datasets and concordance received from MSI.')
+            self.status={'state':'up_to_date' if manifest else 'awaiting_dataset','role':role,'last_dataset':self.receipt.get('received_at')}
+
+    def run(self):
+        while not self.stop.is_set():
+            try:
+                self.tick();self.last_error=None
+            except Exception as exc:
+                # No URL/token/path in public runtime; console logging goes through reporting redaction.
+                self.status={'state':'retrying','role':(self.options or {}).get('role'),'queued':self.outbox.queued(),
+                             'message':'Storage unavailable; saved files remain queued'}
+                key=(type(exc).__name__,str(exc))
+                if key!=self.last_error:self.log(f'[Storage] {type(exc).__name__}: {exc}');self.last_error=key
+            self.stop.wait(1 if self.status.get('queued',0) else 30)
+
+    def boundary(self,on_status=None):
+        """Only the supervisor imports/builds, after the active season releases its lock."""
+        if not self.server:return False
+        self.busy.set();changed=False
+        from .ensemble import import_folder
+        from .workerIdentity import ensure_identity,save_origins
+        from dataset_builder import build_dataset
+        archive=self.server.archive
+        try:
+            for mid,manifest in archive.completed():
+                self.status={'state':'incorporating','role':'hub','season':manifest['season']}
+                if on_status:on_status()
+                self.log('[Storage] Incorporating completed season '+manifest['season'])
+                with tempfile.TemporaryDirectory(prefix='import-',dir=self.directory) as temporary:
+                    source=Path(temporary)/'source';source.mkdir()
+                    for item in manifest['files']:link_or_copy(archive.objects/item['sha256'],source/item['path'])
+                    ensure_identity(source,manifest['worker']);save_origins(source,manifest.get('origins',{}))
+                    with FileLock(str(system_path(self.root,'.collector.lock')),timeout=0):import_folder(source,self.root)
+                archive.incorporated(mid,manifest);changed=True
+            for season in archive.builds():
+                self.status={'state':'building_dataset','role':'hub','season':season}
+                if on_status:on_status()
+                self.log('[Storage] Building dataset '+season)
+                # Isolate build outputs: failed builds cannot corrupt the current publication.
+                self.output.parent.mkdir(parents=True,exist_ok=True)
+                with tempfile.TemporaryDirectory(prefix='soccer-build-',dir=self.output.parent) as temporary:
+                    output=Path(temporary)/'dataset'
+                    output.mkdir()
+                    if (self.output/season).exists():shutil.copytree(self.output/season,output/season)
+                    if (self.output/'fixtures.csv').is_file():shutil.copyfile(self.output/'fixtures.csv',output/'fixtures.csv')
+                    if build_dataset(self.root,output,names=[collection_name(self.root/season)]):raise ValueError('Season dataset build failed')
+                    updates=dataset_files(output);files=dataset_files(self.output);files.update(updates)
+                    manifest={'format':FORMAT,'kind':'dataset','worker':self.worker,'files':[
+                        {'path':p,'size':v.stat().st_size,'sha256':digest(v)} for p,v in sorted(files.items())]}
+                    archive.publish(manifest,files)
+                    from .ensemble import atomic_copy
+                    for relative,path in updates.items():atomic_copy(path,self.output/relative)
+                with archive.connect() as db:db.execute("UPDATE builds SET state='published' WHERE season=?",(season,));db.commit()
+                self.log('[Storage] Dataset published for Main: '+season)
+            archive.collected()
+        except Exception as exc:
+            self.status={'state':'needs_attention','role':'hub','message':'Saved data retained; incorporation or dataset build will retry'}
+            self.log(f'[Storage] {type(exc).__name__}: {exc}')
+        finally:self.busy.clear()
+        return changed
