@@ -87,10 +87,9 @@ def integrated_who(directory,mid):
     who_id=match.metadata.get('provider_match_ids',{}).get('whoscored')
     if who_id is None:return False
     payload=raw_payload(directory,'whoscored',f'match/{who_id}')
-    if not payload or not who_valid(payload,who_id):return False
-    data=payload['matchCentreData']
-    if data.get('startDate','')[:10]!=match.kickoff.date().isoformat():return False
-    return True
+    if not payload:return False
+    from collection.whoScoredData import integrated_error
+    return integrated_error(match,payload,root=Path(directory).parent.parent) is None
 
 
 def coverage(root,competition,season,provider):

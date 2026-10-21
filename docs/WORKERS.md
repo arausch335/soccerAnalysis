@@ -351,6 +351,12 @@ resolve different club names. Date, home/away side, score and lineup checks
 still apply. Ambiguous or contradictory IDs are not guessed; existing name and
 profile investigation remains available for identities absent from Reep.
 
+Startup inventory validation and the offline coverage report use those same
+team-ID checks for integrated WhoScored events. A provider name variant alone
+does not invalidate a saved match with matching team IDs. Truly invalid raw
+responses remain untouched and report the failed check (match ID, date, teams,
+finished status, or events) alongside the file path.
+
 `python dataset_builder.py --references-only` uses the saved index without
 downloading anything. The four-source exports are:
 

@@ -19,6 +19,31 @@ def validate_match(payload, mid, event):
     return payload
 
 
+def integrated_error(match, payload, *, root=None):
+    """Use collection's ID-aware team checks when auditing saved event data."""
+    from review_data import who_valid
+    from providers.identity import teams_match
+    mid=match.metadata.get('provider_match_ids',{}).get('whoscored')
+    if not isinstance(payload,dict):return 'payload is not an object'
+    centre=payload.get('matchCentreData')
+    if not isinstance(centre,dict):return 'matchCentreData is missing or invalid'
+    if payload.get('match_id')!=mid:return 'WhoScored match ID differs from the checkpoint'
+    if centre.get('statusCode')!=6:return 'match is not marked finished'
+    if not isinstance(centre.get('events'),list) or not centre['events']:return 'events are missing or empty'
+    if not who_valid(payload,mid):return 'match identity or events are invalid'
+    if str(centre.get('startDate',''))[:10]!=match.kickoff.date().isoformat():
+        return 'match date differs from the checkpoint'
+    baseline=match.metadata.get('id_namespace','sofascore')
+    for side in ('home','away'):
+        team=getattr(match,side+'_team');native=centre.get(side)
+        if not isinstance(native,dict):return side+' team is missing or invalid'
+        if not teams_match({'id':team.id,'name':team.name},
+                {'id':native.get('teamId'),'name':native.get('name','')},
+                'whoscored',root,baseline):
+            return side+' team differs from the checkpoint (IDs and reviewed aliases do not match)'
+    return None
+
+
 def legacy_directory(directory):
     directory=Path(directory)
     return directory.parent.parent.name in LEGACY_SUBTREES
