@@ -5,7 +5,18 @@ export async function whoPageOperation(args) {
   const challenge = () => /verify you are (?:a )?human|access denied|checking your browser|just a moment|incapsula incident|pardon our interruption/i.test(document.body?.innerText || '') ||
     !!document.querySelector('iframe[src*="captcha"], iframe[src*="challenges.cloudflare.com"], #challenge-running');
   if (challenge()) return {...base,status:403,verification:true};
-  if (args.kind === 'text') return {...base,status:200,text:document.documentElement.outerHTML};
+  if (args.kind === 'text') {
+    const text=document.documentElement.outerHTML;
+    const match=(args.endpoint || '').match(/^matches\/(\d+)\/live$/i);
+    const sameMatch=match && text.match(/\bmatchId["']?\s*[:=]\s*(\d+)/)?.[1]===match[1];
+    const hasData=/\bmatchCentreData["']?\s*[:=]\s*\{/.test(text);
+    const visible=(document.body?.innerText || '').replace(/\s+/g,' ');
+    const missing=/\bno (?:match )?(?:statistics|stats|data)(?: (?:is|are))? available\b|\b(?:match )?(?:statistics|stats|data) (?:is|are) (?:not available|unavailable)\b/i.test(visible);
+    if (sameMatch && document.readyState==='complete' && !hasData && missing) {
+      return {...base,status:404,reason:'match_data_unavailable',match_id:match[1]};
+    }
+    return {...base,status:200,text};
+  }
   if (args.kind !== 'json' || !/^tournaments\/\d+\/data\/$/.test(args.endpoint) ||
       !args.params || Object.keys(args.params).sort().join(',') !== 'd,isAggregate' ||
       !/^\d{6}$/.test(args.params.d) || args.params.isAggregate !== 'false') {

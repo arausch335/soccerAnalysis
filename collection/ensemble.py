@@ -141,6 +141,9 @@ def merge_csv(source, target, output):
 
 def import_folder(source, root, report=print):
     source=Path(source);root=Path(root)
+    if (source/'_system/transfer-manifest.json').exists():
+        from tools.prepare_transfer import verify_bundle
+        verify_bundle(source)
     report(f'Ensemble: validating copied data folder {source}',flush=True)
     # Never follow staged links into the live data tree or another directory.
     if json.loads((source/'.soccer-scraper.json').read_text(encoding='utf-8')).get('format')!=1:
@@ -148,6 +151,7 @@ def import_folder(source, root, report=print):
     files=[]
     for path in sorted(source.rglob('*')):
         if path.is_symlink():raise ValueError(f'Imported folder contains a symbolic link: {path}')
+        if path.name=='.DS_Store' or path.name.startswith('._'):continue
         if path.is_file() and not path.name.endswith('.lock'):
             relative=path.relative_to(source)
             if '.ensemble_work' not in relative.parts:files.append((relative,path,digest(path)))

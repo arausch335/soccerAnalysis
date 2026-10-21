@@ -22,6 +22,13 @@ class WhoScoredExtensionGate(PersistentGate):
         from filelock import FileLock
         self.lock=FileLock(str(self.traffic_path)+'.lock')
 
+    def read(self):
+        state=super().read()
+        # Old extension versions persisted match-local timeouts for an hour.
+        # Keep real authentication/rate-limit stops, but do not inherit those bans.
+        code=state.get('status_code')
+        return {} if code is not None and code not in (401,429) else state
+
     def _shared_block(self):
         state=PersistentGate(system_path(self.root,'safety'),'whoscored').read()
         return state.get('status_code')==429 and state.get('blocked_until',0)>time.time()
@@ -35,8 +42,9 @@ class WhoScoredExtensionGate(PersistentGate):
         super().wait(endpoint)
 
     def block(self,error):
-        # Verification is handled visibly, without recording a day-long browser ban.
-        if error.status_code==403:return
+        # Missing data, transient errors and local timeouts concern one request.
+        # Verification still goes through the visible extension workflow.
+        if error.status_code not in (401,429):return
         super().block(error)
         if error.status_code==429:PersistentGate(system_path(self.root,'safety'),'whoscored').block(error)
 
@@ -99,6 +107,10 @@ class ExtensionWhoScoredClient(WhoScoredClient):
         if parsed.scheme!='https' or parsed.hostname!='www.whoscored.com' or parsed.username or parsed.password or parsed.port:
             raise ProviderError('WhoScored extension left the intended website')
         status=result.get('status')
+        if result.get('reason')=='extension_timeout' or status==408:
+            raise ProviderRequestError('WhoScored extension timed out waiting for data for this request; no provider cooldown applied',endpoint=endpoint,attempts=1)
+        if result.get('reason')=='match_data_unavailable':
+            raise ProviderRequestError('WhoScored reports no statistics for this match; other matches can continue',endpoint=endpoint,status_code=404,attempts=1)
         if status!=200:
             error=ProviderRequestError('WhoScored extension unavailable; finish verification and resume' if status==403 else f'WhoScored HTTP {status}',endpoint=endpoint,status_code=status)
             if status==429:

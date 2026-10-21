@@ -413,3 +413,28 @@ test('WhoScored waits past null match-data initialization for the actual object'
   const result=await execute({tabId:1},{id:'who-ready',action:'whoscored',args:{kind:'text',endpoint:'matches/11/live',params:{},manual_wait_ms:1500}});
   assert.equal(reads,2);assert.equal(result.status,200);assert.match(result.text,/\{"events"/);
 });
+
+test('WhoScored local data deadline is reported as an extension timeout, not an HTTP response',async()=>{
+ const url='https://www.whoscored.com/matches/11/live';
+ chrome.tabs.get=async()=>({id:1,url,status:'complete'});
+ chrome.scripting={executeScript:async()=>[{frameId:0,result:{ok:true,status:200,source_url:url,text:'matchId: 11, matchCentreData: null'}}]};
+ const now=Date.now;let elapsed=0;
+ try {
+  Date.now=()=>now()+(elapsed+=500);
+  const result=await execute({tabId:1},{id:'who-timeout',action:'whoscored',args:{kind:'text',endpoint:'matches/11/live',params:{},timeout_ms:1000,manual_wait_ms:120000}});
+  assert.equal(result.reason,'extension_timeout');assert.equal(result.status,null);
+  assert.ok(elapsed<120000);
+ } finally {Date.now=now;}
+});
+
+test('an unresolved WhoScored challenge remains verification-required rather than missing data',async()=>{
+ const url='https://www.whoscored.com/matches/11/live';
+ chrome.tabs.get=async()=>({id:1,url,status:'complete'});
+ chrome.scripting={executeScript:async()=>[{frameId:0,result:{ok:true,status:403,verification:true,source_url:url}}]};
+ const now=Date.now;let elapsed=0;
+ try {
+  Date.now=()=>now()+(elapsed+=500);
+  const result=await execute({tabId:1},{id:'who-verify',action:'whoscored',args:{kind:'text',endpoint:'matches/11/live',params:{},timeout_ms:1000,manual_wait_ms:1000}});
+  assert.equal(result.reason,'verification_required');assert.equal(result.status,403);assert.equal(result.verification,true);
+ } finally {Date.now=now;}
+});

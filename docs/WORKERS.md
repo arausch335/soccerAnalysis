@@ -554,3 +554,24 @@ python -m collection.jobControl clear --worker-id headless --season premier-leag
 Clearing a claim does not delete data or mark any match complete. Clearing while
 the old scraper is still running would permit duplicate collection. Ordinary
 network outages never clear ownership automatically.
+
+### WhoScored match-local missing data and timeouts
+
+Soccer Collector 0.7.1 separates the ordinary data-read deadline (normally
+30 seconds) from the longer wait for an actual visible verification screen.
+A local extension deadline is labelled `extension_timeout`, rather than being
+reported as an HTTP 408 response. The Python client also understands older
+extensions' synthetic 408 results.
+
+Missing match data, timeouts and transient server errors do not open an hour-long
+WhoScored extension cooldown. Old saved extension cooldowns for those errors are
+ignored on upgrade. Actual rate limits and authentication stops remain in force;
+verification still requires the visible extension workflow. If an identified,
+fully loaded match page explicitly says statistics are unavailable and contains
+no match data object, collection reports that match as unavailable immediately.
+An unresolved timeout remains incomplete/retryable rather than proving permanent
+absence. Other matches continue.
+
+For a one-time Main-to-MSI raw-data copy, use the portable
+SD-card workflow in [ensemble_data/README.md](../ensemble_data/README.md). It keeps
+machine tokens/settings separate and verifies every copied data file before import.

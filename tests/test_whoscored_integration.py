@@ -125,6 +125,37 @@ class WhoScoredTransportTests(unittest.TestCase):
                 with self.assertRaisesRegex(ProviderError,'left'):client.match_details(13)
             bridge.request.assert_called_with('whoscored',unittest.mock.ANY,timeout=unittest.mock.ANY)
 
+    def test_one_match_timeout_does_not_block_the_next_match_or_cache_missing_data(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge=Mock();client=ExtensionWhoScoredClient(tmp,bridge=bridge)
+            p=payload();text='matchId: 11, matchCentreData: '+json.dumps(p['matchCentreData'])+', matchCentreEventTypeJson: '+json.dumps(p['matchCentreEventTypeJson'])
+            for result in ({'status':None,'reason':'extension_timeout'},{'status':408}):
+                bridge.request.return_value={**result,'ok':True,'source_url':'https://www.whoscored.com/matches/12/live'}
+                with patch.object(client.request_gate,'wait'),self.assertRaisesRegex(ProviderRequestError,'timed out'):client.match_details(12)
+                self.assertFalse(client.request_gate.is_blocked)
+            bridge.request.return_value={'ok':True,'status':200,'source_url':'https://www.whoscored.com/matches/11/live','text':text}
+            with patch.object(client.request_gate,'wait'):self.assertEqual(client.match_details(11)['match_id'],11)
+
+    def test_known_missing_stats_and_server_errors_are_local_but_rate_limits_still_stop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge=Mock();client=ExtensionWhoScoredClient(tmp,bridge=bridge)
+            for result in ({'status':404,'reason':'match_data_unavailable'},{'status':500}):
+                bridge.request.return_value={**result,'ok':True,'source_url':'https://www.whoscored.com/matches/11/live'}
+                with patch.object(client.request_gate,'wait'),self.assertRaises(ProviderRequestError):client.match_details(11)
+                self.assertFalse(client.request_gate.is_blocked)
+            bridge.request.return_value={'status':429,'ok':True,'source_url':'https://www.whoscored.com/matches/11/live','retryAfter':120}
+            with patch.object(client.request_gate,'wait'),self.assertRaises(ProviderRequestError):client.match_details(11)
+            self.assertTrue(client.request_gate.is_blocked)
+
+    def test_saved_legacy_timeout_pause_is_ignored_after_upgrade(self):
+        import time
+        with tempfile.TemporaryDirectory() as tmp:
+            gate=WhoScoredExtensionGate(tmp)
+            atomic_json(gate.path,{'status_code':408,'blocked_until':time.time()+3600,'reason':'WhoScored HTTP 408'})
+            self.assertFalse(gate.is_blocked)
+            atomic_json(gate.path,{'status_code':429,'blocked_until':time.time()+3600,'reason':'WhoScored HTTP 429'})
+            self.assertTrue(gate.is_blocked)
+
     def test_parser_accepts_assignments_and_quoted_keys_without_executing_javascript(self):
         self.assertEqual(embedded_json('var matchCentreData = {"unicode":"Łódź"};','matchCentreData'),{'unicode':'Łódź'})
         self.assertEqual(embedded_json('"matchCentreData": {"x":1}','matchCentreData'),{'x':1})

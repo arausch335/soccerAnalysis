@@ -440,7 +440,9 @@ export async function executeWho(s,args) {
   const stage=args.kind==='json' ? args.endpoint.match(/^tournaments\/(\d+)/)[1] : null;
   const url='https://www.whoscored.com/'+(stage ? `stages/${stage}/fixtures` : args.endpoint);
   if (initial.url.replace(/\/$/,'') !== url) await chrome.tabs.update(s.tabId,{url});
-  const deadline=Date.now()+Math.min(300000,Math.max(1000,args.manual_wait_ms || 120000));
+  const dataWait=Math.min(60000,Math.max(1000,args.timeout_ms || 30000));
+  const manualWait=Math.min(300000,Math.max(1000,args.manual_wait_ms || 120000));
+  let deadline=Date.now()+dataWait;
   let result, waitingSince=null;
   while (Date.now()<deadline) {
     const current=await selectedTab(s);
@@ -458,7 +460,7 @@ export async function executeWho(s,args) {
     const frames=await chrome.scripting.executeScript({target:{tabId:s.tabId},world:'MAIN',func:whoPageOperation,args:[args]});
     result=frames.find(f=>f.frameId===0)?.result;
     if (result?.status===403 && result.verification) {
-      waitingSince ??= Date.now();
+      if (waitingSince===null) {waitingSince=Date.now();deadline=Math.max(deadline,waitingSince+manualWait);}
       await save({message:'WhoScored verification: finish the check in the selected tab. Collection is waiting.'});
       await new Promise(r=>setTimeout(r,1000));continue;
     }
@@ -469,7 +471,10 @@ export async function executeWho(s,args) {
     if (result) return {...result,waiting_seconds:waitingSince===null ? 0 : (Date.now()-waitingSince)/1000};
     await new Promise(r=>setTimeout(r,500));
   }
-  return {ok:true,status:408,source_url:(await selectedTab(s)).url};
+  if (result?.status===403 && result.verification) return {...result,reason:'verification_required',
+    waiting_seconds:waitingSince===null ? 0 : (Date.now()-waitingSince)/1000};
+  return {ok:true,status:null,reason:'extension_timeout',error:'WhoScored data did not become ready before the extension deadline.',
+    waiting_seconds:waitingSince===null ? 0 : (Date.now()-waitingSince)/1000,source_url:(await selectedTab(s)).url};
 }
 
 async function waitForProvider(s,accept) {

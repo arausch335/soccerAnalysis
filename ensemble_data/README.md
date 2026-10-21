@@ -1,35 +1,51 @@
-# Bring collections together
+# Import copied collections
 
-Paste another computer's entire `data` folder here, for example
-`ensemble_data/laptop/data/` or `ensemble_data/data/`. Stop copying before running
-`python main.py`. It imports all marked folders before any collection starts.
-Use `python main.py --import-only` to import without starting a scraper.
+Use this folder for a one-time SD-card or external-drive transfer. Main remains
+the monitor; MSI is the central raw archive. Headless can also import a local copy
+when needed. Importing onto Headless does not automatically forward all historical
+Main seasons to MSI.
 
-Successful imports are removed from this folder. Incomplete/invalid imports stay
-here. The regular data folder contains an import journal, checksums, preserved
-conflicting originals and machine-specific state under `ensemble_imports/`.
-Machine-specific browser profiles, cookies and safety settings are archived,
-not activated on a different computer. Never paste files while an import runs.
+Prepare a portable bundle on the source computer (replace the example card path):
 
-Run `python main.py --inventory --worker-id main-mac` to inventory the main Mac
-without scraping. Choose a unique ID on every computer. The ID is saved in
-`data/identity.json` and travels with transferred data; an import keeps the
-receiver's identity and preserves the incoming records' original collectors.
+```sh
+python -m tools.prepare_transfer --output "/Volumes/CARD/main-data"
+```
 
-`workers/<worker-id>.json` contains that computer's validated local inventory.
-Inventories remain local and are ignored by Git. The normal worker supervisor
-reports saved matches and logs directly to Main, and receives the other workers’
-inventories for ensemble completion checks. See [worker setup](../docs/WORKERS.md).
+The output must be a new folder outside `data/`, with an existing parent. The
+helper locks the source collection, copies canonical and legacy provider raw data,
+active checkpoints, season files and original collection credits, and verifies
+checksums. It excludes machine credentials, reporting queues, caches, profiles and
+retired checkpoint generations. Source files remain untouched.
 
-The ignored `provenance.json` remains a compatible aggregate progress file for
-manual copying. Reporting sends collection evidence, not raw datasets; import
-the actual data folders on Main when needed. The shared worker plan rejects
-overlapping assignments. A live inventory is useful completion evidence, not
-a distributed job reservation system.
-Use `main.py --ignore-provenance` to collect missing local data even if the
-portable map records it elsewhere; existing local caches/checkpoints still resume.
+On MSI, stop the worker before copying:
 
-Run `review_data.py` for local data completeness, including imported WhoScored,
-Sofascore and FotMob data. To scrape all league/season combinations in the YAML,
-run `python main.py` without `--competition`, `--season` or `--name`. The default
-Sofascore access is `extension`; one extension connection serves the whole run.
+```sh
+python main.py --terminate
+```
+
+Copy the complete `main-data` folder from the card into MSI's checkout as
+`ensemble_data/main-data/`. Do not copy loose league folders directly over its
+live `data/` folder. Then, on MSI:
+
+```sh
+python -m tools.prepare_transfer --verify ensemble_data/main-data
+python main.py --import-only --worker-id msi
+python main.py --worker-id msi
+```
+
+Main can keep monitoring while MSI imports. An active source collector prevents
+export; Main's monitor may continue reporting while the export holds its
+inventory/collection lock. The same bundle can be imported on another worker
+using its own existing ID, but MSI is the intended central raw archive.
+
+The importer verifies the portable bundle again, validates and merges checkpoints
+and raw data, keeps the receiver's identity/settings, and preserves original
+collector credit. It archives conflicts and writes an import journal under
+`data/_system/imports/`. A successful import removes only the staged bundle under
+`ensemble_data/`; keep the card and original source until the result is checked.
+An invalid bundle stays staged for investigation. macOS metadata files are ignored.
+
+The refreshed receiver inventory is sent to Main when its supervisor resumes.
+Supervised workers still obtain season ownership from Main. Shared assignments
+are in `config/workers.yaml`; reporting inventories are evidence of held data,
+not a substitute for copying the underlying raw files.
