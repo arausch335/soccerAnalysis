@@ -21,6 +21,18 @@ class WorkerPlanTests(unittest.TestCase):
             path=Path(folder)/'workers.yaml';path.write_text(yaml.safe_dump(document))
             return load_plan(path)
 
+    def test_windows_and_mac_line_endings_have_the_same_revision_and_jobs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            mac=Path(folder)/'mac.yaml';windows=Path(folder)/'windows.yaml'
+            content=yaml.safe_dump(self.document).encode()
+            mac.write_bytes(content);windows.write_bytes(content.replace(b'\n',b'\r\n'))
+            first=load_plan(mac);second=load_plan(windows)
+            self.assertEqual(first.revision,second.revision)
+            self.assertEqual([job.as_dict() for job in first.jobs],[job.as_dict() for job in second.jobs])
+            self.document['workers']['main']['label']='Changed plan'
+            windows.write_bytes(yaml.safe_dump(self.document).encode().replace(b'\n',b'\r\n'))
+            self.assertNotEqual(first.revision,load_plan(windows).revision)
+
     def test_mac_preserved_msi_unassigned(self):
         plan=self.load(self.document)
         self.assertEqual(len(plan.for_worker('main')),7)

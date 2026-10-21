@@ -21,6 +21,12 @@ class ControlTests(unittest.TestCase):
     def claim(self,worker='msi',instance='original',job=None,revision=None,token='x'*40):
         return self.control.command(worker,{'operation':'claim','job_id':(job or self.job).id,'revision':revision or self.plan.revision,'instance':instance,'token':token})
 
+    def test_windows_worker_can_claim_against_macs_identical_plan(self):
+        windows=self.base/'windows-workers.yaml'
+        windows.write_bytes(self.path.read_bytes().replace(b'\n',b'\r\n'))
+        client_plan=load_plan(windows)
+        self.assertEqual(self.claim(revision=client_plan.revision)['state'],'granted')
+
     def test_only_current_main_plan_assignments_can_start(self):
         self.assertEqual(self.claim(revision='old')['state'],'waiting')
         self.assertEqual(self.claim(worker='headless')['state'],'waiting')

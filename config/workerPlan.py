@@ -159,4 +159,7 @@ def load_plan(path=None):
         if address.scheme!='http' or not address.port or not private_ip(address.hostname):raise config.ConfigError('Storage requires an explicit private IPv4 HTTP address and port')
         if storage['hub'] not in workers or any(w not in workers for w in storage['consumers']):raise config.ConfigError('Storage workers must be configured')
         if storage['hub'] in storage['consumers']:raise config.ConfigError('Storage hub cannot be its own dataset consumer')
-    return WorkerPlan(workers,jobs,dict(git),dict(dashboard),dict(reporting),dict(storage),document['coordinator'],hashlib.sha256(data).hexdigest(),path)
+    # Git may check out the same YAML with CRLF on Windows and LF on Mac.
+    # Preserve the LF revision while making ownership checks platform-independent.
+    revision=hashlib.sha256(data.replace(b'\r\n',b'\n')).hexdigest()
+    return WorkerPlan(workers,jobs,dict(git),dict(dashboard),dict(reporting),dict(storage),document['coordinator'],revision,path)
