@@ -56,7 +56,9 @@ def main(argv=None):
     if not args.name or Path(args.name).name != args.name or args.name in ('.','..'):
         parser.error('name must be a single directory name')
     try:
-        directory = collection_directory(args.data_root.resolve(), args.name)
+        from storage.layout import full_path
+        args.data_root=full_path(args.data_root)
+        directory = collection_directory(args.data_root, args.name)
     except ValueError as exc:
         parser.error(str(exc))
     if args.limit is not None and args.limit < 1:
@@ -75,6 +77,8 @@ def main(argv=None):
     # collections belong under outputs/old_data and remain outside this root.
     try:
         with FileLock(str(system_path(root,'.collector.lock')), timeout=0), ExitStack() as stack:
+            from .maintenance import foreground
+            stack.enter_context(foreground(root,directory.relative_to(root).as_posix()))
             from providers.identityReview import identity_scope
             stack.enter_context(identity_scope(root))
             stack.enter_context(extension_scope())

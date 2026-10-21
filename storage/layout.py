@@ -52,3 +52,13 @@ def organize_data_root(root):
     for lock in ('.worker.lock','.collector.lock'):
         (root/lock).unlink(missing_ok=True)
     return moved
+
+
+def full_path(path):
+    """Use native long-path support for deeply nested Windows checkpoint files."""
+    path=Path(path).expanduser().resolve()
+    value=str(path)
+    if os.name=='nt' and not value.startswith('\\\\?\\'):
+        value=('\\\\?\\UNC\\'+value[2:]) if value.startswith('\\\\') else '\\\\?\\'+value
+        return Path(value)
+    return path

@@ -69,6 +69,7 @@ class PortableProgress:
         self.records=shared_progress(self.path,local_worker=worker_id or read_worker_id(root)) if self.path is not None else {}
         self.local_records={};self.previous_local={};self.worker_path=None
         self._capture=None;self._inventory_cache=None;self.scan_summary={}
+        self._dirty=set();self._replace_seasons=None;self.scan_seasons=None
         self.origins=read_origins(self.root)
         if self.path is None:self.origin=read_worker_id(self.root);return
         identity=ensure_identity(self.root,worker_id)
@@ -111,6 +112,7 @@ class PortableProgress:
         previous=self.previous_local.get(key,{})
         if all(previous.get(field)==value for field,value in row.items() if field!='updated_at'):
             row['updated_at']=previous['updated_at']
+        self._dirty.add(key)
         self.local_records[key]=row
         if self._capture is not None:self._capture[key]=deepcopy(row)
         merge_records(self.records,{key:row})
@@ -118,16 +120,38 @@ class PortableProgress:
 
     def save(self):
         if self.path is None:return
+        from filelock import FileLock
+        self.worker_path.parent.mkdir(parents=True,exist_ok=True)
+        with FileLock(str(self.worker_path.with_suffix('.lock'))):
+            saved=read_progress(self.worker_path) if self.worker_path.exists() else {}
+            existing=saved.get('records',{});schedules=saved.get('schedules',{})
+            if self._replace_seasons is not None:
+                existing={key:row for key,row in existing.items() if self.record_season(key) not in self._replace_seasons}
+                schedules={key:row for key,row in schedules.items() if key not in self._replace_seasons}
+                schedules.update(self._schedule_updates)
+            # A foreground session writes only matches it has just validated.
+            # It cannot erase background indexing of an unrelated season.
+            existing.update({key:self.local_records[key] for key in self._dirty})
+            self.local_records=existing
+            atomic_json(self.worker_path,{'format':FORMAT,'worker_id':self.origin,'instance_id':self.instance_id,
+                'records':dict(sorted(existing.items())),'schedules':schedules,
+                'note':'Validated data held by this worker. origins identifies its original collectors.'},indent=2,sort_keys=True)
+            self._dirty.clear()
+        merge_records(self.records,existing)
         atomic_json(self.path,{'format':FORMAT,'records':self.records,
             'note':'Completed work only. Raw data and local completeness must be checked separately.'})
-        atomic_json(self.worker_path,{'format':FORMAT,'worker_id':self.origin,'instance_id':self.instance_id,
-            'records':dict(sorted(self.local_records.items())),
-            'note':'Validated data held by this worker. origins identifies its original collectors.'},indent=2,sort_keys=True)
         save_origins(self.root,self.origins)
 
-    def scan(self,*,full=False,cache=True,cancel=None):
+    @staticmethod
+    def record_season(key):
+        parts=key.split('|')
+        return '/'.join(parts[1:3])
+
+    def scan(self,*,full=False,cache=True,cancel=None,seasons=None):
         from .inventoryCache import InventoryCache
         self.origins=read_origins(self.root)
+        self.scan_seasons=set(seasons) if seasons is not None else None
+        self._dirty=set()
         self.local_records={}
         if self.path is None:self.records={}
         if self.worker_path and self.worker_path.exists():
@@ -138,13 +162,34 @@ class PortableProgress:
         self._scan_cancel=cancel
         try:
             self._scan()
-            if receipts:receipts.prune()
+            if receipts and seasons is None:receipts.prune()
             self.scan_summary={'reused':receipts.hits if receipts else 0,
                                'validated':receipts.checked if receipts else len(self.local_records)}
         finally:
             self.scanning=False;self._capture=None;self._inventory_cache=None
             if receipts:receipts.close()
+        self._schedule_updates={}
+        if self.path is not None:
+            for schedule in self.root.glob('*/*/schedule.json'):
+                key=schedule.parent.relative_to(self.root).as_posix()
+                if self.scan_seasons is not None and key not in self.scan_seasons:continue
+                self._check_cancelled()
+                settings=schedule.parent/'job.json'
+                if not settings.exists():settings=schedule.parent/'config.json'
+                if not settings.exists():continue
+                selection=json.loads(settings.read_text(encoding='utf-8'))
+                # Legacy markers may name only their baseline provider. Do not
+                # invent target IDs or a competition/season from incomplete metadata.
+                if not selection.get('competition') or not selection.get('season'):continue
+                events=json.loads(schedule.read_text(encoding='utf-8')).get('events',[])
+                self._schedule_updates[key]={'competition':competition_by_name(selection['competition']).name,
+                    'season':season_label(selection['season']),'kind':'combined',
+                    'match_ids':sorted({str(event['id']) for event in events})}
+        self._replace_seasons=(self.scan_seasons if self.scan_seasons is not None else
+                               {self.record_season(key) for key in set(self.previous_local)|set(self.local_records)})
+        self._dirty.update(self.local_records)
         self.save()
+        self._replace_seasons=None
         if self.path is not None:
             self.records=shared_progress(self.path,local_worker=self.origin,trusted=self.trusted_only)
             self.save()
@@ -158,6 +203,7 @@ class PortableProgress:
             row=deepcopy(saved)
             row['origins']=sorted(set(row['origins'])|set(self.origins.get(key,[])))
             self.origins[key]=row['origins'];self.local_records[key]=row
+            self._dirty.add(key)
             merge_records(self.records,{key:row})
         return True
 
@@ -179,6 +225,7 @@ class PortableProgress:
         from providers.cache import ResponseCache
         from .legacyFotmobRows import player_rows
         for marker in self.root.glob('*/*/match_checkpoints/*/CURRENT.json'):
+            if self.scan_seasons is not None and '/'.join(marker.relative_to(self.root).parts[:2]) not in self.scan_seasons:continue
             self._check_cancelled()
             if self._restore(marker):continue
             store=PandasStore(marker.parent)
@@ -212,6 +259,7 @@ class PortableProgress:
             patterns=(pattern,f'{subtree}/*/*/whoscored_schedule.json') if provider=='whoscored' and subtree else (pattern,)
             for schedule in sorted({path for pattern in patterns for path in self.root.glob(pattern)}):
                 directory=schedule.parent
+                if self.scan_seasons is not None and '/'.join(directory.parts[-2:]) not in self.scan_seasons:continue
                 from .whoScoredData import metadata_path
                 job=metadata_path(directory,'job.json') if provider=='whoscored' else directory/'job.json'
                 if not job.exists():continue
@@ -307,7 +355,16 @@ class PortableProgress:
 
 def remote_done(namespace, competition, season, mid, required=()):
     progress=ACTIVE.get()
-    return progress is not None and progress.skip_remote and progress.done(namespace,competition,season,mid,required)
+    if progress is None or not progress.skip_remote:return False
+    if progress.trusted_only:
+        from .workInstructions import approved_by_main
+        return approved_by_main(progress,job_key(namespace,competition,season,mid),required)
+    row=progress.records.get(job_key(namespace,competition,season,mid),{})
+    holders=set(row.get('holders') or row.get('origins',[]))
+    # A previous local inventory is not remote evidence. In particular, missing
+    # local checkpoints must be recollected rather than skipped at startup.
+    if holders=={progress.origin}:return False
+    return progress.done(namespace,competition,season,mid,required)
 
 
 def record_complete(namespace, competition, season, mid, *, collected_here=False):

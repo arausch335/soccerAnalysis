@@ -190,6 +190,7 @@ def _normal_main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, epilog='Select a season with --competition/--season/--name. Use python -m collection --help for collection options.')
     parser.add_argument('--build-dataset', action=argparse.BooleanOptionalAction, default=BUILD_DATASET)
     parser.add_argument('--dataset-root', type=Path, default=config.DATASET_ROOT)
+    parser.add_argument('--defer-exports',action='store_true',help=argparse.SUPPRESS)
     build_settings, args = parser.parse_known_args(args)
     explicit_command=bool(args and args[0] in commands)
     explicit_selection=any(arg in ('--competition','--season','--name') or
@@ -199,6 +200,8 @@ def _normal_main(argv=None):
     build_requested = build_settings.build_dataset or action == 'export'
     if any(arg in ('--build-csvs', '--no-build-csvs') for arg in args):
         parser.error('Use --build-dataset or --no-build-dataset instead of CSV flags')
+    if build_settings.defer_exports and action!='export':
+        args.append('--no-build-csvs');build_requested=False
     result = 0 if action == 'export' else (_single(args) if explicit_command or explicit_selection else _batch(args))
     if build_requested and action in ('auto', 'start', 'resume', 'export') and result != 130:
         from dataset_builder import build_dataset

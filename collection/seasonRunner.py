@@ -395,13 +395,14 @@ class SeasonRunner:
             self.report(f"{competition.name} {season_label(canonical)} | match {event['id']} | {event['homeTeam']['name']} vs {event['awayTeam']['name']}")
             timing.start_game(event['id'],clients=self.clients.values())
             mid=event['id'];store=PandasStore(self.directory/'match_checkpoints'/str(mid));entry=statuses[mid]
-            from .ensembleProgress import remote_done, record_match
+            from .ensembleProgress import remote_done, record_match, ACTIVE
             required=['provider:'+provider for provider in self.providers]+['spatial:'+category for category in self.spatial]
             if self.baseline_provider=='sofascore':required.append('sofascore_match_stats')
-            if not store.exists and not self.refresh and remote_done('sofascore',competition.name,canonical,mid,required):
+            coordinated=ACTIVE.get() is not None and ACTIVE.get().trusted_only
+            if (not store.exists or coordinated) and not self.refresh and remote_done('sofascore',competition.name,canonical,mid,required):
                 entry.update(status='elsewhere',error='Completed on another computer; raw data not present locally',updated_at=now())
                 atomic_csv(pd.DataFrame(statuses.values()),status_path)
-                self.report(f'[{index}/{len(selected)}] Recorded on another computer; skipped {mid}. Import its data folder to build locally.')
+                self.report(f'[{index}/{len(selected)}] '+('Main confirms required data is held; ' if coordinated else 'Recorded on another computer; ')+f'skipped {mid}.')
                 timing.finish_game(clients=self.clients.values(),status='elsewhere',cached=True,mode=timing_mode())
                 continue
             resuming=store.exists and not self.refresh

@@ -143,11 +143,14 @@ class Outbox:
             if kind=='raw':manifest.update(season=season,completed=completed,origins=origins or {})
             validate_manifest(manifest);mid=identifier(manifest)
             if db.execute('SELECT 1 FROM queue WHERE id=?',(mid,)).fetchone():db.commit();return mid
+            from .maintenance import require_space
+            require_space(self.directory,sum({r['sha256']:r['size'] for r in rows}.values()))
             stage=self.directory/(mid+'.'+uuid4().hex+'.tmp');stage.mkdir()
             try:
                 for row in rows:
                     target=stage/row['sha256']
                     if not target.exists():
+                        require_space(self.directory,row['size'])
                         shutil.copyfile(files[row['path']],target)
                         if target.stat().st_size!=row['size'] or digest(target)!=row['sha256']:raise ValueError('Collection changed while queuing; retry after save')
                 atomic_json(stage/'manifest.json',manifest)

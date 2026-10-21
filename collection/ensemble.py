@@ -1,4 +1,5 @@
 """Offline, journaled ingestion of another computer's complete data folder."""
+from storage.layout import full_path
 from storage.layout import system_path
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -67,7 +68,7 @@ def normalize_paths(value, paths=False):
 
 def atomic_copy(source, target):
     target=Path(target);target.parent.mkdir(parents=True,exist_ok=True)
-    temporary=target.with_name(target.name+'.'+uuid.uuid4().hex+'.tmp')
+    temporary=target.with_name('.'+uuid.uuid4().hex[:8]+'.tmp')
     try:
         shutil.copyfile(source,temporary)
         if digest(source)!=digest(temporary):raise OSError('Imported file failed its copy checksum')
@@ -139,8 +140,9 @@ def merge_csv(source, target, output):
         writer=csv.DictWriter(handle,fieldnames=columns);writer.writeheader();writer.writerows(rows.values())
 
 
-def import_folder(source, root, report=print):
-    source=Path(source);root=Path(root)
+def import_folder(source, root, report=print, *, background=False, check=lambda:None):
+    source=full_path(source);root=full_path(root)
+    check()
     if (source/'_system/transfer-manifest.json').exists():
         from tools.prepare_transfer import verify_bundle
         verify_bundle(source)
@@ -150,6 +152,7 @@ def import_folder(source, root, report=print):
         raise ValueError('Unsupported source data folder marker')
     files=[]
     for path in sorted(source.rglob('*')):
+        check()
         if path.is_symlink():raise ValueError(f'Imported folder contains a symbolic link: {path}')
         if path.name=='.DS_Store' or path.name.startswith('._'):continue
         if path.is_file() and not path.name.endswith('.lock'):
@@ -161,6 +164,7 @@ def import_folder(source, root, report=print):
     journal=archive/'import.json'
     stores=[]
     for relative,path,_ in files:
+        check()
         if path.name=='CURRENT.json' and relative.parts[0] not in MACHINE_STATE|{'ensemble_imports'}:
             PandasStore(path.parent).from_csv();stores.append(relative.parent)
         elif path.suffix=='.json':
@@ -170,26 +174,30 @@ def import_folder(source, root, report=print):
                 for row in csv.DictReader(handle):
                     if None in row or None in row.values():raise ValueError(f'Invalid imported CSV: {relative}')
     source_progress=PortableProgress(None,source)
-    source_progress.scan(cache=False)
+    source_progress.scan(cache=False,cancel=check if hasattr(check,'is_set') else None)
     local_progress=PortableProgress(None,root)
-    local_progress.scan()
+    if not background:local_progress.scan()
     for relative in stores:
         if any(parent in relative.parents for parent in stores):
             raise ValueError('Nested checkpoint stores are not supported')
     root.mkdir(parents=True,exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='ensemble-',dir=root) as temp:
+    from .maintenance import require_space
+    require_space(root,sum(path.stat().st_size for _,path,_ in files)*3)
+    with tempfile.TemporaryDirectory(prefix='e-',dir=root/'_system/storage' if background else root) as temp:
         staging=Path(temp);planned=[];store_manifests=[]
         for relative in stores:
+            check()
             merged_checkpoint(source/relative,root/relative,staging/'active'/relative)
             for path in (staging/'active'/relative).rglob('*'):
                 if path.is_file():
                     item=(path,root/path.relative_to(staging/'active'))
                     (store_manifests if path.name=='CURRENT.json' else planned).append(item)
         for relative,path,checksum in files:
+            check()
             archived=archive/'conflicts'/relative
             if any(relative==store or store in relative.parents for store in stores):
                 # Keep the exact incoming checkpoint generation as provenance.
-                planned.append((path,archive/'source_checkpoints'/relative));continue
+                planned.append((path,archive/'objects'/checksum));continue
             target=root/relative
             machine=relative.parts[0] in MACHINE_STATE
             if machine:
@@ -238,16 +246,21 @@ def import_folder(source, root, report=print):
             'source_worker_id':read_worker_id(source),
             'imported_at':datetime.now(timezone.utc).isoformat(),
             'files':[{'path':str(relative),'sha256':checksum} for relative,_,checksum in files],
-            'conflicts':'conflicts/','machine_state':'machine_state/'})
+            'conflicts':'conflicts/','machine_state':'machine_state/',
+            'checkpoint_objects':{relative.as_posix():checksum for relative,_,checksum in files
+                if any(relative==store or store in relative.parents for store in stores)}})
         # Data tables arrive before CURRENT pointers publish a complete snapshot.
         reports=[item for item in planned if item[1].name=='collection.csv']
         ordinary=[item for item in planned if item[1].name!='collection.csv']
         writes=ordinary+store_manifests+reports
         report(f'Ensemble: merging {len(stores)} checkpoints and incorporating {len(writes)} files...',flush=True)
         for index,(incoming,target) in enumerate(writes,1):
+            check()
+            from .maintenance import require_space
+            require_space(root,incoming.stat().st_size)
             if target.is_symlink() or root not in target.resolve().parents:
                 raise ValueError('Import destination leaves the regular data root')
-            atomic_copy(incoming,target)
+            if not target.exists() or digest(target)!=digest(incoming):atomic_copy(incoming,target)
             if digest(incoming)!=digest(target):raise OSError('Published import checksum differs')
             if index%1000==0:report(f'Ensemble: incorporated {index}/{len(writes)} files...',flush=True)
         origins=read_origins(root)
@@ -255,7 +268,7 @@ def import_folder(source, root, report=print):
             for key,row in progress.local_records.items():
                 origins[key]=sorted(set(origins.get(key,[]))|set(row['origins']))
         save_origins(root,origins)
-        PortableProgress(None,root).scan()
+        if not background:PortableProgress(None,root).scan()
         atomic_json(journal,{**json.loads(journal.read_text(encoding='utf-8')),'state':'complete'})
         if all(path.exists() and digest(path)==checksum for _,path,checksum in files):
             shutil.rmtree(source)
@@ -264,7 +277,7 @@ def import_folder(source, root, report=print):
 
 
 def import_pending(root, ensemble, report=print):
-    root=Path(root).resolve();ensemble=Path(ensemble).resolve()
+    root=full_path(root);ensemble=full_path(ensemble)
     if root==ensemble or root in ensemble.parents or ensemble in root.parents:
         raise ValueError('ensemble_data and the regular data root must be separate folders')
     ensemble.mkdir(parents=True,exist_ok=True)
@@ -279,15 +292,15 @@ def import_pending(root, ensemble, report=print):
         raise ValueError('Cannot import into an unmarked data root')
     if not marker.exists():atomic_json(marker,{'format':1})
     elif json.loads(marker.read_text(encoding='utf-8')).get('format')!=1:raise ValueError('Unsupported receiving data folder format')
-    with FileLock(str(system_path(root,'.collector.lock')),timeout=0):
+    with FileLock(str(system_path(root,'.worker.lock')),timeout=0), FileLock(str(system_path(root,'.collector.lock')),timeout=0):
         for candidate in candidates:import_folder(candidate,root,report)
         from .whoScoredData import migrate_legacy
         migrate_legacy(root,report)
 
 
 @contextmanager
-def ensemble_session(root, ensemble, report=print, *, skip_remote=True, worker_id=None,full_inventory=False):
-    root=Path(root).resolve();ensemble=Path(ensemble).resolve()
+def ensemble_session(root, ensemble, report=print, *, skip_remote=True, worker_id=None,full_inventory=False,background=False):
+    root=full_path(root);ensemble=full_path(ensemble)
     if root==ensemble or root in ensemble.parents or ensemble in root.parents:
         raise ValueError('ensemble_data and the regular data root must be separate folders')
     marker=root/'.soccer-scraper.json'
@@ -296,7 +309,7 @@ def ensemble_session(root, ensemble, report=print, *, skip_remote=True, worker_i
         if not marked:atomic_json(marker,{'format':1})
         elif json.loads(marker.read_text(encoding='utf-8')).get('format')!=1:raise ValueError('Unsupported data folder format')
         with FileLock(str(system_path(root,'.collector.lock')),timeout=0):ensure_identity(root,worker_id)
-    import_pending(root,ensemble,report)
+    if not background:import_pending(root,ensemble,report)
     # An existing unmarked directory remains subject to the collector's normal
     # refusal. Do not turn an arbitrary folder into a collection implicitly.
     if root.exists() and any(root.iterdir()) and not (root/'.soccer-scraper.json').exists():
@@ -304,12 +317,16 @@ def ensemble_session(root, ensemble, report=print, *, skip_remote=True, worker_i
     if not (root/'.soccer-scraper.json').exists():atomic_json(root/'.soccer-scraper.json',{'format':1})
     with FileLock(str(system_path(root,'.collector.lock')),timeout=0):
         from .whoScoredData import migrate_legacy
-        migrate_legacy(root,report)
+        if not background:migrate_legacy(root,report)
         progress=PortableProgress(ensemble/'provenance.json',root,worker_id=worker_id)
         progress.skip_remote=skip_remote
-        progress.scan(full=full_inventory)
-        report(f'Inventory: {progress.scan_summary["reused"]} unchanged artifacts reused; '
-               f'{progress.scan_summary["validated"]} new/changed artifacts validated.')
+        if background:
+            progress.local_records=dict(progress.previous_local)
+            report('Inventory indexing and staged imports run in the background; collection checks saved matches as needed.')
+        else:progress.scan(full=full_inventory)
+        if not background:
+            report(f'Inventory: {progress.scan_summary.get("reused",0)} unchanged artifacts reused; '
+                   f'{progress.scan_summary.get("validated",0)} new/changed artifacts validated.')
     report(f'Portable collection progress: {progress.path}')
     report(f'Worker identity: {progress.origin} ({system_path(root,"identity.json")})')
     report(f'Local worker inventory: {progress.worker_path}')

@@ -271,15 +271,16 @@ lists. A season with no discovered target is never presented as 100% complete.
 
 Inventory audits use saved validation receipts in
 `data/_system/cache/inventory.sqlite`. The first audit validates existing data;
-later starts reuse unchanged matches without reopening checkpoint tables or
-provider responses. New, changed or removed files are checked, including linked
+later background checks reuse unchanged matches without reopening checkpoint tables or
+provider responses. Normal workers start scraping without a blocking startup audit. New, changed or removed files are checked, including linked
 WhoScored raw events. Identity decisions, Reep changes and relevant validation
 code changes invalidate the receipts. Imported data always receives an
 independent validation; receipts copied from another computer are not trusted.
 
-Main continuously checks its local inventory every 30 seconds in the background
-and reports changed holdings. It never starts collectors in monitor mode. Checks
-wait if a collector or import holds the data lock. Worker reports continue to
+Every supervisor checks local inventory in the background, normally every 30
+seconds, and reports changed holdings. Main never starts collectors in monitor
+mode. Checks skip busy seasons and yield promptly when scraping requests a season;
+they never hold the global collector lock while auditing. Worker reports continue to
 arrive independently, and the dashboard refreshes every five seconds.
 
 To run an incremental audit explicitly, stop the scraper first:
@@ -482,15 +483,20 @@ in place. Provisioning and initial storage startup may take about a minute.
   resuming at the last accepted offset if interrupted. Completed-season snapshots
   include the season's raw archive and active checkpoints. Retired checkpoint
   generations, machine settings, sessions, logs and live databases are excluded.
-- MSI receives uploads while scraping. At the next safe boundary between season
-  jobs, it validates and incorporates completed seasons into
+- MSI receives uploads while scraping. A separate background thread validates and
+  incorporates completed seasons into
   `data/<league>/<season>/raw/<provider>` and their existing checkpoint locations.
-  Collection credit remains with the original worker. A partially scraped season
+  Collection credit remains with the original worker. Checkpoint batches have
+  durable receipts; imports resume after interruption. A foreground request for
+  the same season makes an import yield. Other seasons can import concurrently
+  with scraping. A partially scraped season
   is stored by MSI but does not trigger a dataset publication.
 - MSI builds the configured dataset tables and match/team/player concordance
   after its own completed seasons and after incorporating remote completed seasons.
   Failed builds keep the last published dataset intact and remain queued for retry.
-  When MSI is in a long season, remote-season incorporation waits for its boundary.
+  Builds use pinned input snapshots, so their export locks never block the live
+  scraper. CSV exports and dataset builds are deferred out of supervised collection.
+  Concordance can read saved match checkpoints even before flat CSVs are exported.
 - Main polls MSI every 30 seconds and downloads new prepared dataset files,
   including `dataset/concordance/`. Its storage credentials cannot download raw
   objects. Existing Main dataset seasons are preserved. All files in a publication
@@ -500,12 +506,21 @@ in place. Provisioning and initial storage startup may take about a minute.
 - Worker progress and logs still go directly to Main independently of data
   transfers. The worker cards distinguish queued uploads, received packages waiting
   for incorporation, incorporation/building, and datasets received by Main.
-  Storage milestones appear in the default important-log filter.
+  Storage milestones appear in the default important-log filter. The archive card
+  shows its background incorporation/build state separately from the current scrape.
+  Large publication copies and dataset downloads no longer hold the upload lock.
 
 Saved completed jobs from the current worker plan are queued once on startup, so
 upgrading does not require re-scraping those seasons. Use the normal explicit
 `--retry` flow for paused assignments or historical seasons outside that plan.
 Keep MSI running to receive and build data even after its scraping plan finishes.
+
+Background staging checks available disk space before each batch and keeps 1 GiB
+free for collection. Low space pauses maintenance with source data retained.
+Failed maintenance retries after five minutes instead of repeatedly blocking job
+startup. Drive exports support verified, resumable, capacity-sized bundles; see
+[the import instructions](../ensemble_data/README.md). Checkpoint archives use
+short hashed paths, and Windows paths use the extended-length namespace.
 
 Temporary transfer copies are removed after acknowledgment on the producer and
 after incorporation on MSI. **Original worker files are retained**, as are Main's
@@ -523,15 +538,24 @@ There is one command path for supervised collection:
 2. Before starting a season, the worker refreshes its inventories from Main and
    requests ownership of that assigned season. Main checks the exact plan revision,
    worker identity and existing owner before granting a durable claim.
-3. Main receives validated, worker-owned completion inventories. In supervised
-   mode, unknown legacy aggregate claims cannot cause a skip. Completion requires
-   the provider/spatial capabilities requested by that job; assignment, upload
-   receipt and dataset availability do not count as match completion.
-4. MSI separately confirms receipt and incorporation of raw files, then publishes
+3. Every local inventory, including MSI's imported raw data, reports validated
+   holdings and saved target schedules to Main. Main combines those reports and
+   sends versioned instructions with the remaining matches/resources and explicit
+   approvals for globally completed matches. MSI stores data; it does not assign
+   work. Supervised skip decisions use Main's approvals, never an independently
+   merged local inventory. Unknown schedules require discovery rather than being
+   treated as complete. Assignment, upload receipt and dataset availability do
+   not count as match completion. Failed audits withdraw that season's unverified
+   holdings from the next report; original data remains available for repair.
+4. Main can order a recheck when its remaining-work evidence changes, even if the
+   worker's local job history says finished. The worker records the instruction
+   revision it attempted, so unchanged incomplete evidence cannot cause a tight
+   retry loop. Cached local files are still checked for validity when used.
+5. MSI separately confirms receipt and incorporation of raw files, then publishes
    datasets after completed seasons. Main's dashboard reports these stages separately.
 
 A claim has **no automatic expiry**. If a worker loses Main, its active season can
-continue using its last received inventories and queue reports/uploads locally.
+continue using its last instructions and queue reports/uploads locally.
 A new season waits for Main. A new assignee cannot take the same season while its
 old owner holds the claim, even if Main or that worker restarts. Each worker keeps
 its private current ownership receipt under `_system/workers/active-assignment.json`.
@@ -575,3 +599,10 @@ absence. Other matches continue.
 For a one-time Main-to-MSI raw-data copy, use the portable
 SD-card workflow in [ensemble_data/README.md](../ensemble_data/README.md). It keeps
 machine tokens/settings separate and verifies every copied data file before import.
+
+
+Update Main and restart its monitor **before** upgrading workers to the
+instruction protocol. A new worker waits if Main cannot supply matching
+instructions. The authenticated reply is saved in ignored
+`data/_system/workers/main-instructions.json`; no new token is needed. Instructions
+refresh with the background reporting poll and each new job authorization.

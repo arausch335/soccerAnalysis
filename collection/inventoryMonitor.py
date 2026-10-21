@@ -18,27 +18,57 @@ class InventoryMonitor:
 
     def check(self):
         try:
-            with FileLock(str(system_path(self.root,'.collector.lock')),timeout=0):
-                self.status={**self.status,'state':'checking'}
-                progress=PortableProgress(self.ensemble/'provenance.json',self.root,worker_id=self.worker)
-                previous=read_progress(progress.worker_path)['records'] if progress.worker_path.exists() else {}
-                progress.scan(cancel=self.stop)
-                changed=previous!=progress.local_records
-                self.status={'state':'current','checked_at':datetime.now(timezone.utc).isoformat(),
-                             **progress.scan_summary,'records':len(progress.local_records)}
-                if self.first or progress.scan_summary['validated']:
-                    self.report(f'[Inventory] Main: {progress.scan_summary["reused"]} unchanged artifacts reused; '
-                                f'{progress.scan_summary["validated"]} new/changed artifacts validated.',flush=True)
-                self.first=False;self.error=None
-            if changed and self.on_change:self.on_change()
+            from .maintenance import background, DeferredWork
+            self.status={**self.status,'state':'checking'}
+            progress=PortableProgress(self.ensemble/'provenance.json',self.root,worker_id=self.worker)
+            before=read_progress(progress.worker_path) if progress.worker_path.exists() else {}
+            previous=before.get('records',{})
+            seasons={progress.record_season(key) for key in previous}
+            for marker in self.root.glob('*/*/match_checkpoints/*/CURRENT.json'):
+                seasons.add('/'.join(marker.relative_to(self.root).parts[:2]))
+            for pattern in ('*/*/job.json','*/*/whoscored_job.json','fotmob_player_stats/*/*/job.json',
+                            'whoscored_events/*/*/job.json','whoscored/*/*/job.json'):
+                for job in self.root.glob(pattern):seasons.add('/'.join(job.parent.parts[-2:]))
+            reused=validated=waiting=0;errors=[]
+            for season in sorted(seasons):
+                if self.stop.is_set():return False
+                try:
+                    with background(self.root,season,self.stop) as permit:
+                        try:
+                            progress.scan(cancel=permit,seasons={season})
+                            reused+=progress.scan_summary['reused'];validated+=progress.scan_summary['validated']
+                        except (DeferredWork,InventoryInterrupted):raise
+                        except Exception as exc:
+                            # Withdraw unverified holdings before releasing this
+                            # season. Main must not keep authorizing stale skips.
+                            saved=read_progress(progress.worker_path) if progress.worker_path.exists() else {}
+                            progress._replace_seasons={season};progress._dirty=set()
+                            progress._schedule_updates={key:value for key,value in saved.get('schedules',{}).items() if key==season}
+                            progress.save();progress._replace_seasons=None
+                            errors.append(season+': '+str(exc))
+                except (Timeout,DeferredWork,InventoryInterrupted):waiting+=1
+            after=read_progress(progress.worker_path) if progress.worker_path.exists() else {}
+            current=after.get('records',{})
+            changed=previous!=current or before.get('schedules',{})!=after.get('schedules',{})
+            self.status={'state':'attention' if errors else 'current','checked_at':datetime.now(timezone.utc).isoformat(),
+                         'reused':reused,'validated':validated,'records':len(current),'seasons_waiting':waiting}
+            if self.first or validated:
+                self.report(f'[Inventory] {self.worker}: {reused} unchanged artifacts reused; '
+                            f'{validated} new/changed artifacts validated; {waiting} busy seasons deferred.',flush=True)
+            message='; '.join(errors)
+            if message and message!=self.error:self.report('[Inventory] '+self.worker+' needs review: '+message,flush=True)
+            if message:self.status['message']=message
+            self.first=False;self.error=message or None
+            if changed:
+                if self.on_change:self.on_change()
+                from providers.identityReview import seed_existing
+                seed_existing(self.root)
             return changed
-        except Timeout:
-            self.status={**self.status,'state':'waiting','message':'Collection or import is using the data folder.'}
         except InventoryInterrupted:pass
         except Exception as exc:
             message=str(exc)
             self.status={**self.status,'state':'attention','message':message}
-            if message!=self.error:self.report('[Inventory] Main needs review: '+message,flush=True)
+            if message!=self.error:self.report('[Inventory] '+self.worker+' needs review: '+message,flush=True)
             self.error=message
         return False
 

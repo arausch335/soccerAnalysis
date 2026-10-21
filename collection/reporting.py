@@ -190,6 +190,9 @@ class ReportingStore:
                                 raise ValueError('Invalid inventory evidence')
                     if inventory is None or event.get('reset'):
                         inventory = {**update, 'records': {}}
+                    if 'schedules' in update:
+                        if not isinstance(update['schedules'],dict):raise ValueError('Invalid inventory schedules')
+                        inventory['schedules']=update['schedules']
                     inventory['records'].update(update['records'])
                     for key in event.get('removed', []):
                         inventory['records'].pop(key, None)
@@ -323,6 +326,7 @@ class ReportingServer:
                     value=store.inventories(versions, exclude=worker,
                                            reep_version=self.headers.get('X-Reep-Version',''))
                     if provision:value['storage_config']=provision.for_worker(worker)
+                    if control:value['instructions']=control.instructions(worker,store)
                     self.reply(200,value)
                 except (ValueError, TypeError):
                     self.reply(400, {'error': 'Invalid request'})
@@ -342,7 +346,9 @@ class ReportingServer:
                             row=db.execute('SELECT instance FROM workers WHERE worker=?',(worker,)).fetchone()
                         if row and row['instance'] and row['instance']!=value.get('instance'):
                             self.reply(409,{'error':'Worker identity differs'});return
-                        self.reply(200,control.command(worker,value))
+                        result=control.command(worker,value)
+                        if result.get('state')=='granted':result['instructions']=control.instructions(worker,store)
+                        self.reply(200,result)
                     except (ValueError,KeyError,TypeError):self.reply(400,{'error':'Invalid assignment request'})
                     except (OSError,sqlite3.Error):self.reply(503,{'error':'Assignment coordinator unavailable; no new work authorized'})
                     return
@@ -426,7 +432,11 @@ class Reporter:
                 hashes = {key: hashlib.sha256(encode(row).encode()).hexdigest() for key, row in saved['records'].items()}
                 changed = {key: row for key, row in saved['records'].items() if reset or hashes[key] != known.get(key)}
                 removed = list(set(known) - set(hashes))
-                if reset or changed or removed:
+                schedule_hash=hashlib.sha256(encode(saved.get('schedules',{})).encode()).hexdigest()
+                old_schedules=db.execute("SELECT value FROM meta WHERE key='inventory_schedules'").fetchone()
+                schedules_changed=old_schedules!=(schedule_hash,)
+                if reset or changed or removed or schedules_changed:
+                    db.execute("INSERT OR REPLACE INTO meta VALUES('inventory_schedules',?)",(schedule_hash,))
                     payload.update(inventory={**saved, 'records': changed}, reset=reset, removed=removed)
                     db.execute('DELETE FROM known')
                     db.executemany('INSERT INTO known VALUES(?,?)', hashes.items())
@@ -490,6 +500,9 @@ class Reporter:
         from providers.reep import version,install
         value = self.request('/v1/inventories', headers={'X-Inventory-Versions': encode(self.versions),
                                                       'X-Reep-Version':version(self.root)})
+        if value.get('instructions'):
+            from .workInstructions import install as install_instructions
+            install_instructions(self.root,value['instructions'],worker=self.worker)
         if value.get('storage_config'):
             from .storageConfig import install as install_storage
             install_storage(self.root,value['storage_config'])

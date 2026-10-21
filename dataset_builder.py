@@ -324,6 +324,40 @@ def _cached_provider_fixtures(source, provider):
     return list(fixtures.values())
 
 
+def _checkpoint_id_rows(source, events, competition, season, baseline, player_rows, team_rows, match_rows):
+    """Concordance stays complete when foreground CSV exports are deferred."""
+    markers=sorted(source.glob('match_checkpoints/*/CURRENT.json'))
+    if not markers:return False
+    for marker in markers:
+        dataset=PandasStore(marker.parent).from_csv()
+        for match in dataset.matches.values():
+            mid=_identifier(match.id)
+            if mid not in events:continue
+            match_row=match_rows.get((competition,season,baseline,mid))
+            if match_row is not None:
+                for provider,pid in match.metadata.get('provider_match_ids',{}).items():
+                    if provider in ('sofascore','fotmob','whoscored'):match_row['_ids'][provider+'_id'].append(pid)
+            for side in ('home','away'):
+                team=getattr(match,side+'_team');tid=_identifier(team.id)
+                row=_id_row(team_rows,(competition,season,tid),{
+                    'competition':competition,'season':season,'team_name':team.name})
+                row['_ids'][baseline+'_id'].append(tid)
+                for provider in ('fotmob','whoscored'):
+                    row['_ids'][provider+'_id'].append(_provider_team_id(source,match.metadata,provider,side))
+                lineup=getattr(match,side+'_lineup')
+                for appearance in lineup.players if lineup else ():
+                    player=appearance.player;pid=_identifier(player.id)
+                    row=_id_row(player_rows,(competition,season,team.name,pid),{
+                        'competition':competition,'season':season,'team_name':team.name,
+                        'player_name':canonical_player_name(player.name)})
+                    row['_ids'][baseline+'_id'].append(pid)
+                    for provider,entry in appearance.stats.raw.get('_providers',{}).items():
+                        if provider not in ('sofascore','fotmob','whoscored'):continue
+                        linked=_reviewed_provider_player_id(provider,pid,entry.get('id'))
+                        if linked:row['_ids'][provider+'_id'].append(linked)
+    return True
+
+
 def _source_id_rows(source, player_rows, team_rows, match_rows, review_root=None):
     source = Path(source);
     config = json.loads((source / 'config.json').read_text(encoding='utf-8'))
@@ -414,6 +448,7 @@ def _source_id_rows(source, player_rows, team_rows, match_rows, review_root=None
                     team_row['_ids'][provider + '_id'].append(
                         (fixture.get(side + 'Team') or {}).get('id'))
 
+    if _checkpoint_id_rows(source,events,competition,season,baseline,player_rows,team_rows,match_rows):return
     store = PandasStore(source / 'dataset')
     if not store.exists: return
     directory = store.current_directory

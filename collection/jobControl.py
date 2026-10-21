@@ -19,6 +19,15 @@ class JobControl:
             db.execute('CREATE TABLE IF NOT EXISTS claims(season TEXT PRIMARY KEY,worker TEXT,instance TEXT,job TEXT,token TEXT,claimed_at TEXT)');db.commit()
     def connect(self):return closing(sqlite3.connect(self.path,timeout=10))
 
+    def instructions(self,worker,store):
+        from config.workerPlan import load_plan
+        from .workInstructions import compile_instructions
+        with store.lock,store.connect() as db:
+            reports=[{'inventory':json.loads(row['inventory']) if row['inventory'] else {},
+                      'runtime':json.loads(row['runtime']) if row['runtime'] else {}}
+                     for row in db.execute('SELECT inventory,runtime FROM workers')]
+        return compile_instructions(load_plan(self.plan_path),worker,reports)
+
     def command(self,worker,value):
         from config.workerPlan import load_plan
         from .storageAgent import season_for
@@ -69,7 +78,14 @@ class AssignmentClient:
             atomic_json(receipt_path(self.root),{'token':token,'job_id':job.id});receipt_path(self.root).chmod(0o600)
             result=self.request({'operation':'claim','job_id':job.id,'revision':self.plan.revision,'token':token})
             if result.get('state')!='granted':self.release()
-            self.status={k:v for k,v in result.items() if k!='token'};self.status['coordinator']=self.plan.coordinator
+            else:
+                from .workInstructions import install
+                install(self.root,result['instructions'],worker=self.reporter.worker,revision=self.plan.revision)
+            self.status={k:v for k,v in result.items() if k not in ('token','instructions')}
+            instruction=result.get('instructions',{}).get('jobs',{}).get(job.id,{})
+            self.status['remaining_matches']=instruction.get('remaining_matches')
+            self.status['schedule_known']=instruction.get('schedule_known',False)
+            self.status['instruction_revision']=instruction.get('revision');self.status['coordinator']=self.plan.coordinator
             return result.get('state')=='granted'
         except (OSError,ValueError,KeyError,sqlite3.Error):
             self.status={'state':'waiting','coordinator':self.plan.coordinator,'message':'Main unavailable; saved work remains intact; new jobs wait for authorization'}

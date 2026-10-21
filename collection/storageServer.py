@@ -15,14 +15,18 @@ from .workerRuntime import now
 
 
 class Archive:
-    def __init__(self,root,*,reserve=512*1024**2):
+    def __init__(self,root,*,reserve=1024**3):
         self.directory=Path(root)/'_system/storage/hub';self.objects=self.directory/'objects'
-        self.objects.mkdir(parents=True,exist_ok=True);self.lock=threading.RLock();self.reserve=reserve
+        self.objects.mkdir(parents=True,exist_ok=True);self.lock=threading.RLock();self.reserve=reserve;self.publishing=False;self.readers=0
         self.database=self.directory/'archive.sqlite'
         with self.connect() as db:
             db.executescript('CREATE TABLE IF NOT EXISTS uploads(id TEXT PRIMARY KEY,owner TEXT,manifest TEXT,state TEXT,received_at TEXT); '
                              'CREATE TABLE IF NOT EXISTS publication(slot INTEGER PRIMARY KEY,manifest TEXT); '
-                             'CREATE TABLE IF NOT EXISTS builds(season TEXT PRIMARY KEY,state TEXT);')
+                             'CREATE TABLE IF NOT EXISTS builds(season TEXT PRIMARY KEY,state TEXT,revision INTEGER NOT NULL DEFAULT 0);')
+            db.execute('BEGIN IMMEDIATE')
+            if 'revision' not in {row[1] for row in db.execute('PRAGMA table_info(builds)')}:
+                db.execute('ALTER TABLE builds ADD COLUMN revision INTEGER NOT NULL DEFAULT 0')
+            db.commit()
 
     def connect(self):return closing(sqlite3.connect(self.database,timeout=30))
 
@@ -62,7 +66,7 @@ class Archive:
             if status['complete']:return {'offset':item['size']}
             if offset!=status['offset']:raise ValueError('Upload offset differs; query and resume')
             if not block or len(block)>CHUNK or offset+len(block)>item['size']:raise ValueError('Invalid chunk size')
-            if shutil.disk_usage(self.objects).free < self.reserve+len(block):raise OSError('MSI archive disk reserve reached')
+            if shutil.disk_usage(self.objects).free < self.reserve+item['size']-offset:raise OSError('MSI archive disk reserve reached')
             partial=self.objects/(sha+'.part')
             with partial.open('ab') as stream:
                 stream.write(block);stream.flush()
@@ -96,28 +100,44 @@ class Archive:
                             (manifest['worker'],mid)).fetchall()
             for key,body in rows:
                 if json.loads(body).get('season')==manifest['season']:db.execute("UPDATE uploads SET state='imported' WHERE id=?",(key,))
-            db.execute("INSERT OR REPLACE INTO builds VALUES(?,'pending')",(manifest['season'],));db.commit()
+            db.execute("INSERT INTO builds(season,state,revision) VALUES(?,'pending',1) ON CONFLICT(season) DO UPDATE SET state='pending',revision=revision+1",(manifest['season'],));db.commit()
 
     def schedule_build(self,season):
-        with self.connect() as db:db.execute("INSERT OR REPLACE INTO builds VALUES(?,'pending')",(season,));db.commit()
+        with self.connect() as db:db.execute("INSERT INTO builds(season,state,revision) VALUES(?,'pending',1) ON CONFLICT(season) DO UPDATE SET state='pending',revision=revision+1",(season,));db.commit()
 
     def builds(self):
         with self.connect() as db:return [r[0] for r in db.execute("SELECT season FROM builds WHERE state='pending'")]
 
-    def publish(self,manifest,files):
+    def build_jobs(self):
+        with self.connect() as db:return list(db.execute("SELECT season,revision FROM builds WHERE state='pending'"))
+
+    def published(self,season,revision):
+        with self.connect() as db:
+            db.execute("UPDATE builds SET state='published' WHERE season=? AND revision=?",(season,revision));db.commit()
+
+    def publish(self,manifest,files,*,check=lambda:None):
         validate_manifest(manifest)
         if manifest['kind']!='dataset':raise ValueError('Expected dataset publication')
-        with self.lock:
+        with self.lock:self.publishing=True
+        try:
+            # Object copying/checksumming must not hold the HTTP receiver lock:
+            # Headless can continue uploading while a large dataset is published.
+            from .maintenance import require_space
             for item in manifest['files']:
-                target=self.objects/item['sha256']
+                check();target=self.objects/item['sha256']
                 if not target.exists():
-                    # Copy: later in-place edits to a dataset must not alter immutable objects.
+                    require_space(self.objects,item['size'],reserve=self.reserve)
                     temporary=self.objects/(item['sha256']+'.publish')
-                    shutil.copyfile(files[item['path']],temporary)
-                    if digest(temporary)!=item['sha256']:temporary.unlink();raise ValueError('Dataset changed while publishing')
-                    temporary.replace(target)
-            with self.connect() as db:
+                    try:
+                        shutil.copyfile(files[item['path']],temporary)
+                        if digest(temporary)!=item['sha256']:raise ValueError('Dataset changed while publishing')
+                        with self.lock:temporary.replace(target)
+                    finally:temporary.unlink(missing_ok=True)
+            check()
+            with self.lock,self.connect() as db:
                 db.execute('INSERT OR REPLACE INTO publication VALUES(1,?)',(encode(manifest).decode(),));db.commit()
+        finally:
+            with self.lock:self.publishing=False
 
     def publication(self):
         with self.connect() as db:row=db.execute('SELECT manifest FROM publication WHERE slot=1').fetchone()
@@ -126,6 +146,7 @@ class Archive:
     def collected(self):
         """Remove transfer duplicates only after incorporation; keep ledger receipts."""
         with self.lock,self.connect() as db:
+            if self.publishing or self.readers:return
             manifests=[json.loads(r[0]) for r in db.execute("SELECT manifest FROM uploads WHERE state!='imported'")]
             publication=self.publication()
             if publication:manifests.append(publication)
@@ -144,7 +165,7 @@ class Archive:
 
 
 class StorageServer:
-    def __init__(self,root,options,*,reserve=512*1024**2):
+    def __init__(self,root,options,*,reserve=1024**3):
         self.archive=Archive(root,reserve=reserve);self.options=options
         archive=self.archive
         class Handler(BaseHTTPRequestHandler):
@@ -175,10 +196,15 @@ class StorageServer:
                         if len(parts)==4 and parts[:3]==['v1','dataset','blobs']:
                             sha=check_hash(parts[3])
                             if not publication or not any(f['sha256']==sha for f in publication['files']):raise PermissionError('Not a published dataset object')
-                            # Hold lock until streaming ends so publication GC cannot remove this object on Windows.
-                            with archive.lock,(archive.objects/sha).open('rb') as stream:
-                                self.send_response(200);self.send_header('Content-Length',str((archive.objects/sha).stat().st_size));self.end_headers()
-                                shutil.copyfileobj(stream,self.wfile,CHUNK)
+                            # Pin streaming readers without stopping producer uploads.
+                            with archive.lock:
+                                stream=(archive.objects/sha).open('rb');archive.readers+=1
+                            try:
+                                with stream:
+                                    self.send_response(200);self.send_header('Content-Length',str((archive.objects/sha).stat().st_size));self.end_headers()
+                                    shutil.copyfileobj(stream,self.wfile,CHUNK)
+                            finally:
+                                with archive.lock:archive.readers-=1
                             return
                     if role!='producer':raise PermissionError('Role does not allow this operation')
                     if self.command=='POST' and parts==['v1','uploads']:

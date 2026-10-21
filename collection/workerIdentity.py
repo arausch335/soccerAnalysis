@@ -53,4 +53,10 @@ def read_origins(root):
 
 
 def save_origins(root, records):
-    atomic_json(system_path(Path(root),'.ensemble-origins.json'),{'format':ORIGIN_FORMAT,'records':records})
+    # Background imports and foreground match saves must not erase each other.
+    from filelock import FileLock
+    path=system_path(Path(root),'.ensemble-origins.json');path.parent.mkdir(parents=True,exist_ok=True)
+    with FileLock(str(path.with_suffix('.lock'))):
+        merged=read_origins(root)
+        for key,workers in records.items():merged[key]=sorted(set(merged.get(key,[]))|set(workers))
+        atomic_json(path,{'format':ORIGIN_FORMAT,'records':merged})

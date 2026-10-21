@@ -1,5 +1,5 @@
 """Run the Git-shared assignment for one computer, resuming saved collector jobs."""
-from storage.layout import system_path,organize_data_root
+from storage.layout import system_path,organize_data_root,full_path
 from contextlib import ExitStack
 import argparse
 import hashlib
@@ -57,14 +57,14 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
     parser.add_argument('--once',action='store_true',help='Run the pending plan once, then exit')
     parser.add_argument('--retry',action='store_true',help='Revisit previously finished/paused assignments using saved checkpoints')
     options=parser.parse_args(argv);plan=load_plan(options.plan)
-    root=options.data_root.resolve();organize_data_root(root);ensemble=options.ensemble_root.resolve()
+    root=full_path(options.data_root);organize_data_root(root);ensemble=full_path(options.ensemble_root)
     worker=options.worker_id or read_worker_id(root)
     if not options.dashboard:plan.for_worker(worker)
     info=plan.workers.get(worker,{})
     monitor=options.monitor or (not options.worker and info.get('role')=='monitor')
     stop=stop or threading.Event()
     with ExitStack() as stack:
-        from providers.identityReview import identity_scope,seed_existing
+        from providers.identityReview import identity_scope
         stack.enter_context(identity_scope(root))
         if ((plan.dashboard['enabled'] and info.get('dashboard',False) or options.with_dashboard) and not options.no_dashboard) or options.dashboard:
             from dashboard.server import start_server
@@ -97,7 +97,6 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
         extension_bridge=prepare_extension(root,plan.for_worker(worker),monitor)
         state=Runtime(root,ensemble,worker)
         if options.retry:state.value['jobs']={}
-        seed_existing(root)
         reporting=None
         local_reporting=load_local(root) if plan.reporting['enabled'] else None
         if local_reporting:
@@ -128,15 +127,15 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
         storage=None
         if plan.storage['enabled']:
             from .storageAgent import StorageAgent
-            storage=StorageAgent(root,worker,plan.storage,dataset_root=config.DATASET_ROOT,
-                log=(lambda message:reporting.log(message)) if reporting else print).start()
+            storage=StorageAgent(root,worker,plan.storage,dataset_root=config.DATASET_ROOT,ensemble=ensemble,
+                log=(lambda message:reporting.log(message,'ERROR' if '[Storage ERROR]' in message else 'INFO')) if reporting else print).start()
             stack.callback(storage.close)
             storage.backfill(plan.for_worker(worker),state.value['jobs'])
-        initialized=False;progress=None;last_boundary=0;retry_extension_job=None;last_storage_boundary=0
+        initialized=False;progress=None;last_boundary=0;retry_extension_job=None
         settings=config.CONFIG_FILE.read_bytes()
         state.save(state='starting',role='monitor' if monitor else 'worker',plan_revision=plan.revision,git=sync.status,process_id=os.getpid())
         inventory_watch=None
-        if monitor and not options.once:
+        if not options.once:
             inventory_watch=InventoryMonitor(root,ensemble,worker,
                 on_change=(lambda:reporting.enqueue()) if reporting else None).start()
             stack.callback(inventory_watch.close)
@@ -154,11 +153,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                     except (OSError,ValueError,KeyError):pass
                 if storage:
                     state.save(storage=storage.status)
-                    if clock()-last_storage_boundary>=30 or state.value['state'] in ('starting','between_jobs'):
-                        incorporated=storage.boundary(on_status=lambda:(state.save(storage=storage.status),publish(inventory=False)));last_storage_boundary=clock()
-                        if incorporated and progress is not None:progress.scan()
-                        state.save(storage=storage.status)
-                # A completed job is the only place source files may change.
+                # Code updates are applied between collection jobs.
                 changed=[]
                 if clock()-last_boundary>=plan.git['poll_seconds'] or state.value['state'] in ('starting','between_jobs') or sync.status.get('state')=='update_pending':
                     changed=sync.boundary();last_boundary=clock()
@@ -172,15 +167,18 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                     return RESTART if current_plan.git['auto_restart'] else 3
                 from providers.identityReview import revision
                 identity_revision=revision(root)
+                from .workInstructions import requested_again
+                recheck=requested_again(root,worker,plan.revision,state.value['jobs']) if control else set()
                 pending=[job for job in ([] if monitor else plan.for_worker(worker))
-                         if state.value['jobs'].get(job.id,{}).get('fingerprint')!=fingerprint(job,settings)
+                         if job.id in recheck or state.value['jobs'].get(job.id,{}).get('fingerprint')!=fingerprint(job,settings)
                          or (identity_revision and state.value['jobs'].get(job.id,{}).get('exit_code',0) not in (0,130)
                              and state.value['jobs'].get(job.id,{}).get('identity_revision','')!=identity_revision)]
                 if pending and not initialized:
                     state.save(state='validating_inventory',git=sync.status)
-                    progress=stack.enter_context(session(root,ensemble,worker_id=worker))
+                    progress=stack.enter_context(session(root,ensemble,worker_id=worker,background=True))
                     if progress is None:raise ValueError('Use a marked scraper data root')
                     progress.trusted_only=control is not None
+                    progress.plan_revision=plan.revision
                     initialized=True
                     continue
                 if extension_bridge is not None and not extension_bridge.ready:
@@ -227,7 +225,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                         return
                 # Capture the revision before running: approvals received mid-job also get a later backfill.
                 attempted_identity_revision=identity_revision
-                with observe_progress(observe):code=runner(job.args(root))
+                with observe_progress(observe):code=runner(job.args(root)+(['--no-build-dataset','--defer-exports'] if storage else []))
                 if storage:storage.finished(job,code)
                 if code and extension_bridge is not None and not extension_bridge.ready:
                     retry_extension_job=job.id
@@ -235,7 +233,8 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                     milestone='completed' if code==0 else 'paused'
                     reporting.log(f'[Season {milestone}] {job.competition} {job.as_dict()["season"]}', 'INFO' if code==0 else 'WARNING')
                 state.value['jobs'][job.id]={'fingerprint':fingerprint(job,settings),'exit_code':code,'identity_revision':attempted_identity_revision,
-                                             'state':'finished' if code==0 else 'paused'}
+                                             'state':'finished' if code==0 else 'paused',
+                                             'instruction_revision':control.status.get('instruction_revision') if control else None}
                 state.save(state='between_jobs',job_ended_at=now(),current=None,git=sync.status)
                 if reporting:publish()
                 if code==130:

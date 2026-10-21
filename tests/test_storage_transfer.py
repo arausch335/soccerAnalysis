@@ -105,7 +105,7 @@ class TransferTests(unittest.TestCase):
         settings={'hub':'msi','consumers':['main'],'url':self.server.url}
         agent=StorageAgent(hubroot,'msi',settings,dataset_root=self.base/'hub-dataset',log=quiet);agent.server=self.server
         self.server.archive.schedule_build(self.season)
-        with patch('providers.httpClient.HttpClient._request',side_effect=AssertionError('Unexpected provider request')):agent.boundary()
+        with patch('providers.httpClient.HttpClient._request',side_effect=AssertionError('Unexpected provider request')):agent.maintenance_once()
         manifest=self.reader.request('/v1/dataset')['manifest'];self.assertIsNotNone(manifest)
         output=self.base/'main-dataset';install_dataset(self.reader,manifest,output,self.base/'downloads')
         self.assertTrue((output/self.season/'player_match_stats.csv').is_file())
@@ -140,12 +140,45 @@ class TransferTests(unittest.TestCase):
         settings={'hub':'msi','consumers':['main'],'url':self.server.url}
         hubroot=self.base/'msi';atomic_json(hubroot/'.soccer-scraper.json',{'format':1});ensure_identity(hubroot,'msi')
         agent=StorageAgent(hubroot,'msi',settings,dataset_root=self.base/'hub-dataset',log=quiet);agent.server=self.server
-        with patch('dataset_builder.build_dataset',return_value=2):self.assertTrue(agent.boundary())
+        with patch('dataset_builder.build_dataset',return_value=2):
+            with self.assertRaisesRegex(ValueError,'build failed'):agent.maintenance_once()
         self.assertTrue((hubroot/self.season/'match_checkpoints/1/CURRENT.json').exists())
         progress=PortableProgress(None,hubroot);progress.scan()
         self.assertTrue(any('headless' in r['origins'] for r in progress.local_records.values()))
         self.assertEqual(agent.server.archive.builds(),[self.season])
-        self.assertEqual(agent.status['state'],'needs_attention')
+        self.assertTrue(agent.maintenance_changed.is_set())
+
+    def test_a_new_build_request_cannot_be_lost_when_a_previous_build_finishes(self):
+        archive=self.server.archive
+        archive.schedule_build(self.season);_,revision=archive.build_jobs()[0]
+        archive.schedule_build(self.season);archive.published(self.season,revision)
+        self.assertEqual(archive.builds(),[self.season])
+        _,revision=archive.build_jobs()[0];archive.published(self.season,revision)
+        self.assertEqual(archive.builds(),[])
+
+    def test_headless_uploads_during_a_blocked_background_dataset_copy(self):
+        csv=self.base/'dataset.csv';csv.write_text('match_id,value\n1,new\n')
+        manifest={'format':FORMAT,'kind':'dataset','worker':'msi','files':[
+            {'path':self.season+'/player_stats.csv','size':csv.stat().st_size,'sha256':digest(csv)}]}
+        copying=threading.Event();release=threading.Event();errors=[]
+        import shutil
+        original=shutil.copyfile
+        def slow(source,target,*args,**kwargs):
+            if Path(source)==csv:
+                copying.set()
+                if not release.wait(5):raise RuntimeError('Test did not release copy')
+            return original(source,target,*args,**kwargs)
+        def publish():
+            try:self.server.archive.publish(manifest,{manifest['files'][0]['path']:csv})
+            except BaseException as exc:errors.append(exc)
+        with patch('collection.storageServer.shutil.copyfile',side_effect=slow):
+            thread=threading.Thread(target=publish);thread.start()
+            try:
+                self.assertTrue(copying.wait(2))
+                self.queue();self.assertTrue(self.outbox.send_one(self.peer))
+                self.assertTrue(thread.is_alive())
+            finally:release.set();thread.join(5)
+        self.assertFalse(errors);self.assertFalse(thread.is_alive())
 
 
 class ConfigurationTests(unittest.TestCase):

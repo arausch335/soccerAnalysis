@@ -48,5 +48,28 @@ class PortableTransferTests(unittest.TestCase):
         prepare(self.root,self.bundle,quiet)
         self.assertFalse((self.bundle/retired.relative_to(self.root)).exists())
 
+    def test_chunked_export_resumes_without_recopying_prior_raw_data_and_keeps_scraping_unlocked(self):
+        from filelock import FileLock
+        from storage.layout import system_path
+        raw=self.root/'premier-league/2024-2025/raw/sofascore'
+        atomic_json(raw/'extra-a.json',{'payload':'a'*100000})
+        atomic_json(raw/'extra-b.json',{'payload':'b'*100000})
+        with FileLock(str(system_path(self.root,'.collector.lock'))):
+            prepare(self.root,self.bundle,quiet,session='card',max_bytes=130000)
+        first=verify_bundle(self.bundle)
+        self.assertTrue(first['partial'])
+        self.assertLessEqual(sum(row['size'] for row in first['files']),130000)
+        second_folder=self.bundle.with_name('main-data-02')
+        prepare(self.root,second_folder,quiet,session='card',max_bytes=130000)
+        second=verify_bundle(second_folder)
+        self.assertFalse(second['partial'])
+        first_raw={row['path'] for row in first['files'] if '/raw/' in row['path']}
+        second_raw={row['path'] for row in second['files'] if '/raw/' in row['path']}
+        self.assertFalse(first_raw & second_raw)
+        self.assertIn('premier-league/2024-2025/raw/sofascore/extra-b.json',first_raw|second_raw)
+        self.assertTrue((raw/'extra-a.json').is_file())
+        with self.assertRaisesRegex(ValueError,'already exported'):
+            prepare(self.root,self.bundle.with_name('main-data-03'),quiet,session='card',max_bytes=130000)
+
 
 if __name__=='__main__':unittest.main()

@@ -1,6 +1,8 @@
 """Relational pandas tables and CSV checkpoints for the domain object graph."""
 from __future__ import annotations
 
+from functools import wraps
+from filelock import FileLock
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime
@@ -84,6 +86,15 @@ def clean(value):
     if value is None or value is pd.NA or (isinstance(value, float) and pd.isna(value)):
         return None
     return value
+
+
+def checkpoint_locked(method):
+    @wraps(method)
+    def locked(self,*args,**kwargs):
+        self.directory.mkdir(parents=True,exist_ok=True)
+        with FileLock(str(self.directory/'.checkpoint.lock')):
+            return method(self,*args,**kwargs)
+    return locked
 
 
 class PandasStore:
@@ -205,6 +216,7 @@ class PandasStore:
             raise ValueError(f'Broken table reference: {exc}') from exc
         return dataset
 
+    @checkpoint_locked
     def to_csv(self, dataset: FootballDataset) -> Path:
         """Commit all CSV tables together; an interrupted write preserves CURRENT."""
         frames = self.to_frames(dataset)
@@ -241,6 +253,7 @@ class PandasStore:
             raise ValueError('Invalid checkpoint generation')
         return self.directory / 'snapshots' / generation
 
+    @checkpoint_locked
     def read_frames(self) -> dict[str, pd.DataFrame]:
         frames = {}
         folder = self.current_directory
