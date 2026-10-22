@@ -1,7 +1,8 @@
 """Authenticated MSI archive receiver. Dataset readers never receive raw objects."""
 from contextlib import closing
 import hmac
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
+from storage.httpServer import DisconnectSafeHandler, CLIENT_DISCONNECTED
 import json
 from pathlib import Path
 import shutil
@@ -168,7 +169,7 @@ class StorageServer:
     def __init__(self,root,options,*,reserve=1024**3):
         self.archive=Archive(root,reserve=reserve);self.options=options
         archive=self.archive
-        class Handler(BaseHTTPRequestHandler):
+        class Handler(DisconnectSafeHandler):
             def log_message(self,*args):pass
             def setup(self):super().setup();self.connection.settimeout(30)
             def reply(self,value,status=200):
@@ -218,6 +219,7 @@ class StorageServer:
                     self.reply({'error':'Unknown storage endpoint'},404)
                 except PermissionError:self.reply({'error':'Storage operation not authorized'},403)
                 except (ValueError,KeyError,TypeError,UnicodeError,json.JSONDecodeError):self.reply({'error':'Invalid storage request'},400)
+                except CLIENT_DISCONNECTED:raise
                 except OSError:self.reply({'error':'Storage unavailable; queued files remain on producer'},503)
             do_GET=dispatch;do_POST=dispatch;do_PUT=dispatch
         url=urlsplit(options['url'])

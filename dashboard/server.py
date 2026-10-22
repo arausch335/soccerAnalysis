@@ -1,5 +1,6 @@
 """Loopback dashboard with a protected, explicit identity-review action."""
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
+from storage.httpServer import DisconnectSafeHandler, CLIENT_DISCONNECTED
 import json
 import sqlite3
 import secrets
@@ -15,7 +16,7 @@ class DashboardServer:
         model=DashboardModel(root,ensemble,plan,worker)
         assets=Path(__file__).parent
         review_token=secrets.token_urlsafe(32)
-        class Handler(BaseHTTPRequestHandler):
+        class Handler(DisconnectSafeHandler):
             def log_message(self,*args):pass
             def do_GET(self):
                 host=self.headers.get('Host','')
@@ -36,7 +37,7 @@ class DashboardServer:
                     self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
                     self.send_header('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
                     self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
-                except (BrokenPipeError,ConnectionResetError):
+                except CLIENT_DISCONNECTED:
                     pass  # The browser closed this request; no response can be sent.
                 except (OSError,ValueError,TypeError,KeyError,sqlite3.Error):
                     self.send_error(503,'Dashboard configuration or inventory needs review')
@@ -65,6 +66,7 @@ class DashboardServer:
                     data=json.dumps({'error':str(exc)}).encode()
                     self.send_response(409);self.send_header('Content-Type','application/json')
                     self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+                except CLIENT_DISCONNECTED:raise
                 except (OSError,sqlite3.Error):self.send_error(503,'Identity review storage unavailable')
         self.server=ThreadingHTTPServer(('127.0.0.1',port),Handler);self.server.daemon_threads=True
         self.thread=threading.Thread(target=self.server.serve_forever,name='collection-dashboard',daemon=True)

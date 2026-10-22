@@ -7,7 +7,8 @@ from storage.layout import system_path,organize_data_root
 from storage.sqlitePaths import readonly_uri
 from contextlib import contextmanager, closing
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
+from storage.httpServer import DisconnectSafeHandler, CLIENT_DISCONNECTED
 import argparse
 import gzip
 import io
@@ -314,7 +315,7 @@ class ReportingServer:
         if storage_plan and storage_plan.get('enabled'):
             from .storageConfig import Provisioner
             provision=Provisioner(root,storage_plan,workers or list(tokens))
-        class Handler(BaseHTTPRequestHandler):
+        class Handler(DisconnectSafeHandler):
             def log_message(self, *args):
                 pass
 
@@ -382,6 +383,7 @@ class ReportingServer:
                         if result.get('state')=='granted':result['instructions']=control.instructions(worker,store)
                         self.reply(200,result)
                     except (ValueError,KeyError,TypeError):self.reply(400,{'error':'Invalid assignment request'})
+                    except CLIENT_DISCONNECTED:raise
                     except (OSError,sqlite3.Error):self.reply(503,{'error':'Assignment coordinator unavailable; no new work authorized'})
                     return
                 if self.path != '/v1/report':
@@ -397,6 +399,7 @@ class ReportingServer:
                     self.reply(200, {'ack': store.accept(worker, value['events'])})
                 except (ValueError, KeyError, TypeError):
                     self.reply(409, {'error': 'Report rejected: check worker identity, original queue and report format locally'})
+                except CLIENT_DISCONNECTED:raise
                 except (OSError, sqlite3.Error):
                     self.reply(503, {'error': 'Report storage unavailable; retry later'})
         self.server = ThreadingHTTPServer((options['bind'], options['port']), Handler)

@@ -2,7 +2,8 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 import hmac
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
+from storage.httpServer import DisconnectSafeHandler, CLIENT_DISCONNECTED
 import json
 import re
 import secrets
@@ -49,7 +50,7 @@ class ExtensionBridge:
             return
         bridge = self
 
-        class Handler(BaseHTTPRequestHandler):
+        class Handler(DisconnectSafeHandler):
             def log_message(self, *_):
                 pass  # Never log connection credentials or football response bodies.
 
@@ -97,6 +98,7 @@ class ExtensionBridge:
                     if not isinstance(value, dict):
                         raise ValueError('Expected an object')
                     return value
+                except CLIENT_DISCONNECTED:raise
                 except (ValueError, UnicodeError, OSError):
                     self.reply(400, {'error': 'Invalid JSON message'})
                     return None
