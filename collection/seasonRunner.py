@@ -97,10 +97,6 @@ class SeasonRunner:
         from providers.identityReview import _ROOT
         local_root=next((c.root for c in clients.values() if isinstance(getattr(c,'root',None),(str,Path))),None)
         self.identity_resolver=IdentityResolver(identity_map,review_root=_ROOT.get() or local_root or self.directory)
-        from providers.playerProfiles import ProfileVerifier
-        self.profile_verifier=ProfileVerifier(clients,self.identity_resolver.review_root,report,
-            on_provider=lambda provider:self.timing.set_provider(provider) if hasattr(self,'timing') else None)
-        self.identity_resolver.investigator=self.profile_verifier
         self.refresh=refresh;self.report=report
         self.spatial=tuple(dict.fromkeys(spatial))
         if set(self.spatial)-set(SPATIAL_ENDPOINTS):raise ValueError('Unknown Sofascore spatial endpoint')
@@ -536,6 +532,7 @@ class SeasonRunner:
             from .reporting import redact
             match.metadata['collection_evidence']={'attempts':int(entry.get('attempts',0))+1,
                 'label':event['homeTeam']['name']+' vs '+event['awayTeam']['name'],
+                'date':match.kickoff.date().isoformat(),
                 'error':redact('; '.join(errors))[:2000],
                 'qualifying':bool(competition.parent)}
             store.to_csv(dataset)
@@ -555,7 +552,6 @@ class SeasonRunner:
             if str(mid) in self.browser_coverage:self._write_collection_coverage(match)
             atomic_csv(pd.DataFrame(statuses.values()),status_path)
             self.report(f'[{index}/{len(selected)}] {event["homeTeam"]["name"]} vs {event["awayTeam"]["name"]}: {entry["status"]}'+(f' ({entry["error"]})' if errors else ''))
-            if not self._sofascore_blocked:self.profile_verifier.pending(limit=1)
             timing.finish_game(clients=self.clients.values(),status=entry['status'],mode=timing_mode())
             if self._sofascore_blocked:
                 self.report('Chrome extension recovery could not finish; saved the current checkpoint. Inspect the extension diagnostic log and resume collection.'

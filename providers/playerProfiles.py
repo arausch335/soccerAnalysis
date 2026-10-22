@@ -201,7 +201,7 @@ class ProfileVerifier:
         for p in proposals:
             if p['kind']!='player':continue
             left=self.profile(p['provider'],p['source_id']);right=self.profile('sofascore',p['target_id'])
-            investigation={'checked_at':stamp(),'status':'checked','errors':[v['error'] for v in (left,right) if 'error' in v]}
+            investigation={'workflow':'main-profile-review-v1','checked_at':stamp(),'status':'checked','errors':[v['error'] for v in (left,right) if 'error' in v]}
             if 'error' not in left:investigation['source']=left
             if 'error' not in right:investigation['baseline']=right
             p={**p,'investigation':investigation};checks=compare_profiles(p,self.root)
@@ -219,12 +219,25 @@ class ProfileVerifier:
         for rows in list(groups.values())[:limit]:self.investigate(rows)
 
 
+def needs_profile_check(proposal):
+    evidence=proposal.get('investigation')
+    if not evidence:return True
+    if not evidence.get('errors'):return False
+    # Revisit failed checks inherited from the former worker workflow once.
+    if evidence.get('workflow')!='main-profile-review-v1':return True
+    try:
+        checked=datetime.fromisoformat(evidence['checked_at'])
+        if checked.tzinfo is None:return True
+        return checked<datetime.now(timezone.utc)-timedelta(hours=6)
+    except (KeyError,TypeError,ValueError):return True
+
+
 def investigate_queue(root,report=print):
-    """Workers can finish identity lookups while idle; Main never calls this helper."""
+    """Main checks queued profiles through its explicitly enabled extension session."""
     from contextlib import ExitStack
     from .identityReview import ReviewStore
     rows=ReviewStore(root).snapshot()['pending']
-    todo=[p for p in rows if p['kind']=='player' and not p.get('investigation')]
+    todo=[p for p in rows if p['kind']=='player' and needs_profile_check(p)]
     if not todo:return False
     provider=todo[0]['provider']
     from .transports.sofascore import create_sofascore_client

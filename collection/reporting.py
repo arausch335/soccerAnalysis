@@ -271,8 +271,7 @@ class ReportingStore:
         from providers.reep import snapshot
         reep=snapshot(self.root)
         return {'inventories': result, 'versions': current,'identity_decisions':decisions(self.root),
-                'reep_index':reep if reep and reep['version']!=reep_version else None,
-                'identity_tasks':[p for p in self.identities.snapshot()['pending'] if p['kind']=='player' and not p.get('investigation')][:100]}
+                'reep_index':reep if reep and reep['version']!=reep_version else None}
 
 
 def read_logs(root, worker='', level='', search='', limit=200, after=0, *, focus=''):
@@ -551,9 +550,6 @@ class Reporter:
             if saved.get('worker_id') != worker or saved.get('format') != INVENTORY_FORMAT or not isinstance(saved.get('records'), dict):
                 raise ValueError('Received inventory identity differs')
             atomic_json(self.ensemble / 'reporting' / 'workers' / (worker + '.json'), saved)
-        if value.get('identity_tasks'):
-            from providers.identityReview import ReviewStore
-            ReviewStore(self.root).ingest(value['identity_tasks'],'shared')
         if 'identity_decisions' in value:
             from providers.identityReview import ReviewStore,decisions
             if decisions(self.root)!=value['identity_decisions']:

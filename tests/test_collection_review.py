@@ -44,6 +44,13 @@ class CollectionReviewTests(unittest.TestCase):
         self.assertTrue(next(j for j in self.read()['jobs'] if j['id']==self.job.id)['closed'])
         self.post({'job_id':self.job.id,'configuration':job['configuration'],'action':'reopen','reason':'Check provider again'},review['review_token'])
         self.assertFalse(next(j for j in self.read()['jobs'] if j['id']==self.job.id)['done'])
+    def test_review_fixture_date_and_names_are_backfilled_from_season_schedule(self):
+        atomic_json(self.root/'premier-league'/self.job.as_dict()['season']/'schedule.json',{'events':[
+            {'id':1,'homeTeam':{'name':'Tottenham'},'awayTeam':{'name':'Chelsea'},'startTimestamp':1632065400}]})
+        job=next(j for j in self.read()['jobs'] if j['id']==self.job.id)
+        self.assertEqual(job['review'][0]['date'],'2021-09-19')
+        self.assertEqual(job['review'][0]['label'],'A vs B')  # Existing inventory names win.
+
     def test_cannot_close_unresolved_season_or_apply_stale_configuration(self):
         review=self.read();job=next(j for j in review['jobs'] if j['id']==self.job.id)
         for value in ({'job_id':self.job.id,'configuration':job['configuration'],'action':'close','reason':'Skip without reviewing'},

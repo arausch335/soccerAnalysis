@@ -95,6 +95,17 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(run(self.args,runner=lambda args:calls.append(args) or 0,session=self.session,sync_factory=NoSync,stop=stop),0)
             self.assertEqual(len(calls),2);profiles.assert_not_called()
 
+    def test_profile_checks_require_main_opt_in_and_start_the_extension(self):
+        from unittest.mock import MagicMock
+        bridge=MagicMock();agent=MagicMock();agent.start.return_value=agent
+        with patch('providers.transports.bridge.acquire_bridge',return_value=(bridge,False)),patch('collection.identityReviewAgent.IdentityReviewAgent',return_value=agent):
+            self.assertEqual(run(self.args+['--monitor','--identity-review'],runner=lambda args:self.fail('Main scraped'),sync_factory=NoSync),0)
+        bridge.start.assert_called_once();agent.start.assert_called_once();agent.close.assert_called_once()
+        with patch('collection.identityReviewAgent.IdentityReviewAgent') as start:
+            self.assertEqual(run(self.args+['--monitor'],sync_factory=NoSync),0);start.assert_not_called()
+        args=[v if v!='main' else 'msi' for v in self.args]
+        with self.assertRaises(SystemExit):run(args+['--identity-review'],sync_factory=NoSync)
+
     def test_reconnect_retries_interrupted_season_from_checkpoints(self):
         from types import SimpleNamespace
         bridge=SimpleNamespace(ready=True);stop=threading.Event();calls=[]

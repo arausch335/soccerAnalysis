@@ -47,6 +47,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
     modes=parser.add_mutually_exclusive_group()
     modes.add_argument('--worker',action='store_true',help='Scrape this computer’s assignments')
     modes.add_argument('--monitor',action='store_true',help='Synchronize progress without scraping')
+    parser.add_argument('--identity-review',action='store_true',help='On Main, connect the extension and check queued player profiles in the background')
     parser.add_argument('--with-dashboard',action='store_true',help='Show a dashboard on a worker')
     parser.add_argument('--worker-id',help='Use an ID defined in config/workers.yaml; saved with local data')
     parser.add_argument('--plan',type=Path,default=config.PROJECT_ROOT/'config/workers.yaml')
@@ -62,6 +63,8 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
     if not options.dashboard:plan.for_worker(worker)
     info=plan.workers.get(worker,{})
     monitor=options.monitor or (not options.worker and info.get('role')=='monitor')
+    if options.identity_review and worker!=plan.coordinator:
+        parser.error('--identity-review runs only on Main, the configured coordinator')
     stop=stop or threading.Event()
     with ExitStack() as stack:
         from providers.identityReview import identity_scope
@@ -95,6 +98,11 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
         from providers.transports.bridge import extension_scope
         stack.enter_context(extension_scope())
         extension_bridge=prepare_extension(root,plan.for_worker(worker),monitor)
+        if options.identity_review and extension_bridge is None:
+            from providers.transports.bridge import acquire_bridge
+            extension_bridge,_=acquire_bridge(connect_timeout=config.TRANSPORT['extension']['manual_wait_seconds'],
+                diagnostics_dir=system_path(root,'extension_diagnostics')/'identity-review')
+            extension_bridge.start()
         state=Runtime(root,ensemble,worker)
         if options.retry:state.value['jobs']={}
         reporting=None
@@ -131,9 +139,13 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                 log=(lambda message:reporting.log(message,'ERROR' if '[Storage ERROR]' in message else 'INFO')) if reporting else print).start()
             stack.callback(storage.close)
             storage.backfill(plan.for_worker(worker),state.value['jobs'])
+        if options.identity_review:
+            from .identityReviewAgent import IdentityReviewAgent
+            identity_agent=IdentityReviewAgent(root,extension_bridge,on_change=lambda:publish(inventory=False)).start()
+            stack.callback(identity_agent.close)
         initialized=False;progress=None;last_boundary=0;retry_extension_job=None
         settings=config.CONFIG_FILE.read_bytes()
-        state.save(state='starting',role='monitor' if monitor else 'worker',plan_revision=plan.revision,git=sync.status,process_id=os.getpid())
+        state.save(state='starting',role='monitor' if monitor else 'worker',identity_review_enabled=options.identity_review,plan_revision=plan.revision,git=sync.status,process_id=os.getpid())
         inventory_watch=None
         if not options.once:
             inventory_watch=InventoryMonitor(root,ensemble,worker,
@@ -205,11 +217,6 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                     state.value['jobs'].pop(retry_extension_job,None);retry_extension_job=None
                     continue
                 if not pending:
-                    if not monitor and not options.once:
-                        from providers.playerProfiles import investigate_queue
-                        if investigate_queue(root):
-                            publish(inventory=False)
-                            continue
                     assigned=plan.for_worker(worker)
                     all_done=bool(assigned) and all(state.value['jobs'].get(j.id,{}).get('state')=='done' for j in assigned)
                     state.save(state='monitoring' if monitor else 'done' if all_done else 'paused' if any(state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in assigned) else 'idle' if assigned else 'unassigned',current=None,git=sync.status)

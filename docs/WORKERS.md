@@ -673,3 +673,27 @@ original reporting databases: acknowledged batches are removed automatically,
 and retries do not duplicate logs. Identity observation timestamps no longer
 trigger repeated uploads of unchanged evidence. Reporting requests allow 30
 seconds for acknowledgement; inventory downloads still use a separate connection.
+
+
+### Optional profile checks on Main
+
+Workers record ambiguous player identities and send candidates to Main. They no
+longer visit player profiles during collection or while idle. To investigate the
+shared queue, run Main with:
+
+```bash
+python main.py --worker-id main --identity-review
+```
+
+Paste the connection code printed immediately by Main into Soccer Collector.
+Profile requests wait for that connection. Main checks birthdays, current clubs
+and careers in the background while monitoring and reporting continue. Provider
+APIs use the connected extension as their fallback. Main reuses the same bridge
+for all three providers and shares confirmed identities back to workers. The
+flag is optional and accepted only on the configured coordinator; ordinary Main
+launches continue to monitor without opening an extension connection.
+
+Identity review compares provider records in separate columns, including career
+history and aligned match references. The suggestion score is not displayed.
+Existing evidence and reviewed decisions remain intact. Update/restart MSI and
+Headless to remove their old inline and idle profile investigation paths.

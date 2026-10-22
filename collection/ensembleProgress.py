@@ -340,6 +340,8 @@ class PortableProgress:
         if match.metadata.get('id_namespace','sofascore')!='sofascore':return
         competition=match.season.competition.name
         evidence=dict(match.metadata.get('collection_evidence',{}))
+        evidence.setdefault('label',match.home_team.name+' vs '+match.away_team.name)
+        evidence.setdefault('date',match.kickoff.date().isoformat())
         if competition in ('Champions League','Europa League'):
             from .selection import event_competition
             directory=self.root/re.sub('[^a-z0-9]+','-',competition.lower()).strip('-')/season_label(match.season.name)
@@ -430,7 +432,8 @@ def record_failure(competition,season,event,entry,*,progress=None):
         'average_positions','heatmaps','shotmaps','action_maps','fotmob_enrichment','whoscored_stats')}
     progress.record('sofascore',competition,season,event['id'],resources=resources,status='failed',
         evidence={'attempts':int(entry.get('attempts') or 0),'error':redact(entry.get('error',''))[:2000],
-                  'label':event['homeTeam']['name']+' vs '+event['awayTeam']['name']})
+                  'label':event['homeTeam']['name']+' vs '+event['awayTeam']['name'],
+                  'date':datetime.fromtimestamp(event['startTimestamp'],timezone.utc).date().isoformat() if event.get('startTimestamp') else None})
 
 
 @contextmanager

@@ -167,7 +167,22 @@ class DashboardModel:
         jobs=[]
         for worker in value['workers']:
             for job in worker['jobs']:
-                jobs.append({**job,**worker.get('completion',{}).get(job['id'],{})})
+                item={**job,**worker.get('completion',{}).get(job['id'],{})}
+                # Old inventory evidence may omit a date. Read only this season's
+                # saved fixture index, never individual checkpoints or raw matches.
+                reviews=[dict(r) for r in item.get('review',[])]
+                if any(not r.get('date') or not r.get('label') or r['label']=='Match '+r['match_id'] for r in reviews):
+                    slug=re.sub('[^a-z0-9]+','-',job['competition'].lower()).strip('-')
+                    path=self.root/slug/job['season']/'schedule.json'
+                    try:events={str(e['id']):e for e in json.loads(path.read_text()).get('events',[])}
+                    except (OSError,ValueError,KeyError,TypeError):events={}
+                    for r in reviews:
+                        event=events.get(r['match_id'],{})
+                        if (not r.get('label') or r['label']=='Match '+r['match_id']) and event.get('homeTeam') and event.get('awayTeam'):
+                            r['label']=event['homeTeam']['name']+' vs '+event['awayTeam']['name']
+                        if not r.get('date') and event.get('startTimestamp'):
+                            r['date']=datetime.fromtimestamp(event['startTimestamp'],timezone.utc).date().isoformat()
+                jobs.append({**item,'review':reviews})
         return {'jobs':jobs,'history':CompletionStore(self.root).snapshot()['history'],
                 'can_review':self.worker==value['coordinator']}
 
@@ -220,6 +235,13 @@ class DashboardModel:
                 seed_existing(self.root);self.review_seeded=True
         value=ReviewStore(self.root).snapshot()
         value['can_review']=self.worker==load_plan(self.plan_path).coordinator
+        main=load_plan(self.plan_path).coordinator
+        try:runtime=json.loads((system_path(self.root,'worker_runtime')/(main+'.json')).read_text())
+        except (OSError,ValueError):runtime={}
+        try:checks=json.loads((self.root/'_system/workers/identity-review.json').read_text())
+        except (OSError,ValueError):checks={}
+        value['profile_checks']=checks if runtime.get('identity_review_enabled') and runtime.get('state')!='stopped' else {
+            'state':'disabled','message':'Start Main with --identity-review to check queued profiles.'}
         logs=read_logs(self.root,limit=1000,focus='warnings')['rows']
         # Show outages separately: a reviewed name cannot repair an unavailable response.
         issues={}

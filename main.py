@@ -307,7 +307,7 @@ def entrypoint(argv=None):
         return terminate_workers(args)
     from collection.terminateWorkers import install_shutdown_handlers
     install_shutdown_handlers()
-    shared_flags=('--worker','--monitor','--with-dashboard','--dashboard','--no-dashboard','--once','--retry','--plan')
+    shared_flags=('--worker','--monitor','--with-dashboard','--identity-review','--dashboard','--no-dashboard','--once','--retry','--plan')
     explicit=any(a in ('start','resume','export','status','probe','--help','-h','--inventory',
                       '--import-only','--ignore-provenance','--competition','--season','--name',
                       '--collection-types','--limit','--offline') or

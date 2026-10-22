@@ -85,7 +85,7 @@ def assess(job,records,schedules,history,decisions=None):
         if accepted:waivers[mid]=accepted
         if unresolved:
             missing[mid]=unresolved
-            candidate={'match_id':mid,'label':evidence.get('label') or 'Match '+mid,'resources':unresolved,
+            candidate={'match_id':mid,'label':evidence.get('label') or '', 'date':evidence.get('date'), 'resources':unresolved,
                        'attempts':attempts,'error':evidence.get('error',''),'states':{k:resources.get(k,'pending') for k in unresolved},
                        'retrying':retrying}
             candidates.append(candidate)

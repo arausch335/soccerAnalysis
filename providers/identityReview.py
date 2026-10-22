@@ -249,6 +249,7 @@ def suggest_teams(root,provider,event,fixtures):
                 target_id=actual[i],target_name=target,score=round(score,3),contexts=[{
                     'match_id':str(event['id']),'provider_match_id':str(fixture['id']),
                     'match':event['homeTeam']['name']+' vs '+event['awayTeam']['name'],
+                    'provider_match':fixture['homeTeam']['name']+' vs '+fixture['awayTeam']['name'],
                     'date':datetime.fromtimestamp(event['startTimestamp'],timezone.utc).date().isoformat(),'side':side}]))
     if rows:ReviewStore(review_root(root)).ingest(rows[:20])
 
@@ -279,7 +280,7 @@ def seed_existing(root):
                     if score<.4:continue
                     proposals.append(dict(kind='player',provider=row['provider'],source_id=row['provider_player_id'],
                         source_name=row['provider_player_name'],target_id=str(p.player.id),target_name=p.player.name,
-                        score=round(score*.75,3),contexts=[{'match_id':mid,'competition':row.get('competition'),
+                        score=round(score*.75,3),contexts=[{'match_id':mid,'provider_match_id':str(row.get('provider_match_id') or match.metadata.get('provider_match_ids',{}).get(row['provider']) or ''),'competition':row.get('competition'),
                         'season':row.get('season'),'match':match.home_team.name+' vs '+match.away_team.name,
                         'side':row['side'],'date':row.get('date'),'issue':row['issue']}]))
                 proposals.sort(key=lambda p:-p['score']);store.ingest(proposals[:3])

@@ -174,17 +174,15 @@ class ProfileSharingTests(unittest.TestCase):
     reporter=test_reporting.ReportingTests.reporter
     receiver=test_reporting.ReportingTests.receiver
 
-    def test_mains_unchecked_queue_is_investigated_by_worker_and_auto_link_returns_to_main(self):
-        server=self.receiver();server.store.identities.ingest([proposal()],'main')
-        client=self.reporter();client.pull()
-        local=ReviewStore(self.root);self.assertEqual(len(local.snapshot()['pending']),1)
+    def test_worker_sends_candidates_main_checks_profiles_and_returns_decisions(self):
+        server=self.receiver();client=self.reporter()
+        ReviewStore(self.root).ingest([proposal()]);client.enqueue();client.flush()
+        self.assertEqual(len(server.store.identities.snapshot()['pending']),1)
+        self.assertNotIn('identity_tasks',server.store.inventories({}))
         fot=Mock();fot.player_profile.return_value=profile('fotmob',77)
         sofa=Mock();sofa.player_profile.return_value=profile('sofascore',7)
-        verifier=ProfileVerifier({'sofascore':sofa,'fotmob':fot},self.root,lambda *a:None)
-        verifier.pending();client.enqueue();client.flush()
-        result=server.store.identities.snapshot()
-        self.assertEqual(result['pending'],[])
-        self.assertEqual(result['decisions'][0]['review_method'],'profile_evidence')
+        ProfileVerifier({'sofascore':sofa,'fotmob':fot},self.main,lambda *a:None).pending()
+        self.assertEqual(server.store.identities.snapshot()['pending'],[])
         client.pull();self.assertEqual(ReviewStore(self.root).snapshot()['decisions'][0]['target_id'],'7')
 
     def test_idle_queue_lookup_uses_and_closes_only_the_needed_provider_clients(self):

@@ -74,19 +74,7 @@ class ProviderLoader(MatchLoader):
                     if standalone:
                         appearance=next(p for p in lineup.players if p.player.id==entry['id']);method='provider_native_id'
                     else:
-                        try:appearance,method=self.identity_resolver.player(self.provider,entry,lineup.players,provider_match_id=ev['id'],baseline=namespace)
-                        except IdentityError:
-                            verifier=self.identity_resolver.investigator
-                            if verifier and match.metadata.get('id_namespace','sofascore')=='sofascore' and entry.get('appeared',False):
-                                from .identityReview import suggest_players
-                                proposals=suggest_players(self.identity_resolver.review_root,self.provider,entry,
-                                    [p for p in lineup.players if p.player.id not in used],
-                                    {'match_id':str(match.id),'provider_match_id':str(ev['id']),'side':side,
-                                     'competition':match.season.competition.name,'season':match.season.name,
-                                     'date':match.kickoff.date().isoformat(),'match':match.home_team.name+' vs '+match.away_team.name})
-                                verifier.investigate(proposals)
-                                appearance,method=self.identity_resolver.player(self.provider,entry,lineup.players,provider_match_id=ev['id'],baseline=namespace)
-                            else:raise
+                        appearance,method=self.identity_resolver.player(self.provider,entry,lineup.players,provider_match_id=ev['id'],baseline=namespace)
                     if appearance.player.id in used: raise IdentityError('Duplicate player match')
                     if appearance.starter != entry['starter']:
                         raise IdentityError(f'{self.provider}: starter mismatch for {entry["name"]}')
@@ -118,7 +106,9 @@ class ProviderLoader(MatchLoader):
                             {'match_id':str(match.id),'provider_match_id':str(ev['id']),'side':side,
                              'competition':match.season.competition.name,'season':match.season.name,
                              'date':match.kickoff.date().isoformat(),
-                             'match':match.home_team.name+' vs '+match.away_team.name,'issue':str(exc)})
+                             'match':match.home_team.name+' vs '+match.away_team.name,
+                             'provider_match':ev['homeTeam']['name']+' vs '+ev['awayTeam']['name'],
+                             'provider_date':match.kickoff.date().isoformat(),'issue':str(exc)})
                     mismatches.append(record)
                     continue
                 used.add(appearance.player.id)
