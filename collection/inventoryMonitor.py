@@ -42,7 +42,7 @@ class InventoryMonitor:
             if command_path.exists():
                 import json
                 from .storageAgent import season_for
-                saved=json.loads(command_path.read_text());commands=saved.get('jobs',{}) if saved.get('plan_revision')==plan.revision else {}
+                saved=json.loads(command_path.read_text(encoding='utf-8'));commands=saved.get('jobs',{}) if saved.get('plan_revision')==plan.revision else {}
                 for job in plan.for_worker(self.worker):
                     if commands.get(job.id,{}).get('done'):frozen.add(season_for(job))
             seasons-=frozen

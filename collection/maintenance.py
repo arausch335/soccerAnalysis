@@ -41,7 +41,7 @@ def waiting_for_foreground(path):
     if not path.exists():return False
     import psutil
     try:
-        saved=json.loads(path.read_text())
+        saved=json.loads(path.read_text(encoding='utf-8'))
         if psutil.Process(saved['pid']).create_time()==saved['created']:return True
     except (psutil.NoSuchProcess,ProcessLookupError):pass
     except (OSError,ValueError,KeyError):

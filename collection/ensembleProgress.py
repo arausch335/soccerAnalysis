@@ -349,7 +349,7 @@ class PortableProgress:
             if directory not in cache:
                 path=directory/'fixture-scopes.json'
                 if not path.exists():path=directory/'schedule.json'
-                cache[directory]={str(e['id']):e for e in json.loads(path.read_text()).get('events',[])} if path.exists() else {}
+                cache[directory]={str(e['id']):e for e in json.loads(path.read_text(encoding='utf-8')).get('events',[])} if path.exists() else {}
                 self._scope_schedules=cache
             event=cache[directory].get(str(match.id),{})
             competition=event_competition(competition,event)

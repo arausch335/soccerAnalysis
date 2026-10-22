@@ -69,7 +69,7 @@ class AssignmentClient:
     def release(self):
         path=receipt_path(self.root)
         if path.exists():
-            receipt=json.loads(path.read_text());self.request({'operation':'release','token':receipt['token']});path.unlink()
+            receipt=json.loads(path.read_text(encoding='utf-8'));self.request({'operation':'release','token':receipt['token']});path.unlink()
             self.status={'state':'released','coordinator':self.plan.coordinator,'message':'Previous season ownership released'}
     def claim(self,job):
         try:

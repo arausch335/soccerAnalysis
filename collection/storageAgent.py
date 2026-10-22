@@ -121,7 +121,7 @@ class StorageAgent:
         self.maintenance_status={'state':'waiting'}
         self.maintenance_changed=threading.Event()
         receipt=self.directory/'dataset-receipt.json'
-        self.receipt=json.loads(receipt.read_text()) if receipt.exists() else {}
+        self.receipt=json.loads(receipt.read_text(encoding='utf-8')) if receipt.exists() else {}
 
     def connect(self):return closing(sqlite3.connect(self.database,timeout=30))
     def start(self):
@@ -150,7 +150,7 @@ class StorageAgent:
 
     def backfill(self,jobs,history):
         path=self.directory/'backfilled.json'
-        previous=json.loads(path.read_text()) if path.exists() else {}
+        previous=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
         for job in jobs:
             saved=history.get(job.id,{})
             if saved.get('state')!='finished' or previous.get(job.id)==saved:continue
@@ -160,7 +160,7 @@ class StorageAgent:
     def tick(self):
         path=path_for(self.root)
         if not path.exists():return
-        options=json.loads(path.read_text())
+        options=json.loads(path.read_text(encoding='utf-8'))
         if options['worker_id']!=self.worker or options['hub']!=self.settings['hub'] or options['url']!=self.settings['url']:
             raise ValueError('Storage setup does not match shared plan')
         self.options=options;role=options['role']

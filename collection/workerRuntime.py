@@ -14,7 +14,7 @@ class Runtime:
     def __init__(self,root,ensemble,worker):
         self.path=system_path(Path(root),'worker_runtime')/(worker+'.json')
         self.public=Path(ensemble)/'runtime'/(worker+'.json')
-        previous=json.loads(self.path.read_text()) if self.path.exists() else {}
+        previous=json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else {}
         self._saved_payload=None
         self.value={'format':'soccer-worker-runtime-v1','worker_id':worker,'state':'starting',
                     'jobs':previous.get('jobs',{}),'activity':previous.get('activity',[])[-40:],

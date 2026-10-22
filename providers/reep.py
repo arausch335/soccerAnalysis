@@ -139,13 +139,13 @@ def wanted_ids(root, dataset, ensemble=None):
                             wanted.add((kind, provider, row[provider + '_id']))
     from collection.paths import discover_collections
     for source in discover_collections(root, 'config.json'):
-        cfg = json.loads((source / 'config.json').read_text())
+        cfg = json.loads((source / 'config.json').read_text(encoding='utf-8'))
         provider = cfg.get('id_namespace', cfg.get('baseline_provider', 'sofascore'))
         if provider not in PROVIDERS:
             continue
         schedule = source / 'schedule.json'
         if schedule.exists():
-            for event in json.loads(schedule.read_text()).get('events', []):
+            for event in json.loads(schedule.read_text(encoding='utf-8')).get('events', []):
                 wanted.add(('match', provider, str(event['id'])))
                 for side in ('home', 'away'):
                     team = event.get(side + 'Team') or {}
@@ -163,7 +163,7 @@ def wanted_ids(root, dataset, ensemble=None):
                         wanted.add(('player', row['provider'], row['provider_player_id']))
     if ensemble:
         for path in (Path(ensemble) / 'reporting' / 'workers').glob('*.json'):
-            for record in json.loads(path.read_text()).get('records', {}).values():
+            for record in json.loads(path.read_text(encoding='utf-8')).get('records', {}).values():
                 for provider, native in (record.get('provider_match_ids') or {}).items():
                     if provider in PROVIDERS and native is not None:
                         wanted.add(('match', provider, str(native)))

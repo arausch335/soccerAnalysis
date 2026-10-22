@@ -39,7 +39,7 @@ def import_parts(root, files, *, owner, batch, origins=None, check=lambda:None, 
         checkpoints=[]
         for key in sorted(files):
             if not key.endswith('/CURRENT.json'):continue
-            parent=key.rsplit('/',1)[0];generation=json.loads(Path(files[key]).read_text())['generation']
+            parent=key.rsplit('/',1)[0];generation=json.loads(Path(files[key]).read_text(encoding='utf-8'))['generation']
             members={key}|{parent+'/snapshots/'+generation+'/'+name+'.csv' for name in SCHEMA}
             if not members<=files.keys():raise ValueError('Incomplete checkpoint transfer')
             season=parent.split('/match_checkpoints/')[0]

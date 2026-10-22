@@ -159,6 +159,9 @@ class WhoScoredTransport(WhoScoredClient):
             self.report('WhoScored HTTP unavailable; switching to the connected extension for this run.',flush=True)
             return getattr(self.extension,method)(*args)
 
+    def get_text(self,endpoint,params=None):return self._call('get_text',endpoint,params)
+    def get(self,endpoint,params=None):return self._call('get',endpoint,params)
+    def qualification_path(self,path):return self._call('qualification_path',path)
     def seasons(self,path):return self._call('seasons',path)
     def season_stages(self,path):return self._call('season_stages',path)
     def season_events(self,stage,month):return self._call('season_events',stage,month)

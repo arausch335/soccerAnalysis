@@ -67,7 +67,7 @@ def install(root,value,*,worker=None,revision=None):
 def approved_by_main(progress,key,required):
     path=path_for(progress.root)
     if not path.exists():return False
-    value=json.loads(path.read_text())
+    value=json.loads(path.read_text(encoding='utf-8'))
     if (value.get('format')!=FORMAT or value.get('worker_id')!=progress.origin or
             value.get('plan_revision')!=getattr(progress,'plan_revision',None)):return False
     decision=value.get('approved',{}).get(key,{})
@@ -81,21 +81,21 @@ def requested_again(root,worker,revision,history):
     """A local finished flag cannot veto a new recheck ordered by Main."""
     path=path_for(root)
     if not path.exists():return set()
-    value=json.loads(path.read_text())
+    value=json.loads(path.read_text(encoding='utf-8'))
     if value.get('worker_id')!=worker or value.get('plan_revision')!=revision:return set()
     return {job for job,command in value.get('jobs',{}).items() if command.get('recheck') and
             history.get(job,{}).get('instruction_revision')!=command.get('revision')}
 
 
 def reviewed_by_main(progress,competition,season,mid):
-    value=json.loads(path_for(progress.root).read_text())
+    value=json.loads(path_for(progress.root).read_text(encoding='utf-8'))
     return bool(value.get('approved',{}).get(job_key('sofascore',competition,season,mid),{}).get('waived_resources'))
 
 
 def current_commands(root,worker,revision):
     path=path_for(root)
     if not path.exists():return {}
-    value=json.loads(path.read_text())
+    value=json.loads(path.read_text(encoding='utf-8'))
     if value.get('worker_id')!=worker or value.get('plan_revision')!=revision:return {}
     return value.get('jobs',{})
 

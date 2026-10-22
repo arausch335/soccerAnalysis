@@ -26,7 +26,7 @@ class ExtensionBridge:
         self.session_path=Path(session_path) if session_path is not None else None
         self.saved_port=0
         if self.session_path is not None and self.session_path.is_file():
-            saved=json.loads(self.session_path.read_text())
+            saved=json.loads(self.session_path.read_text(encoding='utf-8'))
             if (saved.get('format')!='soccer-extension-session-v1' or type(saved.get('port')) is not int or
                     not 1024<=saved['port']<=65535 or not isinstance(saved.get('token'),str) or
                     not re.fullmatch(r'[A-Za-z0-9_-]{32,128}',saved['token'])):

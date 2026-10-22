@@ -24,7 +24,7 @@ def install(root,value):
             if credential['role'] not in ('producer','consumer') or len(credential['token'])<32:raise ValueError('Invalid storage credentials')
     elif not isinstance(value.get('token'),str) or len(value['token'])<32:raise ValueError('Missing storage token')
     path=path_for(root)
-    if not path.exists() or json.loads(path.read_text())!=value:atomic_json(path,value)
+    if not path.exists() or json.loads(path.read_text(encoding='utf-8'))!=value:atomic_json(path,value)
     path.chmod(0o600)
 
 
@@ -32,7 +32,7 @@ class Provisioner:
     def __init__(self,root,settings,workers):
         self.settings=settings;self.workers=workers
         path=Path(root)/'_system/config/storage-secrets.json'
-        self.tokens=json.loads(path.read_text()) if path.exists() else {}
+        self.tokens=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
         for worker in workers:
             if worker not in self.tokens:self.tokens[worker]=secrets.token_urlsafe(40)
         atomic_json(path,self.tokens);path.chmod(0o600)

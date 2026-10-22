@@ -626,7 +626,7 @@ def diagnose(root):
     if not options:
         print('Reporting is not configured. Run the client/server setup command first.');return 2
     identity_path=system_path(root,'identity.json')
-    identity=json.loads(identity_path.read_text()) if identity_path.exists() else {}
+    identity=json.loads(identity_path.read_text(encoding='utf-8')) if identity_path.exists() else {}
     worker=identity.get('worker_id',options.get('worker_id','main'))
     print('Worker:',worker)
     if options['mode']=='server':
@@ -635,7 +635,7 @@ def diagnose(root):
     print('Main address:',url)
     state_path=system_path(root,'worker_runtime')/(worker+'.json')
     if state_path.exists():
-        state=json.loads(state_path.read_text())
+        state=json.loads(state_path.read_text(encoding='utf-8'))
         print('Local worker state:',state.get('state'))
         print('Last reporting status:',state.get('reporting',{}).get('message','Not reported yet'))
     outbox=system_path(root,'worker_runtime')/'reporting-outbox.sqlite';stream=None
