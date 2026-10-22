@@ -14,6 +14,7 @@ class CompetitionSelection:
     whoscored_path:str
     fotmob_supplemental_ids:tuple[int,...]=()
     whoscored_supplemental_paths:tuple[str,...]=()
+    parent:str|None=None
 
 
 COMPETITIONS=[
@@ -26,6 +27,10 @@ COMPETITIONS=[
         'regions/250/tournaments/12/europe-champions-league'),
     CompetitionSelection('Europa League',SOFASCORE_COMPETITION_IDS['Europa League'],73,
         'regions/250/tournaments/30/europe-europa-league'),
+    CompetitionSelection('Champions League Qualifiers',SOFASCORE_COMPETITION_IDS['Champions League'],10611,
+        'regions/250/tournaments/12/europe-champions-league',parent='Champions League'),
+    CompetitionSelection('Europa League Qualifiers',SOFASCORE_COMPETITION_IDS['Europa League'],10613,
+        'regions/250/tournaments/30/europe-europa-league',parent='Europa League'),
 ]
 
 
@@ -71,6 +76,17 @@ def with_reviewed_schedule_results(competition,season,season_id,events):
 def is_qualification_event(event):
     """True only for pre-main-competition qualification fixtures."""
     return bool((event.get('tournament') or {}).get('qualificationOrPreliminary'))
+
+
+def in_competition(event,competition):
+    if competition.parent:return is_qualification_event(event)
+    if competition.name in ('Champions League','Europa League'):return not is_qualification_event(event)
+    return True
+
+
+def event_competition(competition,event):
+    if competition in ('Champions League','Europa League') and is_qualification_event(event):return competition+' Qualifiers'
+    return competition
 
 
 def competition_by_name(name):

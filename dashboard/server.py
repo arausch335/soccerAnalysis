@@ -25,6 +25,7 @@ class DashboardServer:
                 try:
                     if url.path=='/api/status':data=json.dumps(model.status()).encode();kind='application/json'
                     elif url.path=='/api/identity-review':data=json.dumps({**model.reviews(),'review_token':review_token}).encode();kind='application/json'
+                    elif url.path=='/api/collection-review':data=json.dumps({**model.collection_reviews(),'review_token':review_token}).encode();kind='application/json'
                     elif url.path=='/api/logs':data=json.dumps(model.logs(parse_qs(url.query))).encode();kind='application/json'
                     elif url.path=='/api/matches':data=json.dumps(model.matches(parse_qs(url.query))).encode();kind='application/json'
                     elif url.path in ('/','/dashboard.css','/dashboard.js'):
@@ -44,7 +45,7 @@ class DashboardServer:
                 if (host not in allowed or origin not in ('http://'+h for h in allowed)
                         or not secrets.compare_digest(self.headers.get('X-Review-Token',''),review_token)):
                     self.send_error(403);return
-                if self.path!='/api/identity-review':self.send_error(404);return
+                if self.path not in ('/api/identity-review','/api/collection-review'):self.send_error(404);return
                 try:
                     self.connection.settimeout(5)
                     length=int(self.headers.get('Content-Length','0'))
@@ -52,7 +53,8 @@ class DashboardServer:
                             or self.headers.get('Content-Type')!='application/json'):
                         self.send_error(400);return
                     value=json.loads(self.rfile.read(length))
-                    model.decide_identity(value)
+                    if self.path=='/api/identity-review':model.decide_identity(value)
+                    else:model.decide_collection(value)
                     data=json.dumps({'saved':True}).encode()
                     self.send_response(200);self.send_header('Content-Type','application/json')
                     self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(data)))

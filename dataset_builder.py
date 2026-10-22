@@ -368,7 +368,8 @@ def _source_id_rows(source, player_rows, team_rows, match_rows, review_root=None
         raise ValueError(f'{source.name}: unsupported baseline provider {baseline!r}')
     baseline_column = baseline + '_id'
     schedule = json.loads((source / 'schedule.json').read_text(encoding='utf-8')).get('events', [])
-    events = {str(event['id']): event for event in schedule if not is_qualification_event(event)}
+    events = {str(event['id']): event for event in schedule
+              if is_qualification_event(event)==competition.endswith(' Qualifiers')}
 
     if (source / 'player_match_stats.csv').exists():
         stats = pd.read_csv(source / 'player_match_stats.csv', dtype=str, keep_default_na=False)
@@ -460,7 +461,7 @@ def _source_id_rows(source, player_rows, team_rows, match_rows, review_root=None
     for match in matches.itertuples():
         if _identifier(match.id) not in events: continue
         metadata = json.loads(match.metadata)
-        if is_qualification_event(metadata.get('event') or {}): continue
+        if is_qualification_event(metadata.get('event') or {}) and not competition.endswith(' Qualifiers'): continue
         match_key = (competition, season, baseline, _identifier(match.id))
         match_row = match_rows.get(match_key)
         if match_row is not None:
@@ -621,7 +622,7 @@ def fixtures_from_events(events, competition, season, *, include_qualifying=Fals
         rows.append({
             'match_id': event['id'], 'date': kickoff.date().isoformat(),
             'kickoff_utc': kickoff.isoformat(), 'season': season_label(season),
-            'competition': (competition + ' Qualification' if qualifying else competition),
+            'competition': (competition + ' Qualification' if qualifying and not competition.endswith(' Qualifiers') else competition),
             'matchweek': round_info.get('round'),
             'round_name': round_info.get('name'), 'status': status.get('type'),
             'awarded': bool(event.get('isAwarded') or status.get('awarded')),
@@ -638,7 +639,8 @@ def fixtures_from_events(events, competition, season, *, include_qualifying=Fals
 
 def _fixtures(source, config):
     events = json.loads((source / 'schedule.json').read_text(encoding='utf-8'))['events']
-    return fixtures_from_events(events, config['competition'], config['season'])
+    return fixtures_from_events(events, config['competition'], config['season'],
+                                include_qualifying=config['competition'].endswith(' Qualifiers'))
 
 
 def package_collection(source, output_root, *, replace=False, tables=None):

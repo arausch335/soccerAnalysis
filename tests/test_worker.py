@@ -21,6 +21,33 @@ class NoSync:
 
 
 class WorkerTests(unittest.TestCase):
+    def test_main_done_overrides_old_pause_without_scraping_and_publishes_completed_seasons(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from config.workerPlan import load_plan
+        from collection.workInstructions import install,FORMAT
+        from collection.storageAgent import season_for
+        from storage.pandasStore import atomic_json
+        self.document['storage']['enabled']=True;self.save();plan=load_plan(self.plan)
+        atomic_json(self.root/'.soccer-scraper.json',{'format':1})
+        jobs=plan.for_worker('main');commands={j.id:{'done':True,'configuration':'reviewed-config','closed':True,'counts':{},'waivers':{}} for j in jobs}
+        install(self.root,{'format':FORMAT,'worker_id':'main','plan_revision':plan.revision,'jobs':commands,'approved':{}})
+        atomic_json(system_path(self.root,'worker_runtime')/'main.json',{'jobs':{j.id:{'state':'paused','exit_code':2} for j in jobs}})
+        for job in jobs:atomic_json(self.root/season_for(job)/'job.json',{'competition':job.competition})
+        reporter=MagicMock();reporter.start.return_value=reporter;reporter.status={'state':'connected'}
+        storage=MagicMock();storage.start.return_value=storage;storage.status={'state':'listening'}
+        control=MagicMock();control.status={'state':'granted'}
+        calls=[]
+        with patch('collection.worker.load_local',return_value={'mode':'client'}), \
+             patch('collection.worker.Reporter',return_value=reporter), \
+             patch('collection.jobControl.AssignmentClient',return_value=control), \
+             patch('collection.storageAgent.StorageAgent',return_value=storage), \
+             patch('collection.worker.prepare_extension',return_value=SimpleNamespace(ready=False)):
+            self.assertEqual(run(self.args,runner=lambda args:calls.append(args),session=self.session,sync_factory=NoSync),0)
+        self.assertEqual(calls,[]);self.assertEqual(storage.finished.call_count,len(jobs))
+        runtime=json.loads((system_path(self.root,'worker_runtime')/'main.json').read_text())
+        self.assertEqual(runtime['state'],'done');self.assertTrue(all(r['exit_code']==0 for r in runtime['jobs'].values()))
+
     def setUp(self):
         extension=patch('collection.worker.prepare_extension',return_value=None);extension.start();self.addCleanup(extension.stop)
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)

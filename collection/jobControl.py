@@ -26,7 +26,8 @@ class JobControl:
             reports=[{'inventory':json.loads(row['inventory']) if row['inventory'] else {},
                       'runtime':json.loads(row['runtime']) if row['runtime'] else {}}
                      for row in db.execute('SELECT inventory,runtime FROM workers')]
-        return compile_instructions(load_plan(self.plan_path),worker,reports)
+        from .jobCompletion import CompletionStore
+        return compile_instructions(load_plan(self.plan_path),worker,reports,CompletionStore(self.path.parent.parent.parent).snapshot())
 
     def command(self,worker,value):
         from config.workerPlan import load_plan

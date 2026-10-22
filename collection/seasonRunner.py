@@ -208,13 +208,15 @@ class SeasonRunner:
                         stages=[]
                         paths=(competition.whoscored_path,*competition.whoscored_supplemental_paths)
                         for competition_path in paths:
+                            if competition.parent and hasattr(client,'qualification_path'):
+                                competition_path=client.qualification_path(competition_path)
                             seasons=self._fetch(provider,f'seasons/{competition_path}',
                                 lambda competition_path=competition_path:client.seasons(competition_path))
                             found=[s for s in seasons if season_key(s['name'])==season_key(season)]
                             if len(found)!=1:
                                 raise ValueError(f'WhoScored season {season} is not uniquely available')
                             path=found[0]['path']
-                            multi_stage=competition.name in ('Champions League','Europa League')
+                            multi_stage=competition.name in ('Champions League','Europa League') or bool(competition.parent)
                             stage_key=('stages-v2/' if multi_stage else 'stage/')+path
                             discovered=self._fetch(provider,stage_key,lambda path=path:client.season_stages(path))
                             stages.extend([discovered] if isinstance(discovered,int) else discovered)
@@ -369,6 +371,11 @@ class SeasonRunner:
         if path.exists() and json.loads(path.read_text(encoding='utf-8'))!=config:raise ValueError('Output folder belongs to another season')
         atomic_json(path,config)
         events=sorted((e for e in events if e['status']['type']=='finished'),key=lambda e:(e['startTimestamp'],e['id']))
+        from .selection import in_competition
+        scope={'events':events if not competition.parent else [e for e in events if in_competition(e,competition)]}
+        scope_path=self.directory/'fixture-scopes.json'
+        if not scope_path.exists() or json.loads(scope_path.read_text(encoding='utf-8'))!=scope:atomic_json(scope_path,scope)
+        events=[e for e in events if in_competition(e,competition)]
         if len({e['id'] for e in events})!=len(events):raise ValueError('Duplicate baseline fixture IDs')
         atomic_json(self.directory/'schedule.json',{'fetched_at':now(),'events':events})
         selected=events[:limit] if limit else events
@@ -380,6 +387,14 @@ class SeasonRunner:
         atomic_json(self.directory/'provider_discovery.json',{'errors':disabled,'counts':{k:len(v) for k,v in fixtures.items()}})
         status_path=self.directory/'collection.csv'
         old=pd.read_csv(status_path,keep_default_na=False).to_dict('records') if status_path.exists() else []
+        if competition.name in ('Champions League','Europa League'):
+            qualifying_ids={str(e['id']) for e in scope['events'] if is_qualification_event(e)}
+            legacy=[r for r in old if str(r['match_id']) in qualifying_ids]
+            if legacy:
+                archive=self.directory/'qualifier-attempts.json'
+                retained=json.loads(archive.read_text(encoding='utf-8')) if archive.exists() else {}
+                retained.update({str(r['match_id']):r for r in legacy});atomic_json(archive,retained)
+                old=[r for r in old if str(r['match_id']) not in qualifying_ids]
         statuses={int(r['match_id']):r for r in old}
         for row in statuses.values():row['competition']=competition.name
         for event in selected:
@@ -395,19 +410,26 @@ class SeasonRunner:
             self.report(f"{competition.name} {season_label(canonical)} | match {event['id']} | {event['homeTeam']['name']} vs {event['awayTeam']['name']}")
             timing.start_game(event['id'],clients=self.clients.values())
             mid=event['id'];store=PandasStore(self.directory/'match_checkpoints'/str(mid));entry=statuses[mid]
+            if competition.parent and not store.exists:
+                from .qualifiers import reuse_checkpoint
+                reuse_checkpoint(self.directory.parent.parent,competition,season_label(canonical),mid)
             from .ensembleProgress import remote_done, record_match, ACTIVE
             required=['provider:'+provider for provider in self.providers]+['spatial:'+category for category in self.spatial]
             if self.baseline_provider=='sofascore':required.append('sofascore_match_stats')
             coordinated=ACTIVE.get() is not None and ACTIVE.get().trusted_only
             if (not store.exists or coordinated) and not self.refresh and remote_done('sofascore',competition.name,canonical,mid,required):
-                entry.update(status='elsewhere',error='Completed on another computer; raw data not present locally',updated_at=now())
+                from .workInstructions import reviewed_by_main
+                reviewed=reviewed_by_main(ACTIVE.get(),competition.name,canonical,mid) if coordinated else False
+                entry.update(status='reviewed' if reviewed else 'elsewhere',
+                             error='Main accepted unavailable resources' if reviewed else 'Completed on another computer; raw data not present locally',updated_at=now())
                 atomic_csv(pd.DataFrame(statuses.values()),status_path)
-                self.report(f'[{index}/{len(selected)}] '+('Main confirms required data is held; ' if coordinated else 'Recorded on another computer; ')+f'skipped {mid}.')
-                timing.finish_game(clients=self.clients.values(),status='elsewhere',cached=True,mode=timing_mode())
+                self.report(f'[{index}/{len(selected)}] '+('Main confirmed reviewed exceptions; ' if reviewed else 'Main confirms required data is held; ' if coordinated else 'Recorded on another computer; ')+f'skipped {mid}.')
+                timing.finish_game(clients=self.clients.values(),status=entry['status'],cached=True,mode=timing_mode())
                 continue
             resuming=store.exists and not self.refresh
             if resuming:
                 dataset=store.from_csv();match=dataset.matches[mid]
+                entry['attempts']=max(int(entry.get('attempts',0)),int(match.metadata.get('collection_evidence',{}).get('attempts',0)))
                 # Only a fully complete provider is terminal. Partial and failed
                 # enrichments are deliberately revisited on resume so identity
                 # aliases, decoder fixes, and previously skipped sources can
@@ -449,6 +471,8 @@ class SeasonRunner:
                 except DATA_ERRORS as exc:
                     entry.update(status='failed',error=str(exc),updated_at=now(),attempts=int(entry.get('attempts',0))+1)
                     atomic_csv(pd.DataFrame(statuses.values()),status_path)
+                    from .ensembleProgress import record_failure
+                    record_failure(competition.name,canonical,event,entry)
                     self.report(f'[{index}/{len(selected)}] {mid}: failed ({exc})')
                     timing.finish_game(clients=self.clients.values(),status='failed',mode=timing_mode())
                     if getattr(sofa,'requires_manual_attention',False) is True:
@@ -509,6 +533,11 @@ class SeasonRunner:
             if hasattr(sofa,'audit'):
                 match.metadata['collection_transport']={key:value for key,value in sofa.audit.items()
                     if key==f'event/{mid}' or key.startswith(f'event/{mid}/')}
+            from .reporting import redact
+            match.metadata['collection_evidence']={'attempts':int(entry.get('attempts',0))+1,
+                'label':event['homeTeam']['name']+' vs '+event['awayTeam']['name'],
+                'error':redact('; '.join(errors))[:2000],
+                'qualifying':bool(competition.parent)}
             store.to_csv(dataset)
             # Raw files and the checkpoint now hold every successful provider result.
             if all(match.metadata.get('provider_status',{}).get(p)=='complete' for p in self.providers):
@@ -551,7 +580,7 @@ class SeasonRunner:
             'failed_or_pending':int(result.status.isin(['failed','pending']).sum()),
             'baseline_provider':self.baseline_provider,'providers':list(self.providers),
             'csvs_built':bool(build_csvs),'events_csv_compiled':bool(build_csvs and compile_events)})
-        timing.end(0 if len(result) and result.status.isin(('complete','elsewhere')).all() else 2)
+        timing.end(0 if len(result) and result.status.isin(('complete','elsewhere','reviewed')).all() else 2)
         return result
 
     def _browser_match_details(self,sofa,event,match):
@@ -700,7 +729,8 @@ class SeasonRunner:
         fetched_at=(json.loads(schedule_path.read_text(encoding='utf-8')).get('fetched_at')
                     if schedule_path.exists() else now())
         atomic_json(schedule_path,{'fetched_at':fetched_at,'events':events})
-        export_events=[event for event in events if not is_qualification_event(event)]
+        from .selection import in_competition
+        export_events=[event for event in events if in_competition(event,competition)]
         excluded=len(events)-len(export_events);total=len(export_events)
         def progress(message):
             self.report(message)

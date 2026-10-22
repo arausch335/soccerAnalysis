@@ -30,8 +30,8 @@ RESOURCES={
 def requested_resources(types,spatial):
     result=set()
     if set(types)&{'combined','sofascore'}:
-        result.update(('sofascore_stats','sofascore_details','match_statistics','incidents','momentum','average_positions'))
-        if spatial=='all':result.update(('heatmaps','shotmaps','action_maps'))
+        result.update(('sofascore_stats','match_statistics','incidents','momentum'))
+        if spatial=='all':result.update(('average_positions','heatmaps','shotmaps','action_maps'))
     if 'combined' in types:result.update(('whoscored_stats','fotmob_enrichment'))
     if set(types)&{'combined','whoscored_events'}:result.add('whoscored_events')
     if 'fotmob_players' in types:result.add('fotmob_stats')

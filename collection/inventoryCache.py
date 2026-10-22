@@ -19,7 +19,7 @@ def fingerprint(path):
 def rules_version(root,worker):
     from providers.identityReview import revision
     project=Path(__file__).resolve().parent.parent
-    files=['collection/inventoryCache.py','collection/ensembleProgress.py','collection/completion.py',
+    files=['collection/inventoryCache.py','collection/ensembleProgress.py','collection/completion.py','collection/qualifiers.py',
            'collection/whoScoredData.py','collection/legacyFotmobRows.py','collection/selection.py',
            'providers/identity.py','providers/identityReview.py','providers/reep.py',
            'providers/concordance/teams.json','review_data.py','storage/pandasStore.py']

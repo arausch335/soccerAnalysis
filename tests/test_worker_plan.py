@@ -35,7 +35,7 @@ class WorkerPlanTests(unittest.TestCase):
 
     def test_mac_preserved_msi_unassigned(self):
         plan=self.load(self.document)
-        self.assertEqual(len(plan.for_worker('main')),7)
+        self.assertEqual(len(plan.for_worker('main')),9)
         self.assertEqual(plan.for_worker('msi'),[])
         self.assertTrue(all(j.as_dict()['season']=='2023-2024' for j in plan.for_worker('main')))
         self.assertNotIn('fotmob_stats',requested_resources(['combined'],'fast'))

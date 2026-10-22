@@ -36,7 +36,7 @@ workers:
     enabled: true
     assignments:
       - id: current-season
-        competitions: [Premier League, Bundesliga, La Liga, Champions League, Europa League, Serie A, Ligue 1]
+        competitions: [Premier League, Bundesliga, La Liga, Champions League, Europa League, Champions League Qualifiers, Europa League Qualifiers, Serie A, Ligue 1]
         seasons: ['2021/22']
         collection_types: [combined]
         spatial_capture: fast
@@ -48,7 +48,7 @@ workers:
     enabled: true
     assignments:
       - id: current-season
-        competitions: [ Premier League, Bundesliga, La Liga, Champions League, Europa League, Serie A, Ligue 1 ]
+        competitions: [ Premier League, Bundesliga, La Liga, Champions League, Europa League, Champions League Qualifiers, Europa League Qualifiers, Serie A, Ligue 1 ]
         seasons: [ '2022/23' ]
         collection_types: [ combined ]
         spatial_capture: fast

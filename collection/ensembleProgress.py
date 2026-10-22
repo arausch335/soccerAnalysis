@@ -87,14 +87,14 @@ class PortableProgress:
         if 'browser_details' in capabilities:capabilities.add('sofascore_match_stats')
         return row.get('status')=='complete' and set(required)<=capabilities
 
-    def record(self, namespace, competition, season, mid, capabilities=(), *, collected_here=False, resources=None, provider_match_ids=None):
+    def record(self, namespace, competition, season, mid, capabilities=(), *, collected_here=False, resources=None, provider_match_ids=None,evidence=None,status='complete'):
         key=job_key(namespace,competition,season,mid)
         old=self.local_records.get(key,{})
         origins=set(self.origins.get(key,[]))
         if not origins or collected_here:origins.add(self.origin)
         self.origins[key]=sorted(origins)
         row={'namespace':namespace,'competition':competition,'season':season_label(season),
-            'match_id':str(mid),'status':'complete',
+            'match_id':str(mid),'status':status,
             'capabilities':sorted(set(old.get('capabilities',[]))|set(capabilities)),
             'origins':sorted(origins),
             'holders':[self.origin],
@@ -102,6 +102,7 @@ class PortableProgress:
         native={'whoscored_events':'whoscored_events','fotmob_players':'fotmob_stats'}.get(namespace)
         row['resources']={**old.get('resources',{}),**(resources or ({native:'complete'} if native else {}))}
         if provider_match_ids:row['provider_match_ids']={str(k):str(v) for k,v in provider_match_ids.items() if v is not None}
+        if evidence:row['evidence']=evidence
         prior={**self.previous_local.get(key,{}),**old}
         owners={}
         for name,state in row['resources'].items():
@@ -150,6 +151,7 @@ class PortableProgress:
     def scan(self,*,full=False,cache=True,cancel=None,seasons=None):
         from .inventoryCache import InventoryCache
         self.origins=read_origins(self.root)
+        self._scope_schedules={}
         self.scan_seasons=set(seasons) if seasons is not None else None
         self._dirty=set()
         self.local_records={}
@@ -181,10 +183,27 @@ class PortableProgress:
                 # Legacy markers may name only their baseline provider. Do not
                 # invent target IDs or a competition/season from incomplete metadata.
                 if not selection.get('competition') or not selection.get('season'):continue
-                events=json.loads(schedule.read_text(encoding='utf-8')).get('events',[])
-                self._schedule_updates[key]={'competition':competition_by_name(selection['competition']).name,
-                    'season':season_label(selection['season']),'kind':'combined',
-                    'match_ids':sorted({str(event['id']) for event in events})}
+                scope=schedule.parent/'fixture-scopes.json'
+                events=json.loads((scope if scope.exists() else schedule).read_text(encoding='utf-8')).get('events',[])
+                from .selection import event_competition
+                competition=competition_by_name(selection['competition']).name
+                groups={competition:[]}
+                for event in events:groups.setdefault(event_competition(competition,event),[]).append(str(event['id']))
+                for name,ids in groups.items():
+                    slug=re.sub(r'[^a-z0-9]+','-',name.lower()).strip('-')
+                    self._schedule_updates[slug+'/'+season_label(selection['season'])]={'competition':name,
+                        'season':season_label(selection['season']),'kind':'combined','scope_version':2,'match_ids':sorted(set(ids))}
+                attempts=schedule.parent/'collection.csv'
+                if attempts.is_file():
+                    import csv
+                    events_by_id={str(e['id']):e for e in events}
+                    with attempts.open(encoding='utf-8',newline='') as stream:
+                        for attempt in csv.DictReader(stream):
+                            event=events_by_id.get(str(attempt.get('match_id')))
+                            if event and attempt.get('status')=='failed':
+                                name=event_competition(competition,event)
+                                key=job_key('sofascore',name,selection['season'],event['id'])
+                                if key not in self.local_records:record_failure(name,selection['season'],event,attempt,progress=self)
         self._replace_seasons=(self.scan_seasons if self.scan_seasons is not None else
                                {self.record_season(key) for key in set(self.previous_local)|set(self.local_records)})
         self._dirty.update(self.local_records)
@@ -232,6 +251,11 @@ class PortableProgress:
             from storage.pandasStore import SCHEMA
             folder=store.current_directory
             paths=[marker,*[folder/(name+'.csv') for name in SCHEMA]]
+            season_folder=marker.parent.parent.parent
+            scope=season_folder/'fixture-scopes.json'
+            paths.append(scope if scope.exists() else season_folder/'schedule.json')
+            if season_folder.parent.name in ('champions-league','europa-league'):
+                paths.append(self.root/(season_folder.parent.name+'-qualifiers')/season_folder.name/'match_checkpoints'/marker.parent.name/'CURRENT.json')
             cache=self._inventory_cache
             dependencies=cache.dependencies(paths) if cache else {}
             dataset=store.from_csv()
@@ -295,7 +319,7 @@ class PortableProgress:
             from .inventoryCache import InventoryInterrupted
             raise InventoryInterrupted()
 
-    def _integrated_events(self,match,collected_here):
+    def _integrated_events(self,match,collected_here,competition=None):
         from .whoScoredData import integrated_error
         relative=match.metadata.get('raw_response_files',{}).get('whoscored')
         mid=match.metadata.get('provider_match_ids',{}).get('whoscored')
@@ -310,10 +334,31 @@ class PortableProgress:
                 if reason:
                     if self.scanning:raise ValueError(f'Invalid integrated WhoScored raw events: {path} ({reason})')
                     return
-                self.record('whoscored_events',match.season.competition.name,match.season.name,mid,collected_here=False)
+                self.record('whoscored_events',competition or match.season.competition.name,match.season.name,mid,collected_here=False)
 
     def record_match(self, match, *, collected_here=False):
         if match.metadata.get('id_namespace','sofascore')!='sofascore':return
+        competition=match.season.competition.name
+        evidence=dict(match.metadata.get('collection_evidence',{}))
+        if competition in ('Champions League','Europa League'):
+            from .selection import event_competition
+            directory=self.root/re.sub('[^a-z0-9]+','-',competition.lower()).strip('-')/season_label(match.season.name)
+            cache=getattr(self,'_scope_schedules',{})
+            if directory not in cache:
+                path=directory/'fixture-scopes.json'
+                if not path.exists():path=directory/'schedule.json'
+                cache[directory]={str(e['id']):e for e in json.loads(path.read_text()).get('events',[])} if path.exists() else {}
+                self._scope_schedules=cache
+            event=cache[directory].get(str(match.id),{})
+            competition=event_competition(competition,event)
+            evidence['qualifying']=competition.endswith(' Qualifiers')
+            if event:
+                evidence.setdefault('label',event['homeTeam']['name']+' vs '+event['awayTeam']['name'])
+            # Once a canonical qualifier copy exists its newer checkpoint owns
+            # the audit. The retained legacy source must not overwrite it.
+            if competition!=match.season.competition.name:
+                canonical=self.root/re.sub('[^a-z0-9]+','-',competition.lower()).strip('-')/season_label(match.season.name)
+                if (canonical/'match_checkpoints'/str(match.id)/'CURRENT.json').exists():return
         capabilities=['provider:'+key for key,value in match.metadata.get('provider_status',{}).items()
                       if value=='complete']
         from .completion import sofascore_stats_complete
@@ -348,9 +393,9 @@ class PortableProgress:
             state=match.metadata.get('provider_status',{}).get(provider)
             if state:resources[name]=state
         if capabilities:
-            self.record('sofascore',match.season.competition.name,match.season.name,match.id,capabilities,
-                        collected_here=collected_here,resources=resources,provider_match_ids=match.metadata.get('provider_match_ids',{}))
-        self._integrated_events(match,collected_here)
+            self.record('sofascore',competition,match.season.name,match.id,capabilities,
+                        collected_here=collected_here,resources=resources,provider_match_ids=match.metadata.get('provider_match_ids',{}),evidence=evidence)
+        self._integrated_events(match,collected_here,competition)
 
 
 def remote_done(namespace, competition, season, mid, required=()):
@@ -375,6 +420,17 @@ def record_complete(namespace, competition, season, mid, *, collected_here=False
 def record_match(match, *, collected_here=True):
     progress=ACTIVE.get()
     if progress is not None:progress.record_match(match,collected_here=collected_here)
+
+
+def record_failure(competition,season,event,entry,*,progress=None):
+    progress=progress or ACTIVE.get()
+    if progress is None:return
+    from .reporting import redact
+    resources={name:'failed' for name in ('sofascore_stats','sofascore_details','match_statistics','incidents','momentum',
+        'average_positions','heatmaps','shotmaps','action_maps','fotmob_enrichment','whoscored_stats')}
+    progress.record('sofascore',competition,season,event['id'],resources=resources,status='failed',
+        evidence={'attempts':int(entry.get('attempts') or 0),'error':redact(entry.get('error',''))[:2000],
+                  'label':event['homeTeam']['name']+' vs '+event['awayTeam']['name']})
 
 
 @contextmanager

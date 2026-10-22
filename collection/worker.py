@@ -28,7 +28,7 @@ RESTART=75
 
 
 def fingerprint(job,settings):
-    return hashlib.sha256(b'worker-reporting-v2\0'+settings+json.dumps(job.as_dict(),sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(b'worker-reporting-v3-qualified-scopes\0'+settings+json.dumps(job.as_dict(),sort_keys=True).encode()).hexdigest()
 
 
 def prepare_extension(root,jobs,monitor):
@@ -167,12 +167,26 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                     return RESTART if current_plan.git['auto_restart'] else 3
                 from providers.identityReview import revision
                 identity_revision=revision(root)
-                from .workInstructions import requested_again
+                from .workInstructions import requested_again,current_commands
                 recheck=requested_again(root,worker,plan.revision,state.value['jobs']) if control else set()
+                commands=current_commands(root,worker,plan.revision) if control else {}
+                for saved_job in plan.for_worker(worker):
+                    if commands.get(saved_job.id,{}).get('done'):
+                        completed=commands[saved_job.id]
+                        prior=state.value['jobs'].get(saved_job.id,{})
+                        if prior.get('state')!='done' or prior.get('configuration')!=completed['configuration']:
+                            from .storageAgent import season_for
+                            directory=root/season_for(saved_job)
+                            if (directory/'job.json').exists():
+                                atomic_json(directory/'completion.json',{'configuration':completed['configuration'],
+                                    'done':True,'closed':completed['closed'],'counts':completed['counts'],
+                                    'reviewed_unavailable':completed['waivers'],'coordinator':plan.coordinator,'at':now()})
+                                if storage:storage.finished(saved_job,0)
+                        state.value['jobs'][saved_job.id]={**state.value['jobs'].get(saved_job.id,{}),'state':'done','exit_code':0,'configuration':commands[saved_job.id]['configuration']}
                 pending=[job for job in ([] if monitor else plan.for_worker(worker))
-                         if job.id in recheck or state.value['jobs'].get(job.id,{}).get('fingerprint')!=fingerprint(job,settings)
+                         if not commands.get(job.id,{}).get('done') and (job.id in recheck or state.value['jobs'].get(job.id,{}).get('fingerprint')!=fingerprint(job,settings)
                          or (identity_revision and state.value['jobs'].get(job.id,{}).get('exit_code',0) not in (0,130)
-                             and state.value['jobs'].get(job.id,{}).get('identity_revision','')!=identity_revision)]
+                             and state.value['jobs'].get(job.id,{}).get('identity_revision','')!=identity_revision))]
                 if pending and not initialized:
                     state.save(state='validating_inventory',git=sync.status)
                     progress=stack.enter_context(session(root,ensemble,worker_id=worker,background=True))
@@ -181,7 +195,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                     progress.plan_revision=plan.revision
                     initialized=True
                     continue
-                if extension_bridge is not None and not extension_bridge.ready:
+                if pending and extension_bridge is not None and not extension_bridge.ready:
                     if state.value['state']!='waiting_for_extension':
                         state.save(state='waiting_for_extension',current=None)
                         print('Waiting for Soccer Collector to connect. Paste the printed code in Chrome; scraping and identity lookups will start after connection.',flush=True)
@@ -196,7 +210,9 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                         if investigate_queue(root):
                             publish(inventory=False)
                             continue
-                    state.save(state='monitoring' if monitor else 'paused' if any(state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in plan.for_worker(worker)) else 'idle' if plan.for_worker(worker) else 'unassigned',current=None,git=sync.status)
+                    assigned=plan.for_worker(worker)
+                    all_done=bool(assigned) and all(state.value['jobs'].get(j.id,{}).get('state')=='done' for j in assigned)
+                    state.save(state='monitoring' if monitor else 'done' if all_done else 'paused' if any(state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in assigned) else 'idle' if assigned else 'unassigned',current=None,git=sync.status)
                     if reporting:state.save(reporting=reporting.status)
                     if options.once:return max((state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in plan.for_worker(worker)),default=0)
                     stop.wait(min(5,plan.git['poll_seconds']));continue

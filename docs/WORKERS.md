@@ -1,5 +1,59 @@
 # Main monitor, worker collection and direct reporting
 
+## Separate qualifiers, configuration completion and collection review
+
+`Champions League Qualifiers` and `Europa League Qualifiers` are distinct
+competitions in `config/workers.yaml`, alongside their main competitions. MSI
+keeps its 2021/22 assignments and Headless its 2022/23 assignments, including the
+new qualifier jobs. Main remains the instruction coordinator and monitor.
+Sofascore's shared season feed is partitioned by its qualifying flag. FotMob uses
+the separate qualifying competitions (10611 and 10613). WhoScored discovers a
+qualifying directory from published links when available; its returned fixtures
+must still match the selected qualifying game. Missing WhoScored coverage is a
+reviewable collection issue, never invented event data.
+
+Fast mode now requires player stats from all three providers, WhoScored events,
+and the match details configured by the job; it does **not** request or require
+spatial maps. All mode additionally requires average positions, heatmaps, shot
+maps and action maps. Existing spatial data is retained. A season is Done when
+Main knows its fixture target and every required resource is either collected or
+explicitly reviewed unavailable. An old paused exit code is not a completion
+verdict. Changing the data configuration or adding unfinished fixtures opens work
+again; an unknown or empty target never becomes Done automatically.
+
+In **Worker plan**, each season has full-width progress bars for player match
+stats, events and match details, plus spatial maps in All mode. Colors/patterns
+identify data types; grey is the unfinished part of that type's whole-season
+target. Reviewed unavailable data has a separate hatch and is not counted as
+collected. The status underneath shows Done, Needs review or In progress.
+
+Use **Collection review** on Main (also linked from each assignment):
+
+1. Inspect a flagged match's error, attempt count and missing resources. Repeated
+   failures, reported unavailable resources, and the final few failed matches of
+   an attempted season are surfaced for review. Identity review remains separate.
+2. Select the particular resources that cannot be collected, enter the reason
+   (for example, verified missing WhoScored matchCentreData), and confirm them
+   unavailable. No data is manufactured and unrelated resources remain required.
+3. Once all required data is accounted for, **Declare season done** records the
+   outcome. **Retry selected data** or **Reopen reviewed exceptions** lets the
+   workers check again. Every decision is retained in Main's audit history.
+
+Decisions live in Main's ignored `data/_system/workers/completion.sqlite` and are
+sent through Main's normal authenticated instructions. They apply to competition,
+season and required-data configuration, so moving a job to another worker keeps
+the decision, while switching Fast to All does not reuse the old exceptions.
+Resolved seasons queue the normal completed-season transfer/build; raw data stays
+on MSI and Main receives datasets. Local `completion.json` records the scope and
+reviewed missing resources without claiming they were downloaded.
+
+Legacy qualifying checkpoints are reused in their separate competition folders
+when needed, with referenced raw files and collector provenance retained. The
+old source stays intact. Background audits split legacy mixed schedules into
+scoped inventory reports; allow workers to report this audit after upgrading.
+Update and restart Main first, then update and restart MSI and Headless. Do not
+copy Main's settings or identity files to workers.
+
 Main receives progress and operational logs directly over your private network.
 Git distributes code and common configuration only. Workers never make progress
 commits, push snapshots, rebase local work or transfer raw datasets through Git.

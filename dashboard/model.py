@@ -61,10 +61,17 @@ class DashboardModel:
         directory=self.root/slug/season
         path=directory/('whoscored_schedule.json' if namespace=='whoscored_events' else 'schedule.json')
         if namespace=='fotmob_players':path=self.root/'fotmob_player_stats'/slug/season/'schedule.json'
+        if not path.exists() and namespace=='sofascore' and competition.endswith(' Qualifiers'):
+            parent_slug=re.sub(r'[^a-z0-9]+','-',competition.removesuffix(' Qualifiers').lower()).strip('-')
+            path=self.root/parent_slug/season/'schedule.json'
         if not path.exists():return None
         try:
             saved=json.loads(path.read_text(encoding='utf-8'))
-            return {str(event['id']) for event in saved['events'] if event.get('status',{}).get('type','finished')=='finished'}
+            from collection.selection import competition_by_name,in_competition
+            try:selection=competition_by_name(competition)
+            except ValueError:selection=None
+            return {str(event['id']) for event in saved['events'] if event.get('status',{}).get('type','finished')=='finished'
+                    and (namespace!='sofascore' or selection is None or in_competition(event,selection))}
         except (OSError,ValueError,KeyError,TypeError):
             warnings.append('A saved schedule could not be read. Its target count is unknown.');return None
 
@@ -76,6 +83,7 @@ class DashboardModel:
         for path in inventory_paths(self.ensemble,local_worker=self.worker):
             try:
                 saved=read_progress(path)
+                self_schedules=saved.get('schedules',{})
                 worker=saved.get('worker_id')
                 if worker!=path.stem:raise ValueError('Worker identity mismatch')
                 if worker not in workers:
@@ -87,6 +95,7 @@ class DashboardModel:
                     rows.append(row);all_keys.add(key);workers[worker]['records']+=1
                     if worker in row.get('origins',[]):workers[worker]['collected']+=1
                 workers[worker]['inventory_at']=max((row.get('updated_at','') for row in saved['records'].values()),default=None)
+                workers[worker]['saved_schedules']=self_schedules
             except (OSError,ValueError,TypeError,KeyError):warnings.append(f'Inventory for {path.stem} could not be read.')
         for worker,info in workers.items():
             path=self.ensemble/'runtime'/(worker+'.json')
@@ -129,8 +138,18 @@ class DashboardModel:
         def get_schedule(comp,season,namespace):
             key=(comp,season,namespace)
             if key not in schedules:schedules[key]=self._schedule(comp,season,namespace,warnings)
-            return schedules[key]
+            if schedules[key] is not None:return schedules[key]
+            scoped=[s for w in workers.values() for s in w.get('saved_schedules',{}).values()
+                    if s.get('scope_version')==2 and s.get('competition')==comp and s.get('season')==season]
+            return {str(mid) for s in scoped for mid in s.get('match_ids',[])} if scoped else None
         grid=build_grid(rows,plan,get_schedule,workers)
+        from collection.workInstructions import compile_instructions
+        from collection.jobCompletion import CompletionStore
+        decisions=CompletionStore(self.root).snapshot()
+        reports=[{'inventory':{'records':{r['key']:r for r in rows if r['holder']==worker},
+                   'schedules':info.get('saved_schedules',{})},'runtime':info.get('runtime') or {}} for worker,info in workers.items()]
+        for worker,info in workers.items():
+            info['completion']=compile_instructions(plan,worker,reports,decisions)['jobs'] if info.get('configured') else {}
         self.rows=rows
         return {'updated_at':datetime.now(timezone.utc).isoformat(),'local_worker':self.worker,
                 'coordinator':plan.coordinator,'plan_revision':plan.revision[:10],
@@ -141,6 +160,35 @@ class DashboardModel:
                 'competitions':sorted({r['competition'] for r in rows}|{j.competition for j in plan.jobs}),
                 'seasons':sorted({r['season'] for r in rows}|{j.as_dict()['season'] for j in plan.jobs},reverse=True),
                 'warnings':list(dict.fromkeys(warnings))}
+
+    def collection_reviews(self):
+        from collection.jobCompletion import CompletionStore
+        value=self.status()
+        jobs=[]
+        for worker in value['workers']:
+            for job in worker['jobs']:
+                jobs.append({**job,**worker.get('completion',{}).get(job['id'],{})})
+        return {'jobs':jobs,'history':CompletionStore(self.root).snapshot()['history'],
+                'can_review':self.worker==value['coordinator']}
+
+    def decide_collection(self,value):
+        from collection.jobCompletion import CompletionStore
+        plan=load_plan(self.plan_path)
+        if self.worker!=plan.coordinator:raise ValueError('Review collection exceptions on Main')
+        job=next((j for j in plan.jobs if j.id==value.get('job_id')),None)
+        if job is None:raise ValueError('Assignment no longer exists')
+        self.loaded=-100
+        summary=next(j for j in self.collection_reviews()['jobs'] if j['id']==job.id)
+        if value.get('configuration')!=summary['configuration']:raise ValueError('Configuration changed; refresh before reviewing')
+        action=value.get('action');resources=value.get('resources',[]);mid=str(value.get('match_id',''))
+        if action=='close' and not summary.get('done'):raise ValueError('Resolve remaining matches before declaring the season done')
+        if action in ('unavailable','retry'):
+            if not isinstance(resources,list) or any(not isinstance(r,str) for r in resources):raise ValueError('Choose resources to review')
+            allowed=set(summary.get('remaining',{}).get(mid,[]))|set(summary.get('waivers',{}).get(mid,[]))
+            if not resources or set(resources)-allowed:raise ValueError('Choose currently unresolved or reviewed resources')
+        attempts=next((r['attempts'] for r in summary.get('review',[]) if r['match_id']==mid),0)
+        CompletionStore(self.root).record(job,action,mid=mid,resources=resources,reason=str(value.get('reason','')),attempts=attempts)
+        self.loaded=-100
 
     def logs(self,filters):
         def value(key,default=''):return filters.get(key,[default])[0]

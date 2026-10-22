@@ -60,6 +60,15 @@ class WhoScoredClient(HttpClient):
             raise ProviderError('WhoScored profile needs its loaded career table')
         return result
 
+    def qualification_path(self,parent_path):
+        parser=_Directory();parser.feed(self.get_text(parent_path))
+        family='champions-league' if 'champions-league' in parent_path.lower() else 'europa-league'
+        links={path.lstrip('/') for path in parser.links
+               if re.fullmatch(r'/regions/250/tournaments/\d+/(?:show/)?[a-zA-Z0-9-]+/?',path,re.I)
+               and 'qualif' in path.lower() and family in path.lower()}
+        if len(links)>1:raise ProviderError('WhoScored qualifying competition is ambiguous')
+        return next(iter(links)) if links else parent_path
+
     def seasons(self, competition_path):
         parser=_Directory(); parser.feed(self.get_text(competition_path))
         if not parser.options: raise ProviderError('WhoScored season directory is missing')

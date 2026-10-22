@@ -12,6 +12,14 @@ from storage.pandasStore import atomic_json
 
 
 class DashboardTests(unittest.TestCase):
+    def test_legacy_mixed_schedule_has_separate_main_and_qualifier_targets(self):
+        atomic_json(self.root/'champions-league/2023-2024/schedule.json',{'events':[
+            {'id':1,'tournament':{}},{'id':2,'tournament':{'qualificationOrPreliminary':True}}]})
+        model=DashboardModel(self.root,self.ensemble,self.plan,'main');warnings=[]
+        self.assertEqual(model._schedule('Champions League','2023-2024','sofascore',warnings),{'1'})
+        self.assertEqual(model._schedule('Champions League Qualifiers','2023-2024','sofascore',warnings),{'2'})
+        self.assertIsNone(model._schedule('Champions League Qualifiers','2023-2024','whoscored_events',warnings))
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.base=Path(self.temp.name);self.root=self.base/'data';self.ensemble=self.base/'ensemble_data'
@@ -53,7 +61,9 @@ class DashboardTests(unittest.TestCase):
         atomic_json(self.root/'la-liga/2023-2024/schedule.json',{'events':[{'id':1},{'id':2}]})
         model=DashboardModel(self.root,self.ensemble,self.plan,'main');status=model.status()
         row=next(c for c in status['coverage'] if c['worker']=='main' and c['competition']=='La Liga' and c['season']=='2023-2024' and c['resource']=='average_positions')
-        self.assertEqual(row['total'],2);self.assertEqual(row['counts'],{'unavailable':1,'missing':1});self.assertTrue(row['planned'])
+        self.assertEqual(row['total'],2);self.assertEqual(row['counts'],{'unavailable':1,'missing':1});self.assertFalse(row['planned'])
+        required=next(c for c in status['coverage'] if c['worker']=='main' and c['competition']=='La Liga' and c['season']=='2023-2024' and c['resource']=='sofascore_stats')
+        self.assertTrue(required['planned'])
         unknown=next(c for c in status['coverage'] if c['competition']=='Premier League')
         self.assertIsNone(unknown['total'])
 
