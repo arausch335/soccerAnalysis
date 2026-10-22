@@ -1,5 +1,6 @@
 """Resumable, space-bounded ingestion without holding the collector lock."""
 from storage.layout import full_path
+from storage.sqlitePaths import readonly_uri
 from contextlib import closing
 import csv
 import json
@@ -178,6 +179,6 @@ def snapshot_data(root, output, *, check=lambda:None):
     for source in identity.glob('*'):
         if source.name=='review.sqlite':
             target=output/source.relative_to(root);target.parent.mkdir(parents=True,exist_ok=True)
-            with closing(sqlite3.connect('file:'+str(source)+'?mode=ro',uri=True)) as incoming,closing(sqlite3.connect(target)) as outgoing:
+            with closing(sqlite3.connect(readonly_uri(source),uri=True)) as incoming,closing(sqlite3.connect(target)) as outgoing:
                 incoming.backup(outgoing,pages=64,progress=lambda *args:check())
         elif source.suffix=='.json':pin(source)

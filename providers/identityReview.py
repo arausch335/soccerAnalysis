@@ -9,6 +9,7 @@ import json
 import re
 from pathlib import Path
 import sqlite3
+from storage.sqlitePaths import readonly_uri
 
 _ROOT=ContextVar('identity_review_root',default=None)
 PROVIDERS=('fotmob','whoscored')
@@ -37,7 +38,7 @@ def path_for(root=None):return review_root(root)/'_system'/'identity'/'review.sq
 
 @lru_cache(maxsize=16)
 def _decisions(path,mtime):
-    with sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True) as db:
+    with sqlite3.connect(readonly_uri(Path(path).resolve()),uri=True) as db:
         return [json.loads(row[0]) for row in db.execute('SELECT payload FROM decisions')]
 
 

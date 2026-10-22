@@ -4,6 +4,7 @@ Only this module owns the reporting databases. Other computers use the HTTP API,
 never a shared SQLite file. No third-party service or extra dependency is needed.
 """
 from storage.layout import system_path,organize_data_root
+from storage.sqlitePaths import readonly_uri
 from contextlib import contextmanager, closing
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -247,7 +248,7 @@ def read_logs(root, worker='', level='', search='', limit=200, after=0, *, focus
     if not path.exists():
         return {'rows': [], 'latest_id': 0}
     # Read-only: dashboard never creates or modifies the reporting database.
-    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=3)) as db:
+    with closing(sqlite3.connect(readonly_uri(path.resolve()), uri=True, timeout=3)) as db:
         db.row_factory = sqlite3.Row
         clauses = ['id > ?']; args = [after]
         if worker:
@@ -602,7 +603,7 @@ def diagnose(root):
         print('Last reporting status:',state.get('reporting',{}).get('message','Not reported yet'))
     outbox=system_path(root,'worker_runtime')/'reporting-outbox.sqlite';stream=None
     if outbox.exists():
-        with closing(sqlite3.connect(outbox.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+        with closing(sqlite3.connect(readonly_uri(outbox.resolve()),uri=True)) as db:
             print('Queued reports/log batches:',db.execute('SELECT COUNT(*) FROM queue').fetchone()[0])
             row=db.execute("SELECT value FROM meta WHERE key='stream'").fetchone();stream=row[0] if row else None
     headers={'Authorization':'Bearer '+token,'X-Worker-Instance':identity.get('instance_id','')}
