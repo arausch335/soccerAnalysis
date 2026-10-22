@@ -164,5 +164,76 @@ class PortableTransferTests(unittest.TestCase):
         prepare(self.root,self.bundle,quiet,session='repair')
         verify_bundle(self.bundle)
 
+    def test_old_plan_resumes_with_eight_gib_reserve_without_recopying_saved_data(self):
+        from tools.prepare_transfer import export_paths,RESERVE
+        self.assertEqual(RESERVE,8*1024**3)
+        original=shutil.copyfile;count=[0]
+        def interrupt(source,target,*args,**kwargs):
+            if Path(target).name=='copy.part':
+                count[0]+=1
+                if count[0]==4:raise OSError(errno.ENOSPC,'card full')
+            return original(source,target,*args,**kwargs)
+        with patch('tools.prepare_transfer.shutil.copyfile',side_effect=interrupt):
+            with self.assertRaises(OSError):prepare(self.root,self.bundle,quiet,session='old-reserve')
+        local,incomplete=export_paths(self.root.resolve(),self.bundle.resolve())
+        import json
+        plan=json.loads((local/'plan.json').read_text());plan['reserve']=512*1024**2
+        atomic_json(local/'plan.json',plan)
+        usage=shutil.disk_usage(self.bundle.parent);real_usage=shutil.disk_usage
+        def card_usage(path):
+            if Path(path).resolve()==self.bundle.parent.resolve():return type(usage)(usage.total,usage.used,RESERVE-1)
+            return real_usage(path)
+        with patch('tools.prepare_transfer.shutil.disk_usage',side_effect=card_usage), \
+             patch('tools.prepare_transfer.shutil.copyfile',side_effect=AssertionError('Copied below reserve')):
+            with self.assertRaisesRegex(OSError,'keep 8 GiB free'):
+                prepare(self.root,self.bundle,quiet,session='old-reserve')
+        self.assertTrue(incomplete.is_dir());self.assertTrue((local/'source').is_dir())
+        self.assertFalse((self.root/'_system/storage/portable-exports/old-reserve.json').exists())
+        saved=next(path for path in (incomplete/'data').rglob('*') if path.is_file())
+        companion=saved.with_name('._'+saved.name);companion.write_bytes(b'\x00\x05\x16\x07metadata')
+        def recovered_usage(path):
+            if Path(path).resolve()==self.bundle.parent.resolve():
+                free=RESERVE-1 if companion.exists() else RESERVE+64*1024**2
+                return type(usage)(usage.total,usage.used,free)
+            return real_usage(path)
+        with patch('tools.prepare_transfer.shutil.disk_usage',side_effect=recovered_usage):
+            prepare(self.root,self.bundle,quiet,session='old-reserve')
+        verify_bundle(self.bundle)
+
+    def test_metadata_cleanup_is_restricted_to_planned_companions_with_appledouble_header(self):
+        from tools.prepare_transfer import clean_transfer_metadata
+        stage=self.bundle/'data';folder=stage/'league/2024-2025/raw/provider';folder.mkdir(parents=True)
+        data=folder/'match.json';data.write_bytes(b'football data')
+        companion=folder/'._match.json';companion.write_bytes(b'\x00\x05\x16\x07metadata')
+        directory_companion=folder.parent/'._provider';directory_companion.write_bytes(b'\x00\x05\x16\x07metadata')
+        unrecognized=folder/'._other.json';unrecognized.write_bytes(b'\x00\x05\x16\x07metadata')
+        ordinary=folder/'._plain.json';ordinary.write_bytes(b'not AppleDouble')
+        outside=self.bundle.parent/'._unrelated';outside.write_bytes(b'\x00\x05\x16\x07metadata')
+        rows=[{'path':'league/2024-2025/raw/provider/match.json'},{'path':'league/2024-2025/raw/provider/plain.json'}]
+        self.assertEqual(clean_transfer_metadata(stage,rows),2)
+        self.assertEqual(data.read_bytes(),b'football data')
+        self.assertFalse(companion.exists());self.assertFalse(directory_companion.exists())
+        self.assertTrue(unrecognized.exists());self.assertTrue(ordinary.exists());self.assertTrue(outside.exists())
+
+    def test_new_copies_remove_metadata_sidecars_as_they_go(self):
+        original=shutil.copyfile
+        def copy_with_metadata(source,target,*args,**kwargs):
+            result=original(source,target,*args,**kwargs)
+            if Path(target).name=='copy.part':
+                target=Path(target);target.with_name('._'+target.name).write_bytes(b'\x00\x05\x16\x07metadata')
+            return result
+        from tools.prepare_transfer import remove_metadata_sidecar as clean
+        removals=[]
+        def record(path):
+            result=clean(path)
+            if result:removals.append(path)
+            return result
+        with patch('tools.prepare_transfer.shutil.copyfile',side_effect=copy_with_metadata), \
+             patch('tools.prepare_transfer.remove_metadata_sidecar',side_effect=record):
+            prepare(self.root,self.bundle,quiet)
+        verify_bundle(self.bundle)
+        self.assertTrue(removals)
+        self.assertFalse(list(self.bundle.rglob('._*')))
+
 
 if __name__=='__main__':unittest.main()

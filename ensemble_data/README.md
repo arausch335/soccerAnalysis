@@ -11,7 +11,9 @@ python -m tools.prepare_transfer --session main-to-msi --output "/Volumes/CARD/m
 
 The helper checks free drive space **before** copying. It accounts for the card's
 allocation blocks (often 128 KiB on exFAT), rounds up each file and directory, and
-reserves at least 512 MiB or 2% of available space, whichever is larger. A named session exports complete checkpoints with their raw dependencies
+reserves at least **8 GiB** (about 8.6 GB) or 2% of available space, whichever is larger.
+The estimate also allows for macOS AppleDouble metadata companions on exFAT.
+A named session exports complete checkpoints with their raw dependencies
 in independently verifiable bundles that fit the available space. Optionally add
 `--max-gib 20` to cap the file contents of one bundle further; filesystem
 allocation is checked separately. If more data remains, deliver the first
@@ -28,6 +30,14 @@ source snapshot and plan under Main's
 and reuses them, recopies damaged or partial files, and only publishes the final
 bundle after verification. Do not delete these recovery folders or try to import
 an `.incomplete` folder. They are cleaned automatically after successful export.
+The 8 GiB minimum also applies when resuming an older plan. On resume, the helper
+removes AppleDouble metadata companions of planned files and directories inside
+the temporary transfer folder, checking their file header first. These macOS
+metadata files contain no collection data; source files and unrelated card
+contents are retained. New copies remove these companions as they go.
+An older, larger plan is checked against remaining capacity before copying; if
+it cannot fit while keeping the new reserve, the helper reports approximately
+how much additional space to free. It retains the same recovery folders.
 
 An interruption after the final folder appears but before its session receipt is
 saved can also be recovered by rerunning the same command. The session only marks

@@ -57,7 +57,32 @@ def verify_bundle(root):
     return manifest
 
 
-RESERVE=512*1024**2
+RESERVE=8*1024**3
+
+
+def remove_metadata_sidecar(path):
+    """Remove only an AppleDouble companion, never a data file or a symlink."""
+    sidecar=path.with_name('._'+path.name)
+    if sidecar.is_symlink():return 0
+    try:
+        with sidecar.open('rb') as stream:
+            if stream.read(4)!=b'\x00\x05\x16\x07':return 0
+        sidecar.unlink()
+        return 1
+    except FileNotFoundError:return 0
+
+
+def clean_transfer_metadata(stage,rows):
+    """Restrict cleanup to companions of planned files and their directories."""
+    directories=set();removed=0
+    for row in rows:
+        target=checked_path(stage,row['path'])
+        removed+=remove_metadata_sidecar(target)
+        parent=target.parent
+        while parent!=stage.parent and parent not in directories:
+            directories.add(parent);removed+=remove_metadata_sidecar(parent)
+            parent=parent.parent
+    return removed
 
 
 def allocation_unit(path):
@@ -91,10 +116,12 @@ class Footprint:
         paths=set(paths)-self.paths;directories=set();payload=allocated=0
         for relative in paths:
             size=self.rows[relative]['size'];payload+=size
-            allocated+=max(1,(size+self.unit-1)//self.unit)*self.unit+1024
+            # macOS can create a 4-KiB AppleDouble file for each entry on exFAT;
+            # that companion occupies a full allocation unit as well.
+            allocated+=max(1,(size+self.unit-1)//self.unit)*self.unit+self.unit+1024
             for parent in Path(relative).parents:
                 if parent!=Path('.') and parent.as_posix() not in self.directories:directories.add(parent.as_posix())
-        allocated+=len(directories)*(self.unit+1024)
+        allocated+=len(directories)*(2*self.unit+1024)
         return payload,allocated,directories,paths
     def add(self,paths):
         payload,allocated,directories,paths=self.extra(paths)
@@ -103,6 +130,10 @@ class Footprint:
     def fits(self,paths,disk_budget,payload_budget):
         payload,allocated,_,_=self.extra(paths)
         return self.allocated+allocated<=disk_budget and self.payload+payload<=payload_budget
+
+
+def manifest_space(manifest,unit):
+    return math.ceil(len(json.dumps(manifest,ensure_ascii=False).encode())/unit)*unit+4*unit+4096
 
 
 def artifact_groups(files):
@@ -151,6 +182,9 @@ def saved_source(local):
 
 def complete_copy(root,output,local,incomplete,plan,report):
     manifest=plan['manifest'];rows=manifest['files'];stage=incomplete/'data'
+    # A retained plan may predate the larger reserve. Do not silently continue
+    # filling the card using its old, smaller limit.
+    reserve=max(RESERVE,plan['reserve'])
     control=incomplete/'plan-id.json'
     expected=hashlib.sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest()
     if incomplete.exists():
@@ -164,12 +198,33 @@ def complete_copy(root,output,local,incomplete,plan,report):
     else:
         if not incomplete.exists():
             incomplete.mkdir();atomic_json(control,{'id':expected})
-        stage.mkdir(exist_ok=True)
+        retained=stage.exists();stage.mkdir(exist_ok=True)
+        if retained:report('Checking macOS metadata companions in the temporary transfer folder; saved collection files are retained.',flush=True)
+        removed=clean_transfer_metadata(stage,rows) if retained else 0
+        removed+=remove_metadata_sidecar(control)
+        if removed:report(f'Removed {removed:,} AppleDouble metadata companions from the temporary transfer.',flush=True)
         leftover=incomplete/'copy.part'
         if leftover.is_symlink():raise ValueError('Incomplete copy contains a symbolic link')
         leftover.unlink(missing_ok=True)
+        remove_metadata_sidecar(leftover)
         copied=resumed=0;unit=allocation_unit(output.parent)
-        report(f"Destination allocation unit: {unit:,} bytes; estimated bundle allocation: {plan['allocated']:,} bytes. Incomplete copies are retained for resume.",flush=True)
+        report(f"Destination allocation unit: {unit:,} bytes; estimated bundle allocation: {plan['allocated']:,} bytes; free-space reserve: {reserve/1024**3:g} GiB. Incomplete copies are retained for resume.",flush=True)
+        if retained:
+            # Check remaining capacity before spending an hour verifying/copying
+            # an older plan that selected too much for the new reserve.
+            pending=Footprint({row['path']:row for row in rows},unit);missing=[];checked_directories=set()
+            for row in rows:
+                target=checked_path(stage,row['path'])
+                if not target.is_file() or target.stat().st_size!=row['size']:missing.append(row['path'])
+                parent=target.parent
+                while parent!=stage and parent not in checked_directories:
+                    checked_directories.add(parent)
+                    if parent.exists():pending.directories.add(parent.relative_to(stage).as_posix())
+                    parent=parent.parent
+            pending.add(missing)
+            shortage=reserve+pending.allocated+manifest_space(manifest,unit)-shutil.disk_usage(output.parent).free
+            if shortage>0:
+                raise OSError(f'Saved bundle needs about {shortage/1024**3:.2f} GiB more free space to keep {reserve/1024**3:g} GiB free. No collection files were copied or removed; partial copy retained at {incomplete}. Free space and rerun the SAME command')
         for index,row in enumerate(rows,1):
             relative=row['path'];target=checked_path(stage,relative);sha=row['sha256']
             # An existing verified file is already durable on the card; never
@@ -180,27 +235,36 @@ def complete_copy(root,output,local,incomplete,plan,report):
                 incoming=checked_path(local/'source',relative)
                 if not incoming.is_file() or incoming.stat().st_size!=row['size'] or digest(incoming)!=sha:
                     raise ValueError(f'Pinned source differs; partial copy retained: {relative}')
-                need=max(1,(row['size']+unit-1)//unit)*unit+1024
+                need=max(1,(row['size']+unit-1)//unit)*unit+unit+1024
+                new_parents=[]
                 parent=target.parent
                 while parent!=stage and not parent.exists():
-                    need+=unit+1024;parent=parent.parent
-                if shutil.disk_usage(output.parent).free<need+plan['reserve']:
-                    raise OSError(f'Drive reserve reached. Partial copy retained at {incomplete}. Free space and rerun the SAME command to resume')
+                    new_parents.append(parent);need+=2*unit+1024;parent=parent.parent
+                if shutil.disk_usage(output.parent).free<need+reserve:
+                    raise OSError(f'Drive reserve reached ({reserve/1024**3:g} GiB kept free). Partial copy retained at {incomplete}. Free space and rerun the SAME command to resume')
                 target.parent.mkdir(parents=True,exist_ok=True)
+                for parent in new_parents:remove_metadata_sidecar(parent)
                 temporary=incomplete/'copy.part'
                 if temporary.is_symlink():raise ValueError('Incomplete copy contains a symbolic link')
                 try:
                     shutil.copyfile(incoming,temporary)
                     if temporary.stat().st_size!=row['size'] or digest(temporary)!=sha:
                         raise OSError(f'Copy checksum differs: {relative}')
-                    os.replace(temporary,target);copied+=1
+                    os.replace(temporary,target)
+                    remove_metadata_sidecar(target);remove_metadata_sidecar(temporary)
+                    copied+=1
                 except OSError as exc:
                     raise OSError(f'Copy interrupted; verified files retained at {incomplete}. Rerun the SAME command to resume: {exc}') from exc
                 finally:
                     try:temporary.unlink(missing_ok=True)
                     except OSError:pass  # Unplugged media is cleaned on the next resume.
             if index%1000==0:report(f'Verified {index}/{len(rows)} files ({resumed} reused; {copied} copied)',flush=True)
-        atomic_json(stage/MANIFEST,manifest);verify_bundle(stage)
+        manifest_need=manifest_space(manifest,unit)
+        if shutil.disk_usage(output.parent).free<reserve+manifest_need:
+            raise OSError(f'Drive reserve reached before publishing ({reserve/1024**3:g} GiB kept free). Partial copy retained at {incomplete}; rerun the SAME command after freeing space')
+        atomic_json(stage/MANIFEST,manifest)
+        remove_metadata_sidecar(stage/MANIFEST)
+        verify_bundle(stage)
         if output.exists():raise ValueError('Output appeared during copy; incomplete copy retained')
         os.rename(stage,output)
     # Receipt only after the complete selected bundle is verified and published.
@@ -279,7 +343,9 @@ def prepare(root,output,report=print,*,session=None,max_bytes=None):
         # Leave room for the bundle manifest, filesystem metadata and unrelated
         # writes. Each file and each directory is also estimated independently.
         reserve=max(RESERVE,math.ceil(free*.02))
-        disk_budget=max(0,free-reserve)
+        # Reserve the final manifest separately; it also needs allocated blocks
+        # after a chunk has filled its planned data budget.
+        disk_budget=max(0,free-reserve-manifest_space({'files':list(rows_by_path.values())},unit)-4096)
         payload_budget=max_bytes if max_bytes is not None else float('inf')
         footprint=Footprint(rows_by_path,unit)
         if session is None:
