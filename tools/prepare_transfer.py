@@ -5,13 +5,15 @@ import json
 import os
 from pathlib import Path
 import shutil
-import tempfile
+import hashlib
+import math
+from contextlib import contextmanager
 
 from filelock import FileLock
 from collection.storageAgent import season_files
 from collection.storageTransfer import digest,safe_path,check_hash,link_or_copy
 from collection.workerIdentity import read_worker_id
-from storage.layout import system_path
+from collection.maintenance import LowSpace
 from storage.pandasStore import atomic_json
 
 FORMAT='soccer-portable-transfer-v1'
@@ -55,17 +57,195 @@ def verify_bundle(root):
     return manifest
 
 
+RESERVE=512*1024**2
+
+
+def allocation_unit(path):
+    """The destination's allocation unit, not the source's file byte count."""
+    if hasattr(os,'statvfs'):
+        info=os.statvfs(path)
+        return max(4096,info.f_frsize or info.f_bsize)
+    # Windows (including external exFAT cards and network drive letters).
+    import ctypes
+    from ctypes import wintypes
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    kernel.GetVolumePathNameW.argtypes=[wintypes.LPCWSTR,wintypes.LPWSTR,wintypes.DWORD]
+    kernel.GetVolumePathNameW.restype=wintypes.BOOL
+    kernel.GetDiskFreeSpaceW.argtypes=[wintypes.LPCWSTR,*([ctypes.POINTER(wintypes.DWORD)]*4)]
+    kernel.GetDiskFreeSpaceW.restype=wintypes.BOOL
+    volume=ctypes.create_unicode_buffer(32768)
+    if not kernel.GetVolumePathNameW(str(path),volume,len(volume)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    sectors=wintypes.DWORD();size=wintypes.DWORD();free=wintypes.DWORD();total=wintypes.DWORD()
+    if not kernel.GetDiskFreeSpaceW(volume,ctypes.byref(sectors),ctypes.byref(size),ctypes.byref(free),ctypes.byref(total)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return max(4096,sectors.value*size.value)
+
+
+class Footprint:
+    """Incremental estimate: rounded files, directories and directory entries."""
+    def __init__(self,rows,unit):
+        self.rows=rows;self.unit=unit;self.paths=set();self.directories=set()
+        self.payload=0;self.allocated=0
+    def extra(self,paths):
+        paths=set(paths)-self.paths;directories=set();payload=allocated=0
+        for relative in paths:
+            size=self.rows[relative]['size'];payload+=size
+            allocated+=max(1,(size+self.unit-1)//self.unit)*self.unit+1024
+            for parent in Path(relative).parents:
+                if parent!=Path('.') and parent.as_posix() not in self.directories:directories.add(parent.as_posix())
+        allocated+=len(directories)*(self.unit+1024)
+        return payload,allocated,directories,paths
+    def add(self,paths):
+        payload,allocated,directories,paths=self.extra(paths)
+        self.payload+=payload;self.allocated+=allocated
+        self.directories.update(directories);self.paths.update(paths)
+    def fits(self,paths,disk_budget,payload_budget):
+        payload,allocated,_,_=self.extra(paths)
+        return self.allocated+allocated<=disk_budget and self.payload+payload<=payload_budget
+
+
+def artifact_groups(files):
+    """A checkpoint and its referenced raw files must travel in the same bundle."""
+    common={key for key in files if key in STATE or
+            ('raw' not in Path(key).parts and 'match_checkpoints' not in Path(key).parts)}
+    groups=[];assigned=set()
+    for key in sorted(files):
+        if not key.endswith('/CURRENT.json'):continue
+        parent=key.rsplit('/',1)[0];generation=json.loads(files[key].read_text())['generation']
+        from storage.pandasStore import SCHEMA
+        members={key}|{parent+'/snapshots/'+generation+'/'+name+'.csv' for name in SCHEMA}
+        matches=files[parent+'/snapshots/'+generation+'/matches.csv']
+        import csv
+        with matches.open(encoding='utf-8',newline='') as stream:
+            for row in csv.DictReader(stream):
+                metadata=json.loads(row['metadata'])
+                def paths(value):
+                    if isinstance(value,dict):
+                        for item in value.values():yield from paths(item)
+                    elif isinstance(value,list):
+                        for item in value:yield from paths(item)
+                    elif isinstance(value,str):yield value.replace('\\','/')
+                season=parent.split('/match_checkpoints/')[0]
+                for value in paths({k:metadata.get(k,{}) for k in ('raw_response_files','sofascore_spatial_files')}):
+                    if season+'/'+value in files:members.add(season+'/'+value)
+        groups.append(members);assigned.update(members)
+    groups.extend([{key} for key in sorted(set(files)-assigned-common)])
+    return common,groups
+
+
+def export_paths(root,output):
+    key=hashlib.sha256(str(output).encode()).hexdigest()[:24]
+    local=root/'_system/storage/portable-exports/in-progress'/key
+    return local,output.with_name('.'+output.name+'.incomplete')
+
+
+@contextmanager
+def saved_source(local):
+    try:yield
+    finally:
+        # Initial planning can fail without starting a card copy. Only plans
+        # that have actually started need to keep their pinned generations.
+        if local.exists() and not (local/'plan.json').exists():shutil.rmtree(local)
+
+
+def complete_copy(root,output,local,incomplete,plan,report):
+    manifest=plan['manifest'];rows=manifest['files'];stage=incomplete/'data'
+    control=incomplete/'plan-id.json'
+    expected=hashlib.sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest()
+    if incomplete.exists():
+        if incomplete.is_symlink() or stage.is_symlink():raise ValueError('Incomplete output contains a symbolic link')
+        if not control.is_file() or json.loads(control.read_text()).get('id')!=expected:
+            if any(incomplete.iterdir()):raise ValueError('Incomplete output belongs to a different transfer; preserved for review')
+            atomic_json(control,{'id':expected})
+    if output.exists():
+        # Recover an interruption after publishing but before saving the receipt.
+        if verify_bundle(output)!=manifest:raise ValueError('Existing output differs from the interrupted transfer')
+    else:
+        if not incomplete.exists():
+            incomplete.mkdir();atomic_json(control,{'id':expected})
+        stage.mkdir(exist_ok=True)
+        leftover=incomplete/'copy.part'
+        if leftover.is_symlink():raise ValueError('Incomplete copy contains a symbolic link')
+        leftover.unlink(missing_ok=True)
+        copied=resumed=0;unit=allocation_unit(output.parent)
+        report(f"Destination allocation unit: {unit:,} bytes; estimated bundle allocation: {plan['allocated']:,} bytes. Incomplete copies are retained for resume.",flush=True)
+        for index,row in enumerate(rows,1):
+            relative=row['path'];target=checked_path(stage,relative);sha=row['sha256']
+            # An existing verified file is already durable on the card; never
+            # recopy it just because the previous process was interrupted.
+            if target.is_file() and target.stat().st_size==row['size'] and digest(target)==sha:
+                resumed+=1
+            else:
+                incoming=checked_path(local/'source',relative)
+                if not incoming.is_file() or incoming.stat().st_size!=row['size'] or digest(incoming)!=sha:
+                    raise ValueError(f'Pinned source differs; partial copy retained: {relative}')
+                need=max(1,(row['size']+unit-1)//unit)*unit+1024
+                parent=target.parent
+                while parent!=stage and not parent.exists():
+                    need+=unit+1024;parent=parent.parent
+                if shutil.disk_usage(output.parent).free<need+plan['reserve']:
+                    raise OSError(f'Drive reserve reached. Partial copy retained at {incomplete}. Free space and rerun the SAME command to resume')
+                target.parent.mkdir(parents=True,exist_ok=True)
+                temporary=incomplete/'copy.part'
+                if temporary.is_symlink():raise ValueError('Incomplete copy contains a symbolic link')
+                try:
+                    shutil.copyfile(incoming,temporary)
+                    if temporary.stat().st_size!=row['size'] or digest(temporary)!=sha:
+                        raise OSError(f'Copy checksum differs: {relative}')
+                    os.replace(temporary,target);copied+=1
+                except OSError as exc:
+                    raise OSError(f'Copy interrupted; verified files retained at {incomplete}. Rerun the SAME command to resume: {exc}') from exc
+                finally:
+                    try:temporary.unlink(missing_ok=True)
+                    except OSError:pass  # Unplugged media is cleaned on the next resume.
+            if index%1000==0:report(f'Verified {index}/{len(rows)} files ({resumed} reused; {copied} copied)',flush=True)
+        atomic_json(stage/MANIFEST,manifest);verify_bundle(stage)
+        if output.exists():raise ValueError('Output appeared during copy; incomplete copy retained')
+        os.rename(stage,output)
+    # Receipt only after the complete selected bundle is verified and published.
+    session=manifest.get('session')
+    if session:
+        receipt=root/'_system/storage/portable-exports'/(session+'.json')
+        previous=json.loads(receipt.read_text()) if receipt.exists() else {}
+        previous.update({row['path']:row['sha256'] for row in rows});atomic_json(receipt,previous)
+    # Cleanup only after success. A failure leaves both verified card files and
+    # pinned old checkpoint generations available for the next identical run.
+    shutil.rmtree(incomplete,ignore_errors=True)
+    shutil.rmtree(local)
+    report(f"Portable bundle ready: {output} ({manifest['seasons']} seasons, {len(rows)} verified files)",flush=True)
+    if manifest['remaining_files']:
+        report(f"{manifest['remaining_files']} files remain. Deliver this bundle, then repeat with the same --session and a NEW --output folder.",flush=True)
+    return output
+
+
 def prepare(root,output,report=print,*,session=None,max_bytes=None):
     root=full_path(root);output=Path(output).expanduser()
     if output.is_symlink():raise ValueError('Choose a regular output folder')
     output=full_path(output)
-    if output.exists():raise ValueError('Output already exists; choose a new folder')
     if not output.parent.is_dir():raise ValueError('Output parent must exist; check that the SD card is mounted')
     if root==output or root in output.parents or output in root.parents:raise ValueError('Bundle and source data must be separate folders')
     if json.loads((root/'.soccer-scraper.json').read_text()).get('format')!=1:raise ValueError('Source must be a marked scraper data folder')
+    if max_bytes is not None and (not isinstance(max_bytes,int) or max_bytes<=0):raise ValueError('Bundle byte limit must be positive')
+    if session is not None:
+        import re
+        if not re.fullmatch('[a-zA-Z0-9_-]{1,64}',session):raise ValueError('Use a simple transfer session name')
     workspace=root/'_system/storage';workspace.mkdir(parents=True,exist_ok=True)
-    with FileLock(str(workspace/'portable-export.lock'),timeout=0), tempfile.TemporaryDirectory(prefix='x-',dir=workspace) as pinned:
-        snapshot=Path(pinned)
+    local,incomplete=export_paths(root,output)
+    with FileLock(str(workspace/'portable-export.lock'),timeout=0), saved_source(local):
+        plan_path=local/'plan.json'
+        if plan_path.exists():
+            plan=json.loads(plan_path.read_text())
+            if plan['manifest'].get('session')!=session or plan.get('max_bytes')!=max_bytes:
+                raise ValueError('Resume using the same --session and --max-gib as the interrupted copy')
+            report('Resuming saved transfer plan; completed files will be checked and reused.',flush=True)
+            return complete_copy(root,output,local,incomplete,plan,report)
+        if output.exists():raise ValueError('Output already exists; choose a new folder')
+        if incomplete.exists():raise ValueError('An unrecognized incomplete folder exists; preserved for review')
+        # No copy has started without a saved plan. An abandoned initial snapshot
+        # is disposable; every pin still has its original collector file.
+        if local.exists():shutil.rmtree(local)
+        snapshot=local/'source';snapshot.mkdir(parents=True)
         files={};seasons=set()
         for prefix in ('',*sorted(LEGACY)):
             archive=root/prefix
@@ -90,77 +270,38 @@ def prepare(root,output,report=print,*,session=None,max_bytes=None):
         for relative,path in sorted(files.items()):
             checked_path(root,relative)
             rows_by_path[relative]={'path':relative,'size':path.stat().st_size,'sha256':digest(path)}
-        receipt_path=None;previous={}
-        if session is not None:
-            import re
-            if not re.fullmatch('[a-zA-Z0-9_-]{1,64}',session):raise ValueError('Use a simple transfer session name')
-            receipt_path=root/'_system/storage/portable-exports'/(session+'.json')
-            previous=json.loads(receipt_path.read_text()) if receipt_path.exists() else {}
+
+        receipt_path=root/'_system/storage/portable-exports'/(session+'.json') if session else None
+        previous=json.loads(receipt_path.read_text()) if receipt_path and receipt_path.exists() else {}
         pending={key for key,row in rows_by_path.items() if previous.get(key)!=row['sha256']}
         if not pending:raise ValueError('All current files were already exported in this session; deliver its earlier bundles first')
-        budget=max(0,shutil.disk_usage(output.parent).free-100*1024**2)
-        if max_bytes is not None:budget=min(budget,max_bytes)
-        selected=set(files)
-        if session is not None or sum(row['size'] for row in rows_by_path.values())>budget:
-            if session is None:raise OSError('Not enough free space for the full bundle; use --session main-to-msi to export in verified chunks')
-            # A checkpoint and its referenced raw data travel together. Every
-            # partial bundle is independently verifiable and importable.
-            common={key for key in files if key in STATE or
-                    ('raw' not in Path(key).parts and 'match_checkpoints' not in Path(key).parts)}
-            groups=[];assigned=set()
-            for key in sorted(files):
-                if not key.endswith('/CURRENT.json'):continue
-                parent=key.rsplit('/',1)[0];generation=json.loads(files[key].read_text())['generation']
-                from storage.pandasStore import SCHEMA
-                members={key}|{parent+'/snapshots/'+generation+'/'+name+'.csv' for name in SCHEMA}
-                matches=files[parent+'/snapshots/'+generation+'/matches.csv']
-                import csv
-                with matches.open(encoding='utf-8',newline='') as stream:
-                    for row in csv.DictReader(stream):
-                        metadata=json.loads(row['metadata'])
-                        def paths(value):
-                            if isinstance(value,dict):
-                                for item in value.values():yield from paths(item)
-                            elif isinstance(value,list):
-                                for item in value:yield from paths(item)
-                            elif isinstance(value,str):yield value.replace('\\','/')
-                        season=parent.split('/match_checkpoints/')[0]
-                        for value in paths({k:metadata.get(k,{}) for k in ('raw_response_files','sofascore_spatial_files')}):
-                            if season+'/'+value in files:members.add(season+'/'+value)
-                groups.append(members);assigned.update(members)
-            groups.extend([{key} for key in sorted(set(files)-assigned-common)])
-            selected=set(common)
-            size=sum(rows_by_path[key]['size'] for key in selected)
-            if size>budget:raise OSError('Free space is too small even for bundle metadata; earlier bundles and all source data retained')
+        unit=allocation_unit(output.parent);free=shutil.disk_usage(output.parent).free
+        # Leave room for the bundle manifest, filesystem metadata and unrelated
+        # writes. Each file and each directory is also estimated independently.
+        reserve=max(RESERVE,math.ceil(free*.02))
+        disk_budget=max(0,free-reserve)
+        payload_budget=max_bytes if max_bytes is not None else float('inf')
+        footprint=Footprint(rows_by_path,unit)
+        if session is None:
+            if not footprint.fits(files,disk_budget,payload_budget):
+                raise OSError('Not enough allocated drive space for the full bundle; use --session main-to-msi for verified chunks')
+            footprint.add(files)
+        else:
+            common,groups=artifact_groups(files)
+            if not footprint.fits(common,disk_budget,payload_budget):
+                raise OSError('Free space is too small even for bundle metadata; source data retained')
+            footprint.add(common)
             for group in groups:
-                if not group & pending:continue
-                extra=group-selected;amount=sum(rows_by_path[key]['size'] for key in extra)
-                if size+amount<=budget:selected.update(group);size+=amount
-            if not (selected-common)&pending and pending-common:
-                raise OSError('Free space is too small for the next complete checkpoint or raw file; all source data retained')
-        remaining=pending-selected
-        files={key:files[key] for key in sorted(selected)}
-        with tempfile.TemporaryDirectory(prefix='soccer-transfer-',dir=output.parent) as temporary:
-            stage=Path(temporary)/'data';stage.mkdir();rows=[]
-            for index,(relative,source) in enumerate(sorted(files.items()),1):
-                checked_path(root,relative)
-                target=stage/relative;target.parent.mkdir(parents=True,exist_ok=True)
-                if shutil.disk_usage(output.parent).free<source.stat().st_size+100*1024**2:
-                    raise OSError('Drive space changed during copying; source and earlier bundles retained')
-                sha=rows_by_path[relative]['sha256'];shutil.copyfile(source,target)
-                if digest(target)!=sha:raise OSError(f'Source changed during transfer: {relative}')
-                rows.append({'path':relative,'size':target.stat().st_size,'sha256':sha})
-                if index%1000==0:report(f'Copied and verified {index}/{len(files)} files',flush=True)
-            manifest={'format':FORMAT,'worker':read_worker_id(root),'seasons':len(seasons),'files':rows,
-                      'partial':bool(remaining),'remaining_files':len(remaining),'session':session}
-            atomic_json(stage/MANIFEST,manifest);verify_bundle(stage)
-            if output.exists():raise ValueError('Output appeared while copying; existing files preserved')
-            os.rename(stage,output)
-        if receipt_path is not None:
-            previous.update({row['path']:row['sha256'] for row in rows});atomic_json(receipt_path,previous)
-    report(f'Portable bundle ready: {output} ({len(seasons)} seasons, {len(rows)} verified files)',flush=True)
-    if remaining:report(f'{len(remaining)} files remain. Deliver this bundle, then repeat with the same --session and a NEW --output folder.',flush=True)
-    return output
+                if group & pending and footprint.fits(group,disk_budget,payload_budget):footprint.add(group)
+            if not (footprint.paths-common)&pending and pending-common:
+                raise OSError('Free space is too small for the next complete checkpoint or raw file; source data retained')
+        remaining=pending-footprint.paths
+        manifest={'format':FORMAT,'worker':read_worker_id(root),'seasons':len(seasons),
+                  'files':[rows_by_path[key] for key in sorted(footprint.paths)],
+                  'partial':bool(remaining),'remaining_files':len(remaining),'session':session}
+        plan={'manifest':manifest,'allocated':footprint.allocated,'reserve':reserve,'max_bytes':max_bytes}
+        atomic_json(plan_path,plan)
+        return complete_copy(root,output,local,incomplete,plan,report)
 
 
 def main(argv=None):
@@ -179,7 +320,7 @@ def main(argv=None):
             if args.max_gib is not None and args.max_gib<=0:raise ValueError('--max-gib must be positive')
             prepare(args.data_root,args.output,session=args.session,max_bytes=int(args.max_gib*1024**3) if args.max_gib else None)
         else:parser.error('Choose --output or --verify')
-    except (OSError,ValueError,KeyError) as exc:parser.exit(2,f'Transfer preparation failed: {exc}\n')
+    except (OSError,ValueError,KeyError,LowSpace) as exc:parser.exit(2,f'Transfer preparation failed: {exc}\n')
     return 0
 
 

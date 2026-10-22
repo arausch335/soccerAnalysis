@@ -1,6 +1,9 @@
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+import errno
+import shutil
 from tests.test_ensemble import populate,quiet
 from tools.prepare_transfer import prepare,verify_bundle
 from collection.ensemble import import_pending
@@ -70,6 +73,96 @@ class PortableTransferTests(unittest.TestCase):
         self.assertTrue((raw/'extra-a.json').is_file())
         with self.assertRaisesRegex(ValueError,'already exported'):
             prepare(self.root,self.bundle.with_name('main-data-03'),quiet,session='card',max_bytes=130000)
+
+    def test_card_allocation_budget_rounds_tiny_files_and_directory_overhead(self):
+        from tools.prepare_transfer import Footprint,RESERVE
+        for index in range(40):
+            atomic_json(self.root/f'premier-league/2024-2025/raw/sofascore/extra-{index}.json',{'small':index})
+        oracle=self.bundle.with_name('oracle')
+        prepare(self.root,oracle,quiet)
+        rows={row['path']:row for row in verify_bundle(oracle)['files']}
+        unit=131072;full=Footprint(rows,unit);full.add(rows)
+        self.assertGreater(full.allocated,full.payload*3)
+        budget=full.allocated-10*unit
+        usage=shutil.disk_usage(self.bundle.parent)
+        disk_usage=shutil.disk_usage
+        def card_usage(path):
+            if Path(path).resolve()==self.bundle.parent.resolve():return type(usage)(usage.total,usage.used,RESERVE+budget)
+            return disk_usage(path)
+        with patch('tools.prepare_transfer.allocation_unit',return_value=unit), \
+             patch('tools.prepare_transfer.shutil.disk_usage',side_effect=card_usage):
+            prepare(self.root,self.bundle,quiet,session='allocated')
+        manifest=verify_bundle(self.bundle)
+        selected={row['path']:row for row in manifest['files']}
+        actual=Footprint(selected,unit);actual.add(selected)
+        self.assertLessEqual(actual.allocated,budget)
+        self.assertTrue(manifest['partial'])
+        self.assertLess(len(selected),len(rows))
+
+    def test_interrupted_copy_reuses_verified_files_and_pins_retired_source_generations(self):
+        from tools.prepare_transfer import export_paths
+        original=shutil.copyfile;copied=[]
+        def interrupt(source,target,*args,**kwargs):
+            if Path(target).name=='copy.part':
+                if len(copied)==7:
+                    Path(target).write_bytes(b'partial')
+                    raise OSError(errno.ENOSPC,'simulated full card')
+                copied.append(Path(source))
+            return original(source,target,*args,**kwargs)
+        with patch('tools.prepare_transfer.shutil.copyfile',side_effect=interrupt):
+            with self.assertRaisesRegex(OSError,'retained'):
+                prepare(self.root,self.bundle,quiet,session='resume')
+        local,incomplete=export_paths(self.root.resolve(),self.bundle.resolve())
+        self.assertTrue((local/'plan.json').exists());self.assertTrue(incomplete.exists())
+        self.assertFalse((incomplete/'copy.part').exists());self.assertFalse(self.bundle.exists())
+        self.assertFalse((self.root/'_system/storage/portable-exports/resume.json').exists())
+        live=PandasStore(self.root/'premier-league/2024-2025/match_checkpoints/1')
+        retired=live.current_directory
+        dataset=live.from_csv();dataset.matches[1].metadata['later_scrape']=True;live.to_csv(dataset)
+        self.assertFalse(retired.exists())
+        repeated=[]
+        def record(source,target,*args,**kwargs):
+            if Path(target).name=='copy.part':repeated.append(Path(source))
+            return original(source,target,*args,**kwargs)
+        with patch('tools.prepare_transfer.season_files',side_effect=AssertionError('Resnapshot instead of resuming')), \
+             patch('tools.prepare_transfer.shutil.copyfile',side_effect=record):
+            prepare(self.root,self.bundle,quiet,session='resume')
+        self.assertFalse(set(copied)&set(repeated))
+        verify_bundle(self.bundle)
+        exported=PandasStore(self.bundle/'premier-league/2024-2025/match_checkpoints/1').from_csv()
+        self.assertNotIn('later_scrape',exported.matches[1].metadata)
+        self.assertTrue(live.from_csv().matches[1].metadata['later_scrape'])
+        self.assertFalse(incomplete.exists());self.assertFalse(local.exists())
+
+    def test_receipt_failure_after_publish_is_recoverable_without_recopied_files(self):
+        from tools.prepare_transfer import atomic_json as original
+        receipt=self.root/'_system/storage/portable-exports/receipt.json'
+        def fail(path,*args,**kwargs):
+            if Path(path).resolve()==receipt.resolve():raise OSError('simulated receipt write failure')
+            return original(path,*args,**kwargs)
+        with patch('tools.prepare_transfer.atomic_json',side_effect=fail):
+            with self.assertRaisesRegex(OSError,'receipt write failure'):
+                prepare(self.root,self.bundle,quiet,session='receipt')
+        verify_bundle(self.bundle)
+        with patch('tools.prepare_transfer.shutil.copyfile',side_effect=AssertionError('Already published bundle recopied')):
+            prepare(self.root,self.bundle,quiet,session='receipt')
+        self.assertTrue(receipt.is_file())
+
+    def test_corrupted_previously_copied_file_is_repaired_on_resume(self):
+        from tools.prepare_transfer import export_paths
+        original=shutil.copyfile;count=[0]
+        def interrupt(source,target,*args,**kwargs):
+            if Path(target).name=='copy.part':
+                count[0]+=1
+                if count[0]==4:raise OSError(errno.ENOSPC,'card full')
+            return original(source,target,*args,**kwargs)
+        with patch('tools.prepare_transfer.shutil.copyfile',side_effect=interrupt):
+            with self.assertRaises(OSError):prepare(self.root,self.bundle,quiet,session='repair')
+        _,incomplete=export_paths(self.root.resolve(),self.bundle.resolve())
+        target=next(path for path in (incomplete/'data').rglob('*') if path.is_file())
+        target.write_bytes(b'x'*target.stat().st_size)
+        prepare(self.root,self.bundle,quiet,session='repair')
+        verify_bundle(self.bundle)
 
 
 if __name__=='__main__':unittest.main()
