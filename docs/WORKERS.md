@@ -660,3 +660,16 @@ instruction protocol. A new worker waits if Main cannot supply matching
 instructions. The authenticated reply is saved in ignored
 `data/_system/workers/main-instructions.json`; no new token is needed. Instructions
 refresh with the background reporting poll and each new job authorization.
+
+
+### Reporting catch-up
+
+`python -m collection.reporting status` checks Main's reachability, token, original
+worker identity and queue identity. “Connection OK” does not mean Main has
+acknowledged the queued reports. A large queue with repeated acknowledgement
+timeouts can mean Main is overloaded even while that health check succeeds.
+Update and restart Main first, then update workers between saved jobs. Keep the
+original reporting databases: acknowledged batches are removed automatically,
+and retries do not duplicate logs. Identity observation timestamps no longer
+trigger repeated uploads of unchanged evidence. Reporting requests allow 30
+seconds for acknowledgement; inventory downloads still use a separate connection.

@@ -163,22 +163,50 @@ class ReportingStore:
         if not isinstance(events, list) or not 1 <= len(events) <= 100:
             raise ValueError('Invalid report batch')
         changed_inventory = False
+        suggestions_by_id = {}
+        validated_suggestions = {}
         with self.lock, self.connect() as db:
+            row = db.execute('SELECT * FROM workers WHERE worker=?', (worker,)).fetchone()
+            inventory = None  # Decode a potentially large inventory only for a delta.
+            inventory_json = row['inventory'] if row else None
+            version = row['version'] if row else None
+            runtime_json = row['runtime'] if row else None
+            sequence_seen = row['sequence'] if row else 0
+            instance_seen = row['instance'] if row else None
+            stream_seen = row['stream'] if row else None
             for event in events:
                 if not isinstance(event, dict):
                     raise ValueError('Invalid report')
                 instance, stream, sequence = event['instance_id'], event['stream'], event['sequence']
                 if not all(isinstance(v, str) and 1 <= len(v) <= 128 for v in (instance, stream)) or type(sequence) is not int or sequence < 1:
                     raise ValueError('Invalid reporting identity or sequence')
-                row = db.execute('SELECT * FROM workers WHERE worker=?', (worker,)).fetchone()
-                if row and row['instance'] and row['instance'] != instance:
+                if instance_seen and instance_seen != instance:
                     raise ValueError('Worker ID belongs to a different data folder')
-                if row and row['stream'] and row['stream'] != stream:
+                if stream_seen and stream_seen != stream:
                     raise ValueError('Reporting queue identity changed; restore the original worker queue')
-                if row and sequence <= row['sequence']:
-                    continue  # Acknowledgement was lost; replay has no side effects.
-                inventory = json.loads(row['inventory']) if row and row['inventory'] else None
-                version = row['version'] if row else None
+                # Suggestions are replayed after commit to repair an interrupted export,
+                # but identical proposals within a catch-up batch need processing once.
+                from providers.identityReview import validate
+                suggestions = event.get('identity_suggestions', [])
+                if not isinstance(suggestions, list) or len(suggestions) > 500:
+                    raise ValueError('Invalid identity suggestions')
+                for suggestion in suggestions:
+                    # Observation timestamps do not change identity evidence.
+                    normalized = ({k:v for k,v in suggestion.items() if k not in ('first_seen','last_seen')}
+                                  if isinstance(suggestion, dict) else suggestion)
+                    encoded = encode(normalized)
+                    if encoded not in validated_suggestions:
+                        validated_suggestions[encoded] = validate(normalized)
+                    proposal = dict(validated_suggestions[encoded])
+                    prior = suggestions_by_id.get(proposal['id'])
+                    if prior:
+                        contexts = prior.get('contexts', []) + proposal.get('contexts', [])
+                        proposal['contexts'] = list({encode(c): c for c in contexts}.values())[-5:]
+                        if prior.get('investigation', {}).get('checked_at', '') > proposal.get('investigation', {}).get('checked_at', ''):
+                            proposal['investigation'] = prior['investigation']
+                    suggestions_by_id[proposal['id']] = proposal
+                if sequence <= sequence_seen:
+                    continue  # Acknowledgement was lost; replay has no log side effects.
                 update = event.get('inventory')
                 if update is not None:
                     if not isinstance(update, dict) or update.get('worker_id') != worker or update.get('instance_id') != instance or update.get('format') != INVENTORY_FORMAT or not isinstance(update.get('records'), dict):
@@ -189,6 +217,8 @@ class ReportingStore:
                         for field in ('capabilities', 'origins', 'holders'):
                             if not isinstance(record.get(field, []), list) or any(not isinstance(v, str) for v in record.get(field, [])):
                                 raise ValueError('Invalid inventory evidence')
+                    if inventory is None and inventory_json is not None:
+                        inventory = json.loads(inventory_json)
                     if inventory is None or event.get('reset'):
                         inventory = {**update, 'records': {}}
                     if 'schedules' in update:
@@ -203,10 +233,6 @@ class ReportingStore:
                 runtime = event.get('runtime')
                 if runtime is not None and (not isinstance(runtime, dict) or runtime.get('worker_id') != worker or runtime.get('format') != RUNTIME_FORMAT):
                     raise ValueError('Runtime identity differs from the authenticated worker')
-                from providers.identityReview import validate
-                suggestions=event.get('identity_suggestions',[])
-                if not isinstance(suggestions,list) or len(suggestions)>500:raise ValueError('Invalid identity suggestions')
-                for suggestion in suggestions:validate(suggestion)
                 logs = event.get('logs', [])
                 if not isinstance(logs, list) or len(logs) > 100:
                     raise ValueError('Invalid logs')
@@ -215,13 +241,19 @@ class ReportingStore:
                         raise ValueError('Invalid log entry')
                     db.execute('INSERT INTO logs(worker,at,level,message) VALUES(?,?,?,?)',
                                (worker, log['at'], log['level'], log['message']))
-                db.execute('INSERT OR REPLACE INTO workers VALUES(?,?,?,?,?,?,?,?)',
-                           (worker, instance, stream, sequence, encode(inventory) if inventory is not None else None,
-                            version, encode(runtime) if runtime is not None else row['runtime'] if row else None, now()))
+                if runtime is not None:runtime_json = encode(runtime)
+                instance_seen, stream_seen, sequence_seen = instance, stream, sequence
+            # One write per batch, rather than decoding/re-encoding the complete
+            # inventory for every log or heartbeat in a 50-event catch-up batch.
+            if changed_inventory:inventory_json = encode(inventory)
+            db.execute('INSERT OR REPLACE INTO workers VALUES(?,?,?,?,?,?,?,?)',
+                       (worker, instance_seen, stream_seen, sequence_seen, inventory_json,
+                        version, runtime_json, now()))
             db.execute('DELETE FROM logs WHERE worker=? AND id NOT IN (SELECT id FROM logs WHERE worker=? ORDER BY id DESC LIMIT 10000)', (worker, worker))
         # Idempotent replay repairs suggestions as well as runtime views after an interrupted export.
-        for event in events:
-            self.identities.ingest(event.get('identity_suggestions',[]),worker)
+        proposals = list(suggestions_by_id.values())
+        for index in range(0, len(proposals), 500):
+            self.identities.ingest(proposals[index:index + 500], worker)
         # Retry also repairs materialized views if a previous response/export was interrupted.
         self.materialize({worker}, inventories=changed_inventory or any(e.get('inventory') is not None for e in events))
         return events[-1]['sequence']
@@ -444,7 +476,10 @@ class Reporter:
             from providers.identityReview import ReviewStore
             proposals=ReviewStore(self.root).proposals()
             proposals=sorted(proposals,key=lambda p:p['id'])
-            digest=hashlib.sha256(encode(proposals).encode()).hexdigest()
+            # Receiving the same shared proposal refreshes its local observation
+            # timestamps. Those timestamps must not generate another full upload.
+            stable = [{k:v for k,v in p.items() if k not in ('first_seen','last_seen')} for p in proposals]
+            digest=hashlib.sha256(encode(stable).encode()).hexdigest()
             prior=db.execute("SELECT value FROM meta WHERE key='identity_suggestions_hash'").fetchone()
             if reset or prior is None or prior[0]!=digest:
                 # Separate durable batches are never coalesced with heartbeats.
@@ -468,7 +503,7 @@ class Reporter:
     def request(self, path, payload=None, headers=None):
         request = Request(self.url + path, data=encode(payload).encode() if payload is not None else None,
                           headers={'Authorization': 'Bearer ' + self.options['token'], 'Content-Type': 'application/json', 'Accept-Encoding':'gzip', **(headers or {})})
-        with self.opener.open(request, timeout=15 if path=='/v1/inventories' else 5) as response:
+        with self.opener.open(request, timeout=15 if path=='/v1/inventories' else 30) as response:
             data = response.read(MAX_BODY + 1)
             if len(data) > MAX_BODY:
                 raise ValueError('Reporting response exceeds size limit')
@@ -580,6 +615,9 @@ def connection_error(exc):
         if exc.code==401:return 'Main rejected the worker token (HTTP 401). Reconfigure this worker with its matching token. Reports remain queued.'
         if exc.code==409:return 'Main rejected the worker identity or reporting queue (HTTP 409). Run python -m collection.reporting status. Reports remain queued.'
         return f'Main returned HTTP {exc.code}. Collection continues; reports and logs remain queued.'
+    from urllib.error import URLError
+    if isinstance(exc, TimeoutError) or (isinstance(exc, URLError) and isinstance(exc.reason, TimeoutError)):
+        return 'Main did not acknowledge the report before the request timed out. Reports remain queued and retry automatically.'
     return 'Cannot deliver reports to Main. Check its configured address, Tailscale connection and receiver. Collection continues; reports remain queued.'
 
 
@@ -617,7 +655,8 @@ def diagnose(root):
             print('IDENTITY CONFLICT: Main has a different original data folder registered for this worker. Preserve both identities and queues; do not delete them.');return 2
         if not value['queue_matches']:
             print('QUEUE CONFLICT: Main has a different original reporting queue registered. Restore the original queue; do not delete it.');return 2
-        print('Connection OK: Main is reachable, token accepted, worker identity and queue match.');return 0
+        print('Connection OK: Main is reachable, token accepted, worker identity and queue match.')
+        print('This health check does not confirm that queued reports have been acknowledged.');return 0
     except HTTPError as exc:
         if exc.code==404:
             print('Main is reachable and accepted the token. Restart Main with the latest code for full diagnostics.');return 0

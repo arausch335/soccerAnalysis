@@ -261,3 +261,69 @@ class ReportingTests(unittest.TestCase):
         self.assertEqual(len(read_logs(self.main,focus='errors')['rows']),1)
         self.assertEqual(len(read_logs(self.main,focus='milestones')['rows']),2)
         self.assertEqual(console_level('0 failed / partial'),'INFO')
+
+    def test_log_catchup_does_not_decode_or_serialize_inventory_for_each_event(self):
+        from collection.reporting import encode
+        store=ReportingStore(self.main,self.main_ensemble)
+        client=self.reporter();client.enqueue(reset=True)
+        with client.connect() as db:
+            seq,payload=db.execute('SELECT id,payload FROM queue ORDER BY id LIMIT 1').fetchone()
+        base={'instance_id':'original-folder','stream':client.stream}
+        store.accept('msi',[{**json.loads(payload),**base,'sequence':seq}])
+        original=json.loads((self.main_ensemble/'reporting/workers/msi.json').read_text())
+        events=[{**base,'sequence':seq+i+1,'logs':[{'at':'now','level':'INFO','message':str(i)}]} for i in range(50)]
+        with patch('collection.reporting.encode',wraps=encode) as serializer:
+            store.accept('msi',events)
+        inventories=[args[0] for args,kwargs in serializer.call_args_list
+                     if args and isinstance(args[0],dict) and args[0].get('format')=='soccer-analysis-progress-v1']
+        self.assertEqual(inventories,[])
+        self.assertEqual(len(read_logs(self.main)['rows']),50)
+        self.assertEqual(json.loads((self.main_ensemble/'reporting/workers/msi.json').read_text()),original)
+
+    def test_repeated_identity_batches_merge_once_and_repair_after_lost_ack(self):
+        from providers.identityReview import validate
+        store=ReportingStore(self.main,self.main_ensemble)
+        proposal=validate({'kind':'player','provider':'fotmob','source_id':'22','target_id':'11',
+                          'source_name':'Player','target_name':'Player','score':.9,'contexts':[]})
+        events=[{'instance_id':'original-folder','stream':'original-stream','sequence':i+1,
+                 'identity_suggestions':[{**proposal,'contexts':[{'match':str(i)}]}]} for i in range(50)]
+        ingest=store.identities.ingest
+        with patch.object(store.identities,'ingest',wraps=ingest) as process:
+            store.accept('msi',events)
+        self.assertEqual(process.call_count,1)
+        self.assertEqual(len(process.call_args.args[0]),1)
+        self.assertEqual(len(process.call_args.args[0][0]['contexts']),5)
+        # If the identity export failed after durable receipt, replay must repair it.
+        with store.identities.connect() as db:db.execute('DELETE FROM proposals')
+        store.accept('msi',events)
+        self.assertEqual(len(store.identities.proposals()),1)
+
+    def test_identity_observation_timestamps_do_not_republish_unchanged_evidence(self):
+        from providers.identityReview import ReviewStore
+        proposal={'kind':'player','provider':'fotmob','source_id':'22','target_id':'11',
+                  'source_name':'Player','target_name':'Player','score':.9,'contexts':[]}
+        review=ReviewStore(self.root);review.ingest([proposal]);client=self.reporter();client.enqueue()
+        review.ingest([proposal]);client.enqueue()
+        with client.connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM queue WHERE kind='identities'").fetchone()[0],1)
+        review.ingest([{**proposal,'score':.95}]);client.enqueue()
+        with client.connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM queue WHERE kind='identities'").fetchone()[0],2)
+
+    def test_timeout_message_distinguishes_delayed_acknowledgement_from_authentication(self):
+        from collection.reporting import connection_error
+        from urllib.error import URLError
+        self.assertIn('acknowledge',connection_error(TimeoutError()))
+        self.assertIn('acknowledge',connection_error(URLError(TimeoutError())))
+        self.assertIn('token',connection_error(HTTPError('http://localhost',401,'Unauthorized',{},None)))
+
+    def test_duplicate_identity_evidence_is_validated_once_despite_observation_timestamps(self):
+        from providers.identityReview import validate
+        store=ReportingStore(self.main,self.main_ensemble)
+        proposal={'kind':'player','provider':'fotmob','source_id':'22','target_id':'11',
+                  'source_name':'Player','target_name':'Player','score':.9,'contexts':[]}
+        events=[{'instance_id':'original-folder','stream':'stream','sequence':i+1,
+                 'identity_suggestions':[{**proposal,'last_seen':str(i)}]} for i in range(50)]
+        with patch('providers.identityReview.validate',wraps=validate) as validator,patch.object(store.identities,'ingest'):
+            store.accept('msi',events)
+        self.assertEqual(validator.call_count,1)

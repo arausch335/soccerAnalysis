@@ -36,6 +36,8 @@ class DashboardServer:
                     self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
                     self.send_header('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
                     self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+                except (BrokenPipeError,ConnectionResetError):
+                    pass  # The browser closed this request; no response can be sent.
                 except (OSError,ValueError,TypeError,KeyError,sqlite3.Error):
                     self.send_error(503,'Dashboard configuration or inventory needs review')
             def do_POST(self):
