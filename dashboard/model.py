@@ -49,7 +49,7 @@ def resource_states(row):
 class DashboardModel:
     def __init__(self,root,ensemble,plan_path,worker,*,clock=time.monotonic):
         self.root=Path(root);self.ensemble=Path(ensemble);self.plan_path=Path(plan_path);self.worker=worker
-        self.clock=clock;self.loaded=-100;self.snapshot=None;self.rows=[];self.lock=threading.Lock();self.review_seeded=False
+        self.clock=clock;self.loaded=-100;self.snapshot=None;self.rows=[];self.lock=threading.Lock()
 
     def status(self):
         with self.lock:
@@ -229,10 +229,8 @@ class DashboardModel:
                 for row in rows[offset:offset+limit]]}
 
     def reviews(self):
-        from providers.identityReview import ReviewStore,seed_existing
-        with self.lock:
-            if not self.review_seeded:
-                seed_existing(self.root);self.review_seeded=True
+        from providers.identityReview import ReviewStore
+        # Legacy checkpoint discovery belongs to Main's optional background agent.
         value=ReviewStore(self.root).snapshot()
         value['can_review']=self.worker==load_plan(self.plan_path).coordinator
         main=load_plan(self.plan_path).coordinator

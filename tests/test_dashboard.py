@@ -12,6 +12,14 @@ from storage.pandasStore import atomic_json
 
 
 class DashboardTests(unittest.TestCase):
+    def test_opening_identity_review_never_scans_saved_checkpoints(self):
+        from unittest.mock import patch
+        model=DashboardModel(self.root,self.ensemble,self.plan,'main')
+        with patch('providers.identityReview.seed_existing',side_effect=AssertionError('Synchronous checkpoint scan')):
+            value=model.reviews()
+        self.assertEqual(value['pending'],[])
+        self.assertEqual(value['profile_checks']['state'],'disabled')
+
     def test_legacy_mixed_schedule_has_separate_main_and_qualifier_targets(self):
         atomic_json(self.root/'champions-league/2023-2024/schedule.json',{'events':[
             {'id':1,'tournament':{}},{'id':2,'tournament':{'qualificationOrPreliminary':True}}]})
