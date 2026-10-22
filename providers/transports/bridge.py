@@ -5,6 +5,8 @@ import hmac
 from http.server import ThreadingHTTPServer
 from storage.httpServer import DisconnectSafeHandler, CLIENT_DISCONNECTED
 import json
+from pathlib import Path
+from storage.pandasStore import atomic_json
 import re
 import secrets
 import threading
@@ -17,10 +19,19 @@ MAX_BODY = 16 * 1024 * 1024
 
 
 class ExtensionBridge:
-    def __init__(self, *, report=print, connect_timeout=120, diagnostics_dir=None):
+    def __init__(self, *, report=print, connect_timeout=120, diagnostics_dir=None, session_path=None):
         self.report = report
         self.connect_timeout = connect_timeout
         self.token = secrets.token_urlsafe(32)
+        self.session_path=Path(session_path) if session_path is not None else None
+        self.saved_port=0
+        if self.session_path is not None and self.session_path.is_file():
+            saved=json.loads(self.session_path.read_text())
+            if (saved.get('format')!='soccer-extension-session-v1' or type(saved.get('port')) is not int or
+                    not 1024<=saved['port']<=65535 or not isinstance(saved.get('token'),str) or
+                    not re.fullmatch(r'[A-Za-z0-9_-]{32,128}',saved['token'])):
+                raise ProviderError('Invalid saved extension session; preserve it and inspect the local configuration')
+            self.token=saved['token'];self.saved_port=saved['port']
         self.condition = threading.Condition()
         self.serial = threading.Lock()
         self.connected = threading.Event()
@@ -190,11 +201,14 @@ class ExtensionBridge:
                         self.reply(404, {'error': 'Unknown route'})
 
         try:
-            self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+            self.server = ThreadingHTTPServer(('127.0.0.1', self.saved_port), Handler)
         except OSError as exc:
             raise ProviderError('Could not start the local extension connection; allow local Python connections and try again') from exc
         self.server.daemon_threads = True
         self.address = f'127.0.0.1:{self.server.server_port}'
+        if self.session_path is not None:
+            atomic_json(self.session_path,{'format':'soccer-extension-session-v1','port':self.server.server_port,'token':self.token})
+            self.session_path.chmod(0o600)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         if self.diagnostics is not None:
@@ -303,10 +317,10 @@ def extension_scope():
             bridge.close()
 
 
-def acquire_bridge(*, report=print, connect_timeout=120, diagnostics_dir=None):
+def acquire_bridge(*, report=print, connect_timeout=120, diagnostics_dir=None, session_path=None):
     resources = _ACTIVE.get()
     if resources is None:
-        return ExtensionBridge(report=report, connect_timeout=connect_timeout, diagnostics_dir=diagnostics_dir), True
+        return ExtensionBridge(report=report, connect_timeout=connect_timeout, diagnostics_dir=diagnostics_dir, session_path=session_path), True
     if not resources:
-        resources.append(ExtensionBridge(report=report, connect_timeout=connect_timeout, diagnostics_dir=diagnostics_dir))
+        resources.append(ExtensionBridge(report=report, connect_timeout=connect_timeout, diagnostics_dir=diagnostics_dir, session_path=session_path))
     return resources[0], False

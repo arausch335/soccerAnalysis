@@ -374,7 +374,12 @@ class SeasonRunner:
         events=[e for e in events if in_competition(e,competition)]
         if len({e['id'] for e in events})!=len(events):raise ValueError('Duplicate baseline fixture IDs')
         atomic_json(self.directory/'schedule.json',{'fetched_at':now(),'events':events})
-        selected=events[:limit] if limit else events
+        from .workInstructions import remaining_targets
+        remaining=remaining_targets(competition.name,season_label(canonical)) if not self.refresh else None
+        selected=[event for event in events if remaining is None or str(event['id']) in remaining]
+        if limit:selected=selected[:limit]
+        resolved=[event['id'] for event in events if remaining is not None and str(event['id']) not in remaining]
+        if remaining is not None:self.report(f'Main assigned pass: {len(selected)} games to check; {len(resolved)} resolved games bypassed without loading checkpoints.')
         self.report(f'{competition.name} {canonical}: {len(events)} finished matches; collecting {len(selected)}.')
         fixtures,disabled=self._fixtures(competition,canonical,selected) if selected else ({},{})
         import time
@@ -393,12 +398,16 @@ class SeasonRunner:
                 old=[r for r in old if str(r['match_id']) not in qualifying_ids]
         statuses={int(r['match_id']):r for r in old}
         for row in statuses.values():row['competition']=competition.name
-        for event in selected:
+        for event in events:
             statuses.setdefault(event['id'],{'match_id':event['id'],'competition':competition.name,
                 'status':'pending','attempts':0,'updated_at':'','error':''})
+        for mid in resolved:
+            entry=statuses[mid]
+            if entry.get('status') not in ('complete','reviewed'):
+                entry.update(status='elsewhere',error='Main confirms required data is resolved; checkpoint bypassed',updated_at=now())
         # CSV completion predates newer resource requirements. Every selected
         # checkpoint must be checked before it can count as finished this pass.
-        timing.schedule(selected,mode=timing_mode())
+        timing.schedule(events if remaining is not None else selected,completed=resolved,mode=timing_mode())
         loaders={'fotmob':FotMobLoader(identity_resolver=self.identity_resolver),
                  'whoscored':WhoScoredLoader(identity_resolver=self.identity_resolver)}
         for index,event in enumerate(selected,1):

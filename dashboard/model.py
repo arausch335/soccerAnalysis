@@ -150,6 +150,8 @@ class DashboardModel:
                    'schedules':info.get('saved_schedules',{})},'runtime':info.get('runtime') or {}} for worker,info in workers.items()]
         for worker,info in workers.items():
             info['completion']=compile_instructions(plan,worker,reports,decisions)['jobs'] if info.get('configured') else {}
+            if self.worker==plan.coordinator:
+                for job in plan.for_worker(worker):CompletionStore(self.root).freeze(job,info['completion'][job.id],decisions['revision'])
         self.rows=rows
         return {'updated_at':datetime.now(timezone.utc).isoformat(),'local_worker':self.worker,
                 'coordinator':plan.coordinator,'plan_revision':plan.revision[:10],

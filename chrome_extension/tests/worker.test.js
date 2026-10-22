@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 let store={connected:true,paused:false,base:'http://127.0.0.1:12345',token:'x'.repeat(43),clientId:'a'.repeat(32)};
-let listener, alarm, badge, requests=0;
+let listener, alarm, badge, startup, installed, persistent={}, requests=0;
 const id='a'.repeat(32);
 globalThis.chrome={
-  storage:{session:{get:async()=>({...store}),set:async values=>{Object.assign(store,values);},clear:async()=>{store={};}}},
-  runtime:{id,getURL:path=>`chrome-extension://${id}/${path}`,onMessage:{addListener:fn=>{listener=fn;}}},
+  storage:{local:{get:async()=>({...persistent}),set:async v=>Object.assign(persistent,v),remove:async key=>{delete persistent[key];}},session:{get:async()=>({...store}),set:async values=>{Object.assign(store,values);},clear:async()=>{store={};}}},
+  runtime:{onStartup:{addListener:fn=>{startup=fn;}},onInstalled:{addListener:fn=>{installed=fn;}},id,getURL:path=>`chrome-extension://${id}/${path}`,onMessage:{addListener:fn=>{listener=fn;}}},
   alarms:{onAlarm:{addListener:fn=>{alarm=fn;}},create:async()=>{},clear:async()=>{}},
   action:{setBadgeText:async values=>{badge=values.text;}},
   tabs:{query:async()=>[{id:1,url:'https://www.sofascore.com/event/1'}]}
@@ -15,13 +15,13 @@ globalThis.fetch=async()=>{requests++;return {ok:true,json:async()=>({phase:'clo
 const {execute, navigate, checkVerification}=await import('../worker.js');
 const send=(message,sender={id,url:`chrome-extension://${id}/popup.html`})=>new Promise(resolve=>listener(message,sender,resolve));
 
-test('collector completion stops polling and reports a clear final status',async()=>{
+test('a Python restart preserves the connection and retries automatically',async()=>{
   alarm({name:'collector'});
   const deadline=Date.now()+1000;
-  while(store.connected && Date.now()<deadline) await new Promise(r=>setTimeout(r,5));
-  assert.equal(store.connected,false);
-  assert.match(store.message,/finished or stopped/);
-  assert.equal(requests,1);assert.equal(badge,'');
+  while(!store.reconnecting && Date.now()<deadline) await new Promise(r=>setTimeout(r,5));
+  assert.equal(store.connected,true);assert.equal(store.reconnecting,true);
+  assert.match(store.message,/reconnect automatically/);
+  assert.equal(requests,1);assert.equal(store.token,'x'.repeat(43));store.connected=false;
 });
 
 test('a webpage cannot access the connection state or send collector commands',async()=>{
@@ -437,4 +437,28 @@ test('an unresolved WhoScored challenge remains verification-required rather tha
   const result=await execute({tabId:1},{id:'who-verify',action:'whoscored',args:{kind:'text',endpoint:'matches/11/live',params:{},timeout_ms:1000,manual_wait_ms:1000}});
   assert.equal(result.reason,'verification_required');assert.equal(result.status,403);assert.equal(result.verification,true);
  } finally {Date.now=now;}
+});
+
+
+test('temporary network failure retains credentials and authenticates again on the next alarm',async()=>{
+  persistent={};store={connected:true,paused:false,tabId:1,base:'http://127.0.0.1:12345',token:'x'.repeat(43),clientId:'a'.repeat(32)};
+  globalThis.fetch=async()=>{throw new TypeError('Failed to fetch');};
+  await alarm({name:'collector'});
+  for(let i=0;i<50&&!store.reconnecting;i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(store.connected,true);assert.equal(store.reconnecting,true);
+  const paths=[];chrome.tabs.get=async()=>({id:1,url:'https://www.sofascore.com/event/1'});
+  globalThis.fetch=async url=>{paths.push(url);return {ok:true,json:async()=>({phase:'closed'})};};
+  await alarm({name:'collector'});
+  for(let i=0;i<50&&!paths.length;i++)await new Promise(r=>setTimeout(r,5));
+  assert.ok(paths.some(p=>p.endsWith('/connect')));store.connected=false;
+});
+
+test('Chrome startup restores a saved connection and recreates a closed provider tab',async()=>{
+  store={};persistent={collectorConnection:{base:'http://127.0.0.1:12345',token:'x'.repeat(43),clientId:'a'.repeat(32),tabId:99,tabUrl:'https://www.whoscored.com/'}};
+  chrome.tabs.get=async()=>{throw new Error('Tab missing');};chrome.tabs.create=async options=>({id:7,url:options.url});
+  const paths=[];globalThis.fetch=async url=>{paths.push(url);return {ok:true,json:async()=>({phase:'closed'})};};
+  await startup();for(let i=0;i<50&&!paths.length;i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(store.tabId,7);assert.equal(store.token,'x'.repeat(43));assert.ok(paths.some(p=>p.endsWith('/connect')));
+  await send({action:'disconnect'});assert.equal(store.connected,false);assert.equal(persistent.collectorConnection,undefined);
+  await startup();assert.equal(store.connected,false);
 });

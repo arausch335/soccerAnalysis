@@ -1,4 +1,6 @@
 """Main alone converts reported holdings and schedules into scrape instructions."""
+from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import json
 from pathlib import Path
@@ -47,7 +49,7 @@ def compile_instructions(plan,worker,reports,decisions=None):
                 if k.startswith(progress['configuration']+'|')}],sort_keys=True).encode()).hexdigest()[:20]
         jobs[job.id]={**progress,'season':job.as_dict()['season'],'required_resources':job.resources,
                       'revision':revision,
-                      'recheck':bool(not progress['done'] and progress['schedule_known'] and progress['remaining']
+                      'recheck':bool(progress.get('audit_requested') or not progress['done'] and progress['schedule_known'] and progress['remaining']
                           and job.id in history and history[job.id].get('instruction_revision')!=revision)}
     return {'format':FORMAT,'coordinator':plan.coordinator,'plan_revision':plan.revision,
             'generated_at':now(),'worker_id':worker,'jobs':jobs,'approved':approved}
@@ -96,3 +98,21 @@ def current_commands(root,worker,revision):
     value=json.loads(path.read_text())
     if value.get('worker_id')!=worker or value.get('plan_revision')!=revision:return {}
     return value.get('jobs',{})
+
+
+_TARGETS=ContextVar('main_remaining_targets',default=None)
+
+@contextmanager
+def remaining_scope(job,command):
+    """A current granted assignment supplies Main's remaining set for this pass."""
+    value=None
+    if command.get('schedule_known') and command.get('configuration'):
+        value=(job.competition,job.as_dict()['season'],frozenset(command.get('targets',[]) if command.get('audit_requested') else command.get('remaining',{})))
+    token=_TARGETS.set(value)
+    try:yield
+    finally:_TARGETS.reset(token)
+
+
+def remaining_targets(competition,season):
+    value=_TARGETS.get()
+    return value[2] if value and value[:2]==(competition,season) else None

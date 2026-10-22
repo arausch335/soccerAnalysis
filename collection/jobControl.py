@@ -27,7 +27,10 @@ class JobControl:
                       'runtime':json.loads(row['runtime']) if row['runtime'] else {}}
                      for row in db.execute('SELECT inventory,runtime FROM workers')]
         from .jobCompletion import CompletionStore
-        return compile_instructions(load_plan(self.plan_path),worker,reports,CompletionStore(self.path.parent.parent.parent).snapshot())
+        plan=load_plan(self.plan_path);completed=CompletionStore(self.path.parent.parent.parent);decisions=completed.snapshot()
+        value=compile_instructions(plan,worker,reports,decisions)
+        for job in plan.for_worker(worker):completed.freeze(job,value['jobs'][job.id],decisions['revision'])
+        return value
 
     def command(self,worker,value):
         from config.workerPlan import load_plan

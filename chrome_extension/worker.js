@@ -9,7 +9,18 @@ let verifying = false;
 let resolvingVerification = false;
 const RELOAD_DELAYS = [60000, 300000, 1800000];
 const RELOAD_ALARM = 'verification-reload';
-const state = () => chrome.storage.session.get(null);
+const state = async () => {
+  const s = await chrome.storage.session.get(null);
+  if (s.base || !chrome.storage.local) return s;
+  const {collectorConnection:saved} = await chrome.storage.local.get('collectorConnection');
+  if (!saved) return s;
+  const restored={...saved,connected:true,paused:!!saved.paused,reconnecting:true,message:'Restoring the saved Python connection…'};
+  await chrome.storage.session.set(restored);
+  return restored;
+};
+const persistConnection = async s => {
+  if (chrome.storage.local) await chrome.storage.local.set({collectorConnection:{base:s.base,token:s.token,clientId:s.clientId,tabId:s.tabId,tabUrl:s.tabUrl,paused:!!s.paused}});
+};
 const save = values => chrome.storage.session.set(values);
 const badge = text => chrome.action.setBadgeText({text});
 
@@ -27,7 +38,13 @@ async function api(s, path, value) {
 }
 
 async function selectedTab(s) {
-  const tab = await chrome.tabs.get(s.tabId);
+  let tab;
+  try { tab = await chrome.tabs.get(s.tabId); }
+  catch (_) {
+    const url=s.tabUrl && (sofaUrl(s.tabUrl)||whoUrl(s.tabUrl)||fotmobUrl(s.tabUrl)) ? s.tabUrl : 'https://www.sofascore.com/';
+    tab=await chrome.tabs.create({url,active:false});s.tabId=tab.id;
+    await save({tabId:tab.id});await persistConnection(s);
+  }
   if (!tab.url || !(sofaUrl(tab.url) || whoUrl(tab.url) || fotmobUrl(tab.url))) throw new Error('The chosen tab left the supported website. Reconnect a Sofascore, WhoScored or FotMob tab.');
   return tab;
 }
@@ -338,10 +355,16 @@ async function poll() {
     while (true) {
       const s = await state();
       if (!s.connected || s.paused) break;
+      if (s.reconnecting) {
+        await selectedTab(s);
+        await api(s,'connect',{client_id:s.clientId});
+        await save({reconnecting:false,message:'Reconnected automatically.'});
+        await badge('ON');
+      }
       const body = await api(s, 'command');
       if (body.phase === 'closed') {
-        await save({connected: false, message: 'Python collection finished or stopped. Saved checkpoints remain available.'});
-        await badge('');
+        await save({connected:true,reconnecting:true,message:'Python stopped or is restarting. Waiting to reconnect automatically.'});
+        await badge('…');
         break;
       }
       if (!body.command) continue;
@@ -354,13 +377,13 @@ async function poll() {
     }
   } catch (error) {
     if (error.name !== 'AbortError') {
-      await save({connected: false, message: error.message + ' Saved Python checkpoints remain available.'});
+      await save({connected:true,reconnecting:true,message:'Python connection interrupted. Retrying automatically; saved work is safe.'});
       await badge('!');
     }
   } finally {
     polling = false;
     const s = await state();
-    if (s.connected && !s.paused) setTimeout(() => void poll(), 0);
+    if (s.connected && !s.paused) {const timer=setTimeout(() => void poll(), s.reconnecting ? 5000 : 0);timer?.unref?.();}
   }
 }
 
@@ -376,12 +399,13 @@ async function message(msg, sender) {
     const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
     if (!tab?.url || !(sofaUrl(tab.url) || whoUrl(tab.url) || fotmobUrl(tab.url))) throw new Error('Open Sofascore, WhoScored or FotMob in this tab before connecting.');
     const same = old.base === connection.base && old.token === connection.token;
-    const s = {...connection, tabId: tab.id, clientId: same && old.clientId || crypto.randomUUID().replaceAll('-', '')};
+    const s = {...connection, tabId: tab.id, tabUrl:tab.url, clientId: same && old.clientId || crypto.randomUUID().replaceAll('-', '')};
     controller?.abort();
     controller = new AbortController();
     await api(s, 'connect', {client_id: s.clientId});
     await chrome.storage.session.clear();
     await save({...s, connected: true, paused: false, verification: null, message: 'Connected. Python controls only this selected tab.'});
+    await persistConnection(s);
     await chrome.alarms.create('collector', {periodInMinutes: 0.5});
     await badge('ON');
     void poll();
@@ -390,17 +414,20 @@ async function message(msg, sender) {
     if (!s.connected) throw new Error('Connect to Python first.');
     await api(s, 'pause', {});
     await save({paused: true, message: 'Paused after the current step. Click Resume when ready.'});
+    await persistConnection({...s,paused:true});
     await badge('II');
   } else if (msg.action === 'resume') {
     const s = await state();
     if (!s.connected) throw new Error('Connect to the running Python collector first.');
     await selectedTab(s);
+    if(s.reconnecting){await api(s,'connect',{client_id:s.clientId});await save({reconnecting:false});}
     await api(s, 'resume', {});
     if (s.verification) {
       await finishVerification(s, {ok: true, diagnostics: {verification_resolution: 'manual'}}, 'Resumed.');
       return {ok: true};
     }
     await save({paused: false, verification: null, message: 'Resumed.'});
+    await persistConnection({...s,paused:false});
     await badge('ON');
     void poll();
   } else if (msg.action === 'disconnect') {
@@ -411,6 +438,7 @@ async function message(msg, sender) {
       try { await api(s, 'disconnect', {}); } catch (_) { /* Python may already be stopped. */ }
     }
     await chrome.storage.session.clear();
+    if (chrome.storage.local) await chrome.storage.local.remove('collectorConnection');
     await chrome.alarms.clear('collector');
     await chrome.alarms.clear(RELOAD_ALARM);
     await save({connected: false, message: 'Disconnected.'});
@@ -426,6 +454,11 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   });
   return true;
 });
+async function resumeSavedConnection(){
+  const s=await state();if(s.connected){await chrome.alarms.create('collector',{periodInMinutes:0.5});void poll();}
+}
+if(chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(resumeSavedConnection);
+if(chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(resumeSavedConnection);
 chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name === 'collector' || alarm.name === RELOAD_ALARM) {
     const s = await state();

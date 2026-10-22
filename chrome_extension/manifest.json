@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Soccer Collector",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "API fallback collection from Sofascore, WhoScored and FotMob in one chosen Chrome tab.",
   "minimum_chrome_version": "120",
   "permissions": [

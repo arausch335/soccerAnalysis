@@ -29,6 +29,23 @@ class InventoryMonitor:
             for pattern in ('*/*/job.json','*/*/whoscored_job.json','fotmob_player_stats/*/*/job.json',
                             'whoscored_events/*/*/job.json','whoscored/*/*/job.json'):
                 for job in self.root.glob(pattern):seasons.add('/'.join(job.parent.parts[-2:]))
+            # Frozen completion remains authoritative until Main explicitly reopens it.
+            from .jobCompletion import CompletionStore
+            import re
+            from config.workerPlan import load_plan
+            from .jobCompletion import configuration
+            plan=load_plan()
+            active={configuration(job) for job in plan.jobs}
+            completed=CompletionStore(self.root).snapshot().get('completed',{})
+            frozen={re.sub('[^a-z0-9]+','-',v['competition'].lower()).strip('-')+'/'+v['season'] for k,v in completed.items() if k in active}
+            command_path=self.root/'_system/workers/main-instructions.json'
+            if command_path.exists():
+                import json
+                from .storageAgent import season_for
+                saved=json.loads(command_path.read_text());commands=saved.get('jobs',{}) if saved.get('plan_revision')==plan.revision else {}
+                for job in plan.for_worker(self.worker):
+                    if commands.get(job.id,{}).get('done'):frozen.add(season_for(job))
+            seasons-=frozen
             reused=validated=waiting=0;errors=[]
             for season in sorted(seasons):
                 if self.stop.is_set():return False

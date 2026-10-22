@@ -37,7 +37,8 @@ def prepare_extension(root,jobs,monitor):
     if not any(set(job.collection_types)&{'sofascore','combined'} for job in jobs):return
     from providers.transports.bridge import acquire_bridge
     bridge,_=acquire_bridge(connect_timeout=config.TRANSPORT['extension']['manual_wait_seconds'],
-                            diagnostics_dir=system_path(root,'extension_diagnostics')/'sofascore')
+                            diagnostics_dir=system_path(root,'extension_diagnostics')/'sofascore',
+                            session_path=root/'_system/config/extension-session.json')
     bridge.start()
     return bridge
 
@@ -56,7 +57,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
     parser.add_argument('--dashboard',action='store_true',help='Dashboard only; do not collect or sync Git')
     parser.add_argument('--no-dashboard',action='store_true')
     parser.add_argument('--once',action='store_true',help='Run the pending plan once, then exit')
-    parser.add_argument('--retry',action='store_true',help='Revisit previously finished/paused assignments using saved checkpoints')
+    parser.add_argument('--retry',action='store_true',help='Retry unfinished assignments; reopen Done seasons on Main first')
     options=parser.parse_args(argv);plan=load_plan(options.plan)
     root=full_path(options.data_root);organize_data_root(root);ensemble=full_path(options.ensemble_root)
     worker=options.worker_id or read_worker_id(root)
@@ -101,7 +102,8 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
         if options.identity_review and extension_bridge is None:
             from providers.transports.bridge import acquire_bridge
             extension_bridge,_=acquire_bridge(connect_timeout=config.TRANSPORT['extension']['manual_wait_seconds'],
-                diagnostics_dir=system_path(root,'extension_diagnostics')/'identity-review')
+                diagnostics_dir=system_path(root,'extension_diagnostics')/'identity-review',
+                session_path=root/'_system/config/extension-session.json')
             extension_bridge.start()
         state=Runtime(root,ensemble,worker)
         if options.retry:state.value['jobs']={}
@@ -230,6 +232,8 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                     if options.once:return 2
                     stop.wait(5);continue
                 if control:state.save(control=control.status)
+                if control and current_commands(root,worker,plan.revision).get(job.id,{}).get('done'):
+                    continue  # Main finished this season while its claim was being granted.
                 if control and progress is not None:progress.records=shared_progress(progress.path,local_worker=worker,trusted=control is not None)
                 state.begin_job(job.as_dict())
                 if reporting:reporting.log(f'[Season started] {job.competition} {job.as_dict()["season"]}')
@@ -248,14 +252,18 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                         return
                 # Capture the revision before running: approvals received mid-job also get a later backfill.
                 attempted_identity_revision=identity_revision
-                with observe_progress(observe):code=runner(job.args(root)+(['--no-build-dataset','--defer-exports'] if storage else []))
+                from .workInstructions import remaining_scope
+                fresh=current_commands(root,worker,plan.revision).get(job.id,{}) if control else {}
+                with remaining_scope(job,fresh),observe_progress(observe):
+                    code=runner(job.args(root)+(['--no-build-dataset','--defer-exports'] if storage else []))
                 if storage:storage.finished(job,code)
                 if code and extension_bridge is not None and not extension_bridge.ready:
                     retry_extension_job=job.id
                 if reporting:
                     milestone='completed' if code==0 else 'paused'
                     reporting.log(f'[Season {milestone}] {job.competition} {job.as_dict()["season"]}', 'INFO' if code==0 else 'WARNING')
-                state.value['jobs'][job.id]={'fingerprint':fingerprint(job,settings),'exit_code':code,'identity_revision':attempted_identity_revision,
+                audit_id=max(int(state.value['jobs'].get(job.id,{}).get('review_audit_id',0)),int(fresh.get('audit_id',0)) if code==0 else 0)
+                state.value['jobs'][job.id]={'review_audit_id':audit_id,'fingerprint':fingerprint(job,settings),'exit_code':code,'identity_revision':attempted_identity_revision,
                                              'state':'finished' if code==0 else 'paused',
                                              'instruction_revision':control.status.get('instruction_revision') if control else None}
                 state.save(state='between_jobs',job_ended_at=now(),current=None,git=sync.status)

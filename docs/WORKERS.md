@@ -697,3 +697,29 @@ Identity review compares provider records in separate columns, including career
 history and aligned match references. The suggestion score is not displayed.
 Existing evidence and reviewed decisions remain intact. Update/restart MSI and
 Headless to remove their old inline and idle profile investigation paths.
+
+
+### Automatic reconnection, remaining games and frozen completion
+
+Soccer Collector 0.8.0 keeps its connection credentials in private local extension
+storage. Python saves its matching loopback port and token in the ignored
+`data/_system/config/extension-session.json`. Normal code restarts reuse this
+connection. Temporary network errors retry automatically; Chrome startup restores
+the saved connection and can recreate its provider tab. Clicking Disconnect clears
+automatic reconnection. A manual Pause still requires Resume. Keep normal Chrome
+running while collecting; website verification may still require attention.
+
+After this upgrade, update the unpacked extension folder, reload the extension in
+Chrome and connect the newly printed code once. If using the prepared extension,
+run `python -m tools.extension_setup` (or use its `--output` for the folder you
+already loaded) before clicking Reload in Chrome. Subsequent normal worker
+restarts reuse that pairing; do not delete the local session configuration.
+
+Main's granted assignment now supplies the exact remaining match IDs before
+provider fixture discovery or checkpoint loading. Resolved games are omitted in
+one pass, while progress retains the full season target. Unknown schedules are
+still discovered normally. Completed seasons are frozen for their specific
+required configuration and excluded from routine audits and future scrape jobs.
+Use Reopen season on Main to reassess them. Changing required data creates a new
+completion scope. Worker `--retry` retries unfinished work; it does not override
+Main's frozen Done decision.

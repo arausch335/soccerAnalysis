@@ -170,7 +170,9 @@ def _batch(forwarded):
         return code
     if ACTION in ('auto','resume'):
         for competition,season,name,directory,_ in existing:
-            if not _normal_requirements(directory,forwarded)[0] and _collection_complete(directory):
+            from collection.workInstructions import remaining_targets
+            directed=remaining_targets(competition,season_label(season)) is not None
+            if not directed and not _normal_requirements(directory,forwarded)[0] and _collection_complete(directory):
                 print(f'Skipping complete collection: {name}')
                 get_job(directory,'combined',competition,season).end()
                 continue
@@ -278,7 +280,7 @@ def main(argv=None):
     try:
         with extension_scope():
             if not transfer.inventory and not transfer.import_only and '--offline' not in args and not any(x in args for x in ('status','export')):
-                bridge,_=acquire_bridge(connect_timeout=config.TRANSPORT['extension']['manual_wait_seconds'],diagnostics_dir=system_path(_selection(args).data_root,'extension_diagnostics')/'collector')
+                bridge,_=acquire_bridge(connect_timeout=config.TRANSPORT['extension']['manual_wait_seconds'],diagnostics_dir=system_path(_selection(args).data_root,'extension_diagnostics')/'collector',session_path=_selection(args).data_root/'_system/config/extension-session.json')
                 bridge.start()
             return _ensemble_main(args,transfer)
     except (OSError,ValueError) as exc:
