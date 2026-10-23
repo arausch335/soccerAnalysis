@@ -129,6 +129,34 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(self.server.archive.builds(),[])
         self.assertIsNone(self.server.archive.publication())
 
+    def test_uploaded_match_advances_while_portable_verification_is_blocked(self):
+        from tests.test_ensemble import populate
+        from collection.workerIdentity import ensure_identity
+        populate(self.root,limit=1)
+        mid=self.outbox.enqueue(season_files(self.root,self.season,'1'),kind='raw',season=self.season,completed=False)
+        self.outbox.send_one(self.peer)
+        hub=self.base/'msi';atomic_json(hub/'.soccer-scraper.json',{'format':1});ensure_identity(hub,'msi')
+        agent=StorageAgent(hub,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.base/'dataset',ensemble=self.base/'ensemble',log=quiet)
+        agent.server=self.server
+        entered=threading.Event();release=threading.Event();errors=[]
+        def bulk(*args,**kwargs):
+            entered.set()
+            if not release.wait(10):raise AssertionError('Match queue was blocked by bulk verification')
+            return False
+        def portable():
+            try:agent.portable_once()
+            except Exception as exc:errors.append(exc)
+        with patch('collection.backgroundImports.import_staged',side_effect=bulk):
+            thread=threading.Thread(target=portable);thread.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                agent.maintenance_once()
+                self.assertFalse(release.is_set())
+                self.assertEqual(self.server.archive.commit('headless',mid)['state'],'imported')
+                self.assertIn(1,PandasStore(hub/self.season/'match_checkpoints/1').from_csv().matches)
+            finally:release.set();thread.join(2)
+        self.assertFalse(thread.is_alive());self.assertEqual(errors,[])
+
     def test_partial_match_acknowledgement_never_retires_another_pending_package(self):
         first=self.queue();self.outbox.send_one(self.peer)
         atomic_json(self.raw,{'events':[4,5,6]});second=self.queue();self.outbox.send_one(self.peer)

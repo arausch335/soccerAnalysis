@@ -36,24 +36,30 @@ def checked_path(root,relative):
     return path
 
 
-def verify_bundle(root):
+def verify_bundle(root, *, check=lambda:None, progress=None):
     root=full_path(root);manifest=json.loads((root/MANIFEST).read_text(encoding='utf-8'))
     if not isinstance(manifest,dict):raise ValueError('Invalid portable transfer manifest')
     files=manifest.get('files')
     if manifest.get('format')!=FORMAT or not isinstance(files,list) or not files or len(files)>500000:raise ValueError('Invalid portable transfer manifest')
-    seen=set()
-    for row in files:
+    seen=set();check()
+    interval=max(1,len(files)//10)
+    if progress:progress(0,len(files))
+    for index,row in enumerate(files):
+        if index%128==0:check()
         if not isinstance(row,dict) or not {'path','size','sha256'}<=row.keys() or type(row['size']) is not int or row['size']<0:raise ValueError('Invalid portable file entry')
         relative=row['path'];path=checked_path(root,relative)
         if relative in seen:raise ValueError('Duplicate portable transfer path')
         seen.add(relative);check_hash(row['sha256'])
         if not path.is_file() or path.stat().st_size!=row['size'] or digest(path)!=row['sha256']:raise ValueError(f'Portable transfer checksum differs: {relative}')
+        if progress and ((index+1)%interval==0 or index+1==len(files)):progress(index+1,len(files))
     if '.soccer-scraper.json' not in seen:raise ValueError('Portable transfer marker missing')
     # Every collection artifact must be covered, including additions made after export.
-    for path in root.rglob('*'):
+    for index,path in enumerate(root.rglob('*')):
+        if index%128==0:check()
         if path.is_symlink():raise ValueError('Portable bundle contains a symbolic link')
         if not path.is_file() or path.relative_to(root)==MANIFEST or path.name=='.DS_Store' or path.name.startswith('._'):continue
         if path.relative_to(root).as_posix() not in seen:raise ValueError('Portable bundle contains an unverified extra file')
+    check()
     return manifest
 
 

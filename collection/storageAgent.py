@@ -119,17 +119,22 @@ class StorageAgent:
         self.thread=threading.Thread(target=self.run,daemon=True,name='storage-transfer')
         self.maintenance_thread=threading.Thread(target=self.maintain,daemon=True,name='storage-maintenance')
         self.maintenance_status={'state':'waiting'}
+        self.portable_status={'state':'waiting'}
+        self.portable_thread=threading.Thread(target=self.import_portable,daemon=True,name='storage-portable-import')
         self.maintenance_changed=threading.Event()
         receipt=self.directory/'dataset-receipt.json'
         self.receipt=json.loads(receipt.read_text(encoding='utf-8')) if receipt.exists() else {}
 
     def connect(self):return closing(sqlite3.connect(self.database,timeout=30))
     def start(self):
-        self.thread.start();self.maintenance_thread.start();return self
+        self.thread.start();self.maintenance_thread.start()
+        if self.ensemble is not None:self.portable_thread.start()
+        return self
     def close(self):
         self.stop.set()
         if self.thread.is_alive():self.thread.join(timeout=35)
         if self.maintenance_thread.is_alive():self.maintenance_thread.join(timeout=15)
+        if self.portable_thread.is_alive():self.portable_thread.join(timeout=15)
         if self.server:self.server.close()
 
     def capture(self,season,match_id='*',completed=False):
@@ -169,7 +174,7 @@ class StorageAgent:
                 from .storageServer import StorageServer
                 self.server=StorageServer(self.root,options).start()
                 self.log('[Storage] MSI archive receiver listening; raw files remain on MSI.')
-            self.status={'state':'listening','role':role,**self.server.archive.status(),'maintenance':self.maintenance_status}
+            self.status={'state':'listening','role':role,**self.server.archive.status(),'maintenance':self.maintenance_status,'portable_import':self.portable_status}
             return
         peer=Peer(options['url'],options['token'])
         if role=='producer':
@@ -238,18 +243,49 @@ class StorageAgent:
                 self.stop.wait(300)
             self.stop.wait(10)
 
+    def import_portable(self):
+        """Bulk verification must never block the uploaded-match/build queue."""
+        from .maintenance import DeferredWork,LowSpace
+        from .inventoryCache import InventoryInterrupted
+        from filelock import Timeout
+        while not self.stop.is_set():
+            delay=10
+            try:
+                if self.portable_once():self.maintenance_changed.set()
+            except LowSpace as exc:
+                self.portable_status={'state':'waiting_disk_space','message':str(exc)};delay=30
+            except (DeferredWork,Timeout,InventoryInterrupted):
+                self.portable_status={'state':'waiting','message':'Portable import yielded; scraping has priority'}
+            except Exception as exc:
+                self.portable_status={'state':'needs_attention','message':'Portable import failed; source retained; retry in five minutes'}
+                self.log(f'[Storage ERROR] Portable import {type(exc).__name__}: {exc}');delay=300
+            self.stop.wait(delay)
+
+    def portable_once(self):
+        from .backgroundImports import import_staged
+        # Hub imports must have a receiver ready to persist dataset build jobs.
+        if self.ensemble is None or self.worker!=self.settings['hub'] or self.server is None:return False
+        self.portable_status={'state':'checking_staged_imports'}
+        changed=import_staged(self.root,self.ensemble,stop=self.stop,report=self.log_report,
+                              on_season=self.server.archive.schedule_build,on_progress=self.portable_progress)
+        if self.portable_status.get('state')!='waiting':self.portable_status={'state':'current'}
+        return changed
+
+    def portable_progress(self,status):
+        self.portable_status=status
+        if status['state'] in ('verifying','verifying_final'):
+            self.log(f"[Storage] Portable {status['source']} · {status['state'].replace('_',' ')}: {status['verified']}/{status['total']} files")
+        elif status['state']=='importing':
+            self.log(f"[Storage] Portable {status['source']} · importing {status['season']}")
+
     def maintenance_once(self):
         """One independent, resumable maintenance pass; useful for offline tests."""
         from .maintenance import background, Checkpoint, require_space, DeferredWork, LowSpace
         from .inventoryCache import InventoryInterrupted
         from filelock import Timeout
-        from .backgroundImports import import_parts, import_staged, snapshot_data
+        from .backgroundImports import import_parts, snapshot_data
         from dataset_builder import build_dataset
         check=Checkpoint(self.stop);check();changed=False
-        if self.ensemble is not None:
-            self.maintenance_status={'state':'checking_staged_imports','message':'Checking portable bundles before queued uploads; original sources are retained until verification finishes'}
-            changed=import_staged(self.root,self.ensemble,stop=self.stop,report=self.log_report,
-                                  on_season=self.server.archive.schedule_build if self.server else None)
         if not self.server:return changed
         archive=self.server.archive
         for mid,manifest in archive.completed():

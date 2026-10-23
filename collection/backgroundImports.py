@@ -90,7 +90,7 @@ def import_parts(root, files, *, owner, batch, origins=None, check=lambda:None, 
     return True
 
 
-def import_staged(root, ensemble, *, stop=None, report=print,on_season=None):
+def import_staged(root, ensemble, *, stop=None, report=print,on_season=None,on_progress=None):
     """Ingest completed portable folders in the background, preserving originals on error."""
     from .maintenance import background, Checkpoint
     from .workerIdentity import read_worker_id, read_origins
@@ -100,8 +100,9 @@ def import_staged(root, ensemble, *, stop=None, report=print,on_season=None):
         raise ValueError('Staged imports must be separate from the data root')
     ensemble.mkdir(parents=True,exist_ok=True);changed=False
     candidates=[]
+    scan_check=Checkpoint(stop)
     for marker in sorted(ensemble.rglob('.soccer-scraper.json')):
-        source=marker.parent
+        scan_check();source=marker.parent
         if source==ensemble or any(parent in source.parents for parent in candidates):continue
         candidates.append(source)
     for source in candidates:
@@ -109,7 +110,9 @@ def import_staged(root, ensemble, *, stop=None, report=print,on_season=None):
         # A marker copied at the start of a long drive transfer is not a
         # completion signal. Only complete, verified portable bundles are ready.
         if not (source/'_system/transfer-manifest.json').is_file():continue
-        manifest=verify_bundle(source)
+        def progress(phase,**details):
+            if on_progress:on_progress({'state':phase,'source':source.name,**details})
+        manifest=verify_bundle(source,check=check,progress=lambda done,total:progress('verifying',verified=done,total=total))
         files={row['path']:source/row['path'] for row in manifest['files']
                if row['path']=='.soccer-scraper.json' or not row['path'].startswith('_system/')}
         owner=manifest.get('worker') or read_worker_id(source);batch=identifier(manifest);origins=read_origins(source)
@@ -125,22 +128,24 @@ def import_staged(root, ensemble, *, stop=None, report=print,on_season=None):
         for season in seasons:
             check()
             try:
+                progress('importing',season=season)
                 with background(root,season,stop) as permit:
                     selected={key:path for key,path in files.items() if key=='.soccer-scraper.json' or selected_season(key)==season}
                     import_parts(root,selected,owner=owner,batch=batch,origins=origins,check=permit,report=report)
                     changed=True
             except LowSpace:raise
             except (Timeout,DeferredWork,InventoryInterrupted):pending=True
-        if pending:continue
+        if pending:
+            progress('waiting',message='Portable seasons are busy; verified parts retained for retry')
+            continue
         check()
-        for row in manifest['files']:
-            path=source/row['path']
-            if not path.is_file() or path.stat().st_size!=row['size'] or digest(path)!=row['sha256']:
-                raise ValueError('Staged source changed during background import; source retained')
-        verify_bundle(source)
-        shutil.rmtree(source)
+        # Revalidate every checksum and reject added files before deleting staging.
+        verify_bundle(source,check=check,progress=lambda done,total:progress('verifying_final',verified=done,total=total))
+        check()
+        # Persist publication requests before discarding the resumable source.
         if on_season and not manifest.get('partial'):
             for season in seasons:on_season(season)
+        check();shutil.rmtree(source)
         report('[Storage] Staged data incorporated; original collector data is unchanged.',flush=True)
     return changed
 

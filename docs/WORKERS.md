@@ -786,4 +786,10 @@ completed-season snapshot schedules dataset publication to Main. A per-match
 incorporation acknowledges that package alone; it never retires other matches
 that are still waiting to be imported. Existing received packages become eligible
 after upgrading, without re-uploading them. Portable imports still verify their
-source files before incorporation and may occupy the maintenance loop first.
+source files before incorporation. Their bulk validation/import runs in a separate
+background task, so uploaded matches and dataset builds do not wait for an entire
+portable folder to finish. The same season leases still yield to active scraping.
+Portable verification reports file counts at roughly 10% intervals, with a season
+message during incorporation; Main receives these logs and the `portable_import`
+phase in MSI's storage status. Shutdown interrupts verification, preserving the
+staged source and committed-part receipts for the next run. No recopy is needed.

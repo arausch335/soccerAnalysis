@@ -34,6 +34,41 @@ class PortableTransferTests(unittest.TestCase):
         self.assertEqual((live/'_system/config/reporting.json').read_text(),'{"token": "headless-kept"}')
         progress=PortableProgress(None,live);progress.scan()
         self.assertTrue(any('main' in r['origins'] for r in progress.local_records.values()))
+    def test_background_verification_reports_progress_and_can_stop_without_removing_source(self):
+        from collection.backgroundImports import import_staged
+        from collection.maintenance import DeferredWork
+        import threading
+        prepare(self.root,self.bundle,quiet)
+        stop=threading.Event();updates=[]
+        live=self.base/'msi';atomic_json(live/'.soccer-scraper.json',{'format':1})
+        def progress(status):
+            updates.append(status)
+            if status['state']=='verifying_final':stop.set()
+        with self.assertRaises(DeferredWork):
+            import_staged(live,self.bundle.parent,stop=stop,report=quiet,on_progress=progress)
+        self.assertTrue(self.bundle.exists())
+        first=[s for s in updates if s['state']=='verifying']
+        self.assertEqual(first[0]['verified'],0)
+        self.assertEqual(first[-1]['verified'],first[-1]['total'])
+        self.assertTrue(any(s['state']=='importing' for s in updates))
+        # Retry reuses committed parts and only then removes verified staging.
+        seasons=[]
+        self.assertTrue(import_staged(live,self.bundle.parent,report=quiet,on_season=seasons.append))
+        self.assertFalse(self.bundle.exists());self.assertIn('premier-league/2024-2025',seasons)
+        self.assertTrue((self.root/'.soccer-scraper.json').exists())
+
+    def test_publication_queue_failure_retains_verified_portable_source_for_retry(self):
+        from collection.backgroundImports import import_staged
+        prepare(self.root,self.bundle,quiet)
+        live=self.base/'msi';atomic_json(live/'.soccer-scraper.json',{'format':1})
+        def fail(season):raise RuntimeError('Publication queue unavailable')
+        with self.assertRaisesRegex(RuntimeError,'queue unavailable'):
+            import_staged(live,self.bundle.parent,report=quiet,on_season=fail)
+        self.assertTrue(self.bundle.exists())
+        queued=[]
+        self.assertTrue(import_staged(live,self.bundle.parent,report=quiet,on_season=queued.append))
+        self.assertFalse(self.bundle.exists());self.assertTrue(queued)
+
     def test_corruption_stops_import_before_receiver_changes(self):
         prepare(self.root,self.bundle,quiet)
         path=next(self.bundle.glob('*/*/raw/*/*.json'));path.write_text('{"corrupted":true}')
