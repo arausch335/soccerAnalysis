@@ -1,10 +1,11 @@
-"""Build dataset/fixtures.csv from schedules only, without match statistics.
+"""Fixture settings and the legacy single-provider build API.
 
 Run this file in an IDE. Change the Python settings below rather than passing
 command-line arguments. Each completed competition-season is checkpointed, so
 an interrupted historical backfill resumes without repeating finished seasons.
-The selected provider owns every match/team ID in the output. FotMob schedule
-feeds do not contain venue or city, so those columns are blank in FotMob runs.
+Running this module now uses the Sofascore-led four-source dataset builder.
+The build() function retains its single-provider schema for existing callers.
+Use python -m fixtures for the dedicated CLI and additional refresh switches.
 """
 from __future__ import annotations
 from storage.layout import system_path
@@ -29,7 +30,7 @@ from storage.pandasStore import atomic_json
 
 # Python settings for an IDE run. END_SEASON=None includes the season underway
 # (or most recently started) in the current calendar year.
-PROVIDER = 'fotmob'  # 'sofascore' or 'fotmob'; IDs belong to that provider.
+PROVIDER = 'sofascore'  # Single-provider compatibility API; use fixtures.dataset for all sources.
 START_SEASON = 2010
 END_SEASON = None
 INCLUDE_UPCOMING = True
@@ -273,4 +274,7 @@ def build(*, provider=PROVIDER, client=None, data_root=DATA_ROOT, output_csv=OUT
 
 
 if __name__ == '__main__':
-    build()
+    from fixtures.dataset import build as build_dataset
+    build_dataset(start_season=START_SEASON, end_season=END_SEASON,
+        include_upcoming=INCLUDE_UPCOMING, refresh_current=REFRESH_CURRENT_SEASON,
+        offline=OFFLINE, data_root=DATA_ROOT, output_csv=OUTPUT_CSV)

@@ -16,6 +16,8 @@ FORMAT='soccer-data-transfer-v1'
 CHUNK=1024*1024
 MAX_FILE=2*1024**3
 MAX_MANIFEST=32*1024**2
+FIXTURE_DATASET_PATHS = frozenset({'fixtures.csv', *(f'fixture_concordance/{name}' for name in (
+    'match_ids.csv', 'team_ids.csv', 'team_aliases.csv', 'issues.csv', 'coverage.csv', 'manifest.json'))})
 
 
 def digest(path):
@@ -47,6 +49,7 @@ def safe_path(value,kind):
         if any(p in ('raw','match_checkpoints','snapshots') for p in path.parts):raise ValueError('Raw data cannot be sent to dataset consumers')
         if len(path.parts)==1 and path.name in ('fixtures.csv','player_ids.csv','team_ids.csv','match_ids.csv'):return value
         if len(path.parts)==2 and path.parts[0]=='concordance':return value
+        if value in FIXTURE_DATASET_PATHS:return value
     if len(path.parts)<3 or not re.fullmatch('[a-z0-9]+(?:-[a-z0-9]+)*',path.parts[0]):raise ValueError('Invalid competition path')
     if not re.fullmatch(r'\d{4}-\d{4}',path.parts[1]):raise ValueError('Invalid season path')
     if int(path.parts[1][5:])!=int(path.parts[1][:4])+1:raise ValueError('Invalid season years')
@@ -93,11 +96,11 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class Peer:
-    def __init__(self,url,token):self.url=url.rstrip('/');self.token=token
+    def __init__(self,url,token,*,headers=None):self.url=url.rstrip('/');self.token=token;self.headers=headers or {}
 
     def request(self,path,value=None,*,method=None,data=None):
         if value is not None:data=encode(value)
-        headers={'Authorization':'Bearer '+self.token,'Content-Type':'application/json' if value is not None else 'application/octet-stream'}
+        headers={**self.headers,'Authorization':'Bearer '+self.token,'Content-Type':'application/json' if value is not None else 'application/octet-stream'}
         req=Request(self.url+path,data=data,headers=headers,method=method or ('POST' if data is not None else 'GET'))
         with build_opener(ProxyHandler({}),NoRedirect()).open(req,timeout=15) as response:
             body=response.read(MAX_MANIFEST+1)
@@ -119,8 +122,8 @@ class Peer:
 
 
 class Outbox:
-    def __init__(self,root,worker):
-        self.root=Path(root);self.worker=worker;self.directory=self.root/'_system/storage/outbox'
+    def __init__(self,root,worker,*,directory=None):
+        self.root=Path(root);self.worker=worker;self.directory=Path(directory) if directory is not None else self.root/'_system/storage/outbox'
         self.directory.mkdir(parents=True,exist_ok=True);self.database=self.directory/'queue.sqlite'
         with self.connect() as db:
             db.executescript('CREATE TABLE IF NOT EXISTS queue(id TEXT PRIMARY KEY,manifest TEXT,state TEXT); '

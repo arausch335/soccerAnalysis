@@ -15,7 +15,8 @@ analysis = ["scipy", "scikit-learn", "plotly", "pyarrow"]
 [project.scripts]
 soccer-analysis = "main:entrypoint"
 soccer-dataset = "dataset_builder:main"
-soccer-fixtures = "fixtures.collector:main"
+soccer-fixtures = "fixtures.dataset:main"
+soccer-sofascore-fixtures = "fixtures.collector:main"
 soccer-data-review = "review_data:main"
 soccer-api-test = "api_test:main"
 

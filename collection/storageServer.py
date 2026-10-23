@@ -16,8 +16,8 @@ from .workerRuntime import now
 
 
 class Archive:
-    def __init__(self,root,*,reserve=1024**3):
-        self.directory=Path(root)/'_system/storage/hub';self.objects=self.directory/'objects'
+    def __init__(self,root,*,reserve=1024**3,directory=None):
+        self.directory=Path(directory) if directory is not None else Path(root)/'_system/storage/hub';self.objects=self.directory/'objects'
         self.objects.mkdir(parents=True,exist_ok=True);self.lock=threading.RLock();self.reserve=reserve;self.publishing=False;self.readers=0
         self.database=self.directory/'archive.sqlite'
         with self.connect() as db:

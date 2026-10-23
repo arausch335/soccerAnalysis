@@ -60,7 +60,8 @@ class WhoScoredClient(HttpClient):
 
     def qualification_path(self,parent_path):
         parser=_Directory();parser.feed(self.get_text(parent_path))
-        family='champions-league' if 'champions-league' in parent_path.lower() else 'europa-league'
+        family=('conference-league' if 'conference-league' in parent_path.lower() else
+                'champions-league' if 'champions-league' in parent_path.lower() else 'europa-league')
         links={path.lstrip('/') for path in parser.links
                if re.fullmatch(r'/regions/250/tournaments/\d+/(?:show/)?[a-zA-Z0-9-]+/?',path,re.I)
                and 'qualif' in path.lower() and family in path.lower()}

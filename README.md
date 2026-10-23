@@ -1,5 +1,10 @@
 # Soccer analysis
 
+Historical fixtures from 2010–2011 onward: `python main.py --fixtures`.
+This builds a Sofascore-led dataset with FotMob, WhoScored and Reep match/team
+IDs, scores, season/competition context and matching evidence. See
+[fixture dataset instructions](docs/FIXTURES.md) for scope, resume and refresh.
+
 Collection uses one workflow: **combined**. Each provider starts with its API;
 access or response failures switch that provider to **Soccer Collector**, the
 Chrome extension. Sofascore, FotMob and WhoScored share one selected tab and one

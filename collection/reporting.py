@@ -304,8 +304,14 @@ def read_logs(root, worker='', level='', search='', limit=200, after=0, *, focus
 
 
 class ReportingServer:
-    def __init__(self, root, ensemble, options, *, storage_plan=None,workers=None,command_plan=None):
+    def __init__(self, root, ensemble, options, *, storage_plan=None,workers=None,command_plan=None,dataset_root=None):
         self.store = ReportingStore(root, ensemble)
+        if dataset_root is None:
+            import config
+            dataset_root = config.DATASET_ROOT
+        from .compiledDelivery import CompiledReceiver
+        self.compiled = CompiledReceiver(root, dataset_root)
+        compiled = self.compiled
         tokens = options['tokens']
         store = self.store
         provision=None;control=None
@@ -342,6 +348,8 @@ class ReportingServer:
                 worker = self.authorized()
                 if not worker:
                     self.reply(401, {'error': 'Worker authentication required'}); return
+                if self.path.startswith('/v1/compiled/'):
+                    compiled.dispatch(self, worker, store); return
                 if self.path=='/v1/health':
                     with store.lock,store.connect() as db:
                         row=db.execute('SELECT instance,stream FROM workers WHERE worker=?',(worker,)).fetchone()
@@ -369,6 +377,8 @@ class ReportingServer:
                 worker = self.authorized()
                 if not worker:
                     self.reply(401, {'error': 'Worker authentication required'}); return
+                if self.path.startswith('/v1/compiled/'):
+                    compiled.dispatch(self, worker, store); return
                 if self.path=='/v1/assignments' and control:
                     try:
                         length=int(self.headers.get('Content-Length','0'))
@@ -402,6 +412,14 @@ class ReportingServer:
                 except CLIENT_DISCONNECTED:raise
                 except (OSError, sqlite3.Error):
                     self.reply(503, {'error': 'Report storage unavailable; retry later'})
+            def do_PUT(self):
+                self.connection.settimeout(30)
+                worker = self.authorized()
+                if not worker:
+                    self.reply(401, {'error': 'Worker authentication required'}); return
+                if self.path.startswith('/v1/compiled/'):
+                    compiled.dispatch(self, worker, store); return
+                self.reply(404, {'error': 'Unknown endpoint'})
         self.server = ThreadingHTTPServer((options['bind'], options['port']), Handler)
         self.server.daemon_threads = True
         self.thread = threading.Thread(target=self.server.serve_forever, name='worker-report-receiver', daemon=True)
@@ -429,7 +447,7 @@ class Reporter:
             raise ValueError('Reporting token is configured for a different worker')
         self.path = system_path(self.root,'worker_runtime') / 'reporting-outbox.sqlite'
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.lock = threading.RLock(); self.wake = threading.Event(); self.stop = threading.Event(); self.thread = None; self.peer_thread = None
+        self.lock = threading.RLock(); self.wake = threading.Event(); self.stop = threading.Event(); self.thread = None; self.peer_thread = None; self.compiled_thread = None
         self.opener = build_opener(ProxyHandler({}), NoRedirect())
         self.status = {'state': 'connecting' if self.url else 'unconfigured', 'message': 'Connecting to Main; reports are saved locally.' if self.url else 'Reporting setup pending. Progress and logs are saved in the local queue.'}
         self.versions = {}
@@ -597,6 +615,14 @@ class Reporter:
                     if not warned:print('[Reporting] Other-worker inventory download delayed. Progress and logs use a separate connection.',flush=True)
                     warned=True
                 self.stop.wait(self.heartbeat)
+        def send_compiled():
+            from .compiledDelivery import flush
+            while not self.stop.is_set():
+                try:flush(self.root, stop=self.stop)
+                except (OSError, ValueError, KeyError, sqlite3.Error):pass
+                self.stop.wait(30)
+        self.compiled_thread = threading.Thread(target=send_compiled, name='compiled-data-to-main', daemon=True)
+        self.compiled_thread.start()
         self.thread = threading.Thread(target=send, name='worker-reporter', daemon=True)
         self.peer_thread=threading.Thread(target=receive_inventories,name='worker-inventory-receiver',daemon=True)
         self.thread.start();self.peer_thread.start()
@@ -607,6 +633,7 @@ class Reporter:
         self.stop.set(); self.wake.set()
         if self.thread:self.thread.join(timeout=6)
         if self.peer_thread:self.peer_thread.join(timeout=16)
+        if self.compiled_thread:self.compiled_thread.join(timeout=2)
 
 
 def connection_error(exc):

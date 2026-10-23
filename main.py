@@ -304,6 +304,10 @@ def _ensemble_main(args,transfer):
 def entrypoint(argv=None):
     """No-argument launches use the shared plan; explicit scrape commands stay compatible."""
     args=list(sys.argv[1:] if argv is None else argv)
+    if '--fixtures' in args:
+        from fixtures.dataset import main as build_fixtures
+        args.remove('--fixtures')
+        return build_fixtures(args)
     if '--terminate' in args:
         from collection.terminateWorkers import main as terminate_workers
         return terminate_workers(args)

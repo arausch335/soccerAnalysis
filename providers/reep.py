@@ -127,7 +127,18 @@ def wanted_ids(root, dataset, ensemble=None):
     """Use small ID/checkpoint files, never traverse the large raw responses."""
     wanted = set()
     root, dataset = Path(root), Path(dataset)
-    for folder in (dataset, dataset / 'concordance'):
+    # The historical fixture builder discovers IDs before match details exist.
+    # Retain their Reep peers on the next refresh as well.
+    fixtures = dataset / 'fixtures.csv'
+    if fixtures.exists():
+        with fixtures.open(encoding='utf-8', newline='') as stream:
+            for row in csv.DictReader(stream):
+                for provider in PROVIDERS:
+                    for entity, kind in (('match','match'), ('home_team','team'), ('away_team','team')):
+                        native = row.get(f'{provider}_{entity}_id')
+                        if native:
+                            wanted.add((kind, provider, native))
+    for folder in (dataset, dataset / 'concordance', dataset / 'fixture_concordance'):
         for kind in KINDS:
             path = folder / (kind + '_ids.csv')
             if not path.exists():

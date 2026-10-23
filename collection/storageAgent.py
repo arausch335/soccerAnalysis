@@ -81,19 +81,26 @@ def dataset_files(root):
     return files
 
 
-def install_dataset(peer,manifest,output,staging_root):
+def install_dataset(peer,manifest,output,staging_root,*,exclude=()):
+    output=Path(output);output.mkdir(parents=True,exist_ok=True)
+    with FileLock(str(output/'.dataset-install.lock'),timeout=25):
+        return _install_dataset(peer,manifest,output,staging_root,exclude=exclude)
+
+
+def _install_dataset(peer,manifest,output,staging_root,*,exclude=()):
     """Verify an entire publication before publishing any file; preserve other seasons."""
     validate_manifest(manifest)
     if manifest['kind']!='dataset':raise ValueError('Raw data cannot be installed as a dataset')
+    files=[item for item in manifest['files'] if item['path'] not in exclude]
     output=Path(output);output.mkdir(parents=True,exist_ok=True)
     staging_root=Path(staging_root);staging_root.mkdir(parents=True,exist_ok=True)
     from .ensemble import atomic_copy
     from .maintenance import require_space
-    require_space(staging_root,2*sum(item['size'] for item in manifest['files']))
-    require_space(output,sum(item['size'] for item in manifest['files']))
+    require_space(staging_root,2*sum(item['size'] for item in files))
+    require_space(output,sum(item['size'] for item in files))
     with tempfile.TemporaryDirectory(prefix='dataset-',dir=staging_root) as temporary:
         stage=Path(temporary)
-        for item in manifest['files']:
+        for item in files:
             relative=item['path'];target=output/relative
             if any(p.is_symlink() for p in [target,*list(target.parents)[:len(target.relative_to(output).parts)]]):raise ValueError('Dataset destination contains symbolic links')
             incoming=stage/relative;incoming.parent.mkdir(parents=True,exist_ok=True)
@@ -102,7 +109,7 @@ def install_dataset(peer,manifest,output,staging_root):
             if incoming.stat().st_size!=item['size'] or digest(incoming)!=item['sha256']:raise ValueError('Dataset file differs from manifest')
         # The receipt is updated only after every publication file is installed.
         # An interrupted installation is retried from the same verified manifest.
-        for item in manifest['files']:atomic_copy(stage/item['path'],output/item['path'])
+        for item in files:atomic_copy(stage/item['path'],output/item['path'])
     return identifier(manifest)
 
 
@@ -200,7 +207,11 @@ class StorageAgent:
             if manifest and manifest.get('worker')!=self.settings['hub']:raise ValueError('Unexpected dataset publisher')
             if manifest and identifier(manifest)!=self.receipt.get('id'):
                 self.status={'state':'downloading','role':role}
-                mid=install_dataset(peer,manifest,self.output,self.directory/'downloads')
+                from .compiledDelivery import receipt_path
+                from .storageTransfer import FIXTURE_DATASET_PATHS
+                # Direct worker fixture publications supersede an MSI copy.
+                excluded=FIXTURE_DATASET_PATHS if receipt_path(self.root).exists() else ()
+                mid=install_dataset(peer,manifest,self.output,self.directory/'downloads',exclude=excluded)
                 self.receipt={'id':mid,'received_at':now()};atomic_json(self.directory/'dataset-receipt.json',self.receipt)
                 self.log('[Storage] Updated datasets and concordance received from MSI.')
             self.status={'state':'up_to_date' if manifest else 'awaiting_dataset','role':role,'last_dataset':self.receipt.get('received_at')}
