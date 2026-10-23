@@ -472,7 +472,11 @@ export async function executeWho(s,args) {
   const initial=await selectedTab(s);
   if (!whoEndpoint(args.endpoint,args.kind,args.params)) throw new Error('Unknown WhoScored collection endpoint.');
   const stage=args.kind==='json' ? args.endpoint.match(/^tournaments\/(\d+)/)[1] : null;
-  const url='https://www.whoscored.com/'+(stage ? `stages/${stage}/fixtures` : args.endpoint);
+  if (stage && (!whoEndpoint(args.page_path,'text') ||
+      !new RegExp(`^regions/\\d+/tournaments/\\d+/seasons/\\d+/stages/${stage}/(?:show|fixtures)/[a-z0-9-]+$`,'i').test(args.page_path))) {
+    throw new Error('WhoScored fixture request needs its published competition/season stage URL. Update Python and refresh season discovery.');
+  }
+  const url='https://www.whoscored.com/'+(stage ? args.page_path : args.endpoint);
   if (initial.url.replace(/\/$/,'') !== url) await chrome.tabs.update(s.tabId,{url});
   const dataWait=Math.min(60000,Math.max(1000,args.timeout_ms || 30000));
   const manualWait=Math.min(300000,Math.max(1000,args.manual_wait_ms || 120000));
@@ -484,11 +488,12 @@ export async function executeWho(s,args) {
     // Wait for the intended document; never read the previous game's source.
     const currentPath=new URL(current.url).pathname.toLowerCase().replace(/\/$/,'');
     const wantedPath=new URL(url).pathname.toLowerCase().replace(/\/$/,'');
+    if (currentPath==='/404.html') return {ok:true,status:404,reason:'page_not_found',source_url:current.url};
     const expectedPlayer=args.endpoint.match(/^players\/(\d+)\/history$/i)?.[1];
     const playerPath=expectedPlayer && new RegExp(`^/players/${expectedPlayer}/history(?:/|$)`,'i').test(currentPath);
     const expectedMatch=args.endpoint.match(/^matches\/(\d+)\/live$/i)?.[1];
     const correctPath=expectedPlayer ? playerPath : expectedMatch ? new RegExp(`^/matches/${expectedMatch}/live(?:/|$)`).test(currentPath) : currentPath===wantedPath;
-    if (args.kind==='text' && !correctPath) {
+    if (!correctPath) {
       await new Promise(r=>setTimeout(r,500));continue;
     }
     const frames=await chrome.scripting.executeScript({target:{tabId:s.tabId},world:'MAIN',func:whoPageOperation,args:[args]});

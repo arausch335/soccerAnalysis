@@ -202,6 +202,10 @@ class SeasonRunner:
                             continue
                     events.update({row['id']:row for row in local})
                     configured=configured_whoscored_stages(competition,season)
+                    prepare=getattr(client,'register_fixture_season',None)
+                    if callable(prepare):
+                        for path in (competition.whoscored_path,*competition.whoscored_supplemental_paths):
+                            prepare(path,season)
                     stages=list(configured or [])
                     paths=((competition.whoscored_path,) if configured is None else ())+competition.whoscored_supplemental_paths
                     for competition_path in paths:

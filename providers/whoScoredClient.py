@@ -9,7 +9,7 @@ from .httpClient import HttpClient, ProviderError
 
 class _Directory(HTMLParser):
     def __init__(self):
-        super().__init__(); self.select=None; self.option=None; self.options=[];self.stage_paths=[];self.links=[]
+        super().__init__(); self.select=None; self.option=None; self.options=[];self.stage_paths=[];self.links=[];self.competition_paths=[]
 
     def handle_starttag(self, tag, attrs):
         attrs=dict(attrs)
@@ -17,6 +17,8 @@ class _Directory(HTMLParser):
         if tag=='option' and self.select=='seasons': self.option=[attrs.get('value'), '']
         if tag=='option' and self.select=='stages' and attrs.get('value'):
             self.stage_paths.append(attrs['value'])
+        if tag=='option' and self.select=='tournaments' and attrs.get('value'):
+            self.competition_paths.append(attrs['value'])
         if tag=='a' and attrs.get('href'): self.links.append(attrs['href'])
 
     def handle_data(self, data):
@@ -81,7 +83,19 @@ class WhoScoredClient(HttpClient):
         stages=sorted({int(m.group(1)) for path in paths
                        if (m:=re.search(r'/stages/(\d+)/(?:show|fixtures)',path,re.I))})
         if not stages:raise ProviderError('WhoScored season has no fixture stages')
+        # Preserve the published route: /stages/<id>/fixtures alone is a 404.
+        if not hasattr(self,'fixture_paths'):self.fixture_paths={}
+        for path in paths:
+            found=re.search(r'/stages/(\d+)/(show|fixtures)(?:/|$)',path,re.I)
+            if found and (int(found[1]) not in self.fixture_paths or found[2].lower()=='fixtures'):
+                self.fixture_paths[int(found[1])]=unescape(path).lstrip('/')
         return stages
+
+    def register_fixture_season(self,competition_path,season):
+        """Retain directory context even when stage IDs come from checkpoints."""
+        if not hasattr(self,'fixture_seasons'):self.fixture_seasons=[]
+        context=(competition_path,season)
+        if context not in self.fixture_seasons:self.fixture_seasons.append(context)
 
     def season_stage(self, season_path):
         """Compatibility helper for domestic competitions with one stage."""

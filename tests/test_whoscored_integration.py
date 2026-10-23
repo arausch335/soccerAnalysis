@@ -112,6 +112,53 @@ class WhoScoredIntegrationTests(unittest.TestCase):
 
 class WhoScoredTransportTests(unittest.TestCase):
 
+    def test_schedule_http_404_uses_extension_once_and_keeps_published_stage_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            api=Mock();ext=Mock();api.fixture_paths={4345:'regions/252/tournaments/2/seasons/2458/stages/4345/fixtures/england-premier-league-2010-2011'}
+            ext.fixture_paths={};api.season_events.side_effect=ProviderRequestError('HTTP 404',status_code=404)
+            ext.season_events.return_value=[]
+            client=WhoScoredTransport(tmp,http=api,extension=ext,report=quiet)
+            self.assertEqual(client.season_events(4345,'201009'),[])
+            self.assertEqual(ext.fixture_paths,api.fixture_paths)
+            ext.season_events.assert_called_once_with(4345,'201009')
+            self.assertEqual(client.active,'extension')
+
+    def test_missing_match_404_does_not_trigger_extension_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            api=Mock();ext=Mock();api.match_details.side_effect=ProviderRequestError('HTTP 404',status_code=404)
+            client=WhoScoredTransport(tmp,http=api,extension=ext,report=quiet)
+            with self.assertRaises(ProviderRequestError):client.match_details(11)
+            ext.match_details.assert_not_called()
+
+    def test_extension_recovers_published_route_for_checkpointed_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge=Mock();client=ExtensionWhoScoredClient(tmp,bridge=bridge)
+            directory='regions/252/tournaments/2/england-premier-league'
+            season='regions/252/tournaments/2/seasons/2458/england-premier-league'
+            page='regions/252/tournaments/2/seasons/2458/stages/4345/fixtures/england-premier-league-2010-2011'
+            client.register_fixture_season(directory,'2010/2011')
+            def response(action,args,**kwargs):
+                endpoint=args['endpoint']
+                if endpoint==directory:text=f'<select id="seasons"><option value="/{season}">2010/2011</option></select>'
+                elif endpoint==season:text=f'<a href="/{page}">Fixtures</a>'
+                else:
+                    self.assertEqual(args['page_path'],page)
+                    return dict(status=200,source_url='https://www.whoscored.com/'+page,payload={'tournaments':[{'stageId':4345,'matches':[]}]})
+                return dict(status=200,source_url='https://www.whoscored.com/'+endpoint,text=text)
+            bridge.request.side_effect=response
+            with patch.object(client.request_gate,'wait'):
+                self.assertEqual(client.season_events(4345,'201009'),[])
+                self.assertEqual(client.season_events(4345,'201010'),[])
+            self.assertEqual(bridge.request.call_count,4)  # Directory/stage lookup only once.
+
+    def test_extension_allows_public_homepage_but_rejects_unrelated_routes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge=Mock();client=ExtensionWhoScoredClient(tmp,bridge=bridge)
+            bridge.request.return_value=dict(status=200,source_url='https://www.whoscored.com/',text='<html>Leagues</html>')
+            with patch.object(client.request_gate,'wait'):
+                self.assertEqual(client.get_text('/'),'<html>Leagues</html>')
+            with self.assertRaises(ValueError):client.get_text('/account/settings')
+
 
     def test_extension_payload_is_parsed_and_wrong_match_or_origin_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

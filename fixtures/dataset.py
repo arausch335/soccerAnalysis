@@ -109,8 +109,11 @@ def _who_paths(client, competition):
     if existing:
         return [existing.whoscored_path, *existing.whoscored_supplemental_paths]
     # Read published navigation links; never invent tournament or stage IDs.
+    parent = {'Championship':'Premier League', 'La Liga 2':'La Liga',
+              '2. Bundesliga':'Bundesliga', 'Serie B':'Serie A',
+              'Ligue 2':'Ligue 1', 'Conference League':'Champions League'}[competition.name]
     parser = _Directory()
-    parser.feed(client.get_text('/'))
+    parser.feed(client.get_text(next(c.whoscored_path for c in COLLECTION_COMPETITIONS if c.name == parent)))
     suffixes = {
         'Championship': ('england-championship',),
         'La Liga 2': ('spain-segunda-division', 'spain-laliga2', 'spain-laliga-2'),
@@ -118,9 +121,13 @@ def _who_paths(client, competition):
         'Serie B': ('italy-serie-b',), 'Ligue 2': ('france-ligue-2',),
         'Conference League': ('europe-conference-league', 'europe-europa-conference-league'),
     }[competition.name]
-    paths = {p.lstrip('/') for p in parser.links
-             if re.fullmatch(r'/regions/\d+/tournaments/\d+/(?:show/)?[a-z0-9-]+/?', p, re.I)
-             and p.rstrip('/').lower().endswith(suffixes)}
+    paths = {p.lstrip('/').lower() for p in (*parser.competition_paths, *parser.links)
+             if re.fullmatch(r'/regions/\d+/tournaments/\d+/(?:seasons/\d+/(?:stages/\d+/(?:show|fixtures)/)?|show/)?[a-z0-9-]+/?', p, re.I)
+             and any(re.search(re.escape(suffix)+r'(?:-\d{4}-\d{4})?/?$',p,re.I) for suffix in suffixes)}
+    # A tournament dropdown gives the stable competition route. Prefer it to
+    # links to individual stages of its currently selected season.
+    stable={p for p in paths if '/seasons/' not in p.lower()}
+    if stable:paths=stable
     if len(paths) != 1:
         raise ValueError('WhoScored competition directory is unavailable or ambiguous: ' + competition.name)
     return sorted(paths)
@@ -129,6 +136,10 @@ def _who_paths(client, competition):
 def _who_events(client, competition, start, baseline):
     season = f'{start}/{start + 1}'
     events = {}
+
+    def register(path):
+        prepare=getattr(client,'register_fixture_season',None)
+        if callable(prepare):prepare(path,season)
 
     def collect_stage(stage):
         for month in months_between(baseline):
@@ -140,6 +151,7 @@ def _who_events(client, competition, start, baseline):
                 events[event['id']] = event
 
     def collect_path(path):
+        register(path)
         found = [s for s in client.seasons(path) if season_key(s['name']) == season]
         if len(found) != 1:
             raise ValueError(f'WhoScored season {competition.name} {season} unavailable or ambiguous')
@@ -149,6 +161,8 @@ def _who_events(client, competition, start, baseline):
     try:
         stages = configured_whoscored_stages(competition, season)
         if stages is not None:
+            existing = next((c for c in COLLECTION_COMPETITIONS if c.name == competition.name), None)
+            if existing:register(existing.whoscored_path)
             for stage in dict.fromkeys(stages):
                 collect_stage(stage)
             existing = next((c for c in COLLECTION_COMPETITIONS if c.name == competition.name), None)

@@ -402,6 +402,30 @@ test('one chosen tab switches from WhoScored to FotMob and back to a Sofascore s
   assert.deepEqual(moves,['https://www.fotmob.com/','https://www.sofascore.com/']);
 });
 
+test('WhoScored fixtures use the published season route and reject mismatched stage URLs',async()=>{
+  let url='https://www.sofascore.com/';const moves=[];
+  chrome.tabs.get=async()=>({id:1,url,status:'complete'});
+  chrome.tabs.update=async(id,args)=>{url=args.url;moves.push(url);};
+  chrome.scripting.executeScript=async()=>[{frameId:0,result:{ok:true,status:200,source_url:url,payload:{tournaments:[]}}}];
+  const args={kind:'json',endpoint:'tournaments/4345/data/',params:{d:'201009',isAggregate:'false'},
+    page_path:'regions/252/tournaments/2/seasons/2458/stages/4345/fixtures/england-premier-league-2010-2011'};
+  const result=await execute({tabId:1},{id:'fixture-route',action:'whoscored',args});
+  assert.equal(result.status,200);
+  assert.deepEqual(moves,['https://www.whoscored.com/'+args.page_path]);
+  for(const page_path of [undefined,'stages/4345/fixtures',args.page_path.replace('/4345/','/4346/'),'https://evil.test/']) {
+    await assert.rejects(execute({tabId:1},{id:'bad-fixture-route',action:'whoscored',args:{...args,page_path}}));
+  }
+  assert.equal(moves.length,1);
+});
+
+test('WhoScored missing pages return 404 promptly instead of timing out',async()=>{
+  chrome.tabs.get=async()=>({id:1,url:'https://www.whoscored.com/404.html?aspxerrorpath=/missing',status:'complete'});
+  chrome.tabs.update=async()=>{};
+  chrome.scripting.executeScript=async()=>assert.fail('Do not scrape a 404 document');
+  const result=await execute({tabId:1},{id:'who-missing',action:'whoscored',args:{kind:'text',endpoint:'regions/252/tournaments/2/england-premier-league'}});
+  assert.equal(result.status,404);assert.equal(result.reason,'page_not_found');
+});
+
 test('WhoScored waits past null match-data initialization for the actual object',async()=>{
   const url='https://www.whoscored.com/matches/11/live';let reads=0;
   chrome.tabs.get=async()=>({id:1,url,status:'complete'});

@@ -75,6 +75,9 @@ class ExtensionWhoScoredClient(WhoScoredClient):
         args={'endpoint':endpoint,'params':params or {},'kind':kind,
               'timeout_ms':self.settings['timeout_seconds']*1000,
               'manual_wait_ms':self.settings['manual_wait_seconds']*1000}
+        if kind=='json':
+            stage=int(re.fullmatch(r'tournaments/(\d+)/data/',endpoint)[1])
+            args['page_path']=self.fixture_paths[stage]
         if self.bridge is None:
             from .bridge import acquire_bridge
             self.bridge,self._owns_bridge=acquire_bridge(report=self.report,
@@ -87,7 +90,7 @@ class ExtensionWhoScoredClient(WhoScoredClient):
 
     def _fetch(self,endpoint,params,kind):
         endpoint=endpoint.lstrip('/')
-        if '..' in endpoint or '\\' in endpoint or not re.fullmatch(r'(?:players/\d+/history|matches/\d+/live|regions/\d+/tournaments/\d+/[a-zA-Z0-9-]+|regions/\d+/tournaments/\d+/seasons/\d+(?:/(?:stages/\d+/(?:show|fixtures)/)?[a-zA-Z0-9-]+)?|seasons/\d+/[^?#]+|tournaments/\d+/data/|stages/\d+/[^?#]+)',endpoint,re.I):
+        if '..' in endpoint or '\\' in endpoint or not re.fullmatch(r'(?:|players/\d+/history|matches/\d+/live|regions/\d+/tournaments/\d+/[a-zA-Z0-9-]+|regions/\d+/tournaments/\d+/seasons/\d+(?:/(?:stages/\d+/(?:show|fixtures)/)?[a-zA-Z0-9-]+)?|seasons/\d+/[^?#]+|tournaments/\d+/data/|stages/\d+/[^?#]+)',endpoint,re.I):
             raise ValueError('Endpoint is outside the WhoScored collection contract')
         if params and (kind!='json' or set(params)!={'d','isAggregate'} or not re.fullmatch(r'\d{6}',str(params['d'])) or params['isAggregate']!='false'):
             raise ValueError('Invalid WhoScored fixture parameters')
@@ -112,7 +115,7 @@ class ExtensionWhoScoredClient(WhoScoredClient):
         if result.get('reason')=='match_data_unavailable':
             raise ProviderRequestError('WhoScored reports no statistics for this match; other matches can continue',endpoint=endpoint,status_code=404,attempts=1)
         if status!=200:
-            error=ProviderRequestError('WhoScored extension unavailable; finish verification and resume' if status==403 else f'WhoScored HTTP {status}',endpoint=endpoint,status_code=status)
+            error=ProviderRequestError('WhoScored extension unavailable; finish verification and resume' if status==403 else f'WhoScored HTTP {status} for {endpoint}',endpoint=endpoint,status_code=status)
             if status==429:
                 try:error.retry_after=max(0,float(result.get('retryAfter') or 0))
                 except ValueError:pass
@@ -125,6 +128,21 @@ class ExtensionWhoScoredClient(WhoScoredClient):
 
     def get_text(self,endpoint,params=None):return self._fetch(endpoint,params,'text')
     def _get(self,endpoint,params=None):return self._fetch(endpoint,params,'json')
+
+    def season_events(self,stage_id,year_month):
+        if not re.fullmatch(r'\d{6}',year_month):raise ValueError('Use YYYYMM')
+        # Stage IDs alone cannot construct a navigable WhoScored page. Resolve
+        # their published routes lazily, including IDs restored from checkpoints.
+        if stage_id not in getattr(self,'fixture_paths',{}):
+            from collection.selection import season_key
+            for path,season in reversed(getattr(self,'fixture_seasons',[])):
+                found=[row for row in self.seasons(path) if season_key(row['name'])==season_key(season)]
+                if len(found)!=1:continue
+                self.season_stages(found[0]['path'])
+                if stage_id in self.fixture_paths:break
+        if stage_id not in getattr(self,'fixture_paths',{}):
+            raise ProviderError(f'No published WhoScored fixture page for stage {stage_id}; refresh season discovery')
+        return super().season_events(stage_id,year_month)
 
 
 class WhoScoredTransport(WhoScoredClient):
@@ -154,12 +172,21 @@ class WhoScoredTransport(WhoScoredClient):
         client.refresh_cache=self.refresh_cache
         try:return getattr(client,method)(*args)
         except (ProviderError,ValueError,UnicodeError) as exc:
-            if self.active!='http' or self.offline or getattr(exc,'status_code',None) in (400,404,429):raise
+            status=getattr(exc,'status_code',None)
+            schedule_method=method in ('seasons','season_stages','season_events','qualification_path','get_text','get')
+            if self.active!='http' or self.offline or status in (400,429) or status==404 and not schedule_method:raise
             self.active='extension';self.extension.refresh_cache=True
+            http_paths=getattr(self.http,'fixture_paths',{})
+            ext_paths=getattr(self.extension,'fixture_paths',{})
+            self.extension.fixture_paths={**(http_paths if isinstance(http_paths,dict) else {}),
+                                          **(ext_paths if isinstance(ext_paths,dict) else {})}
             self.report('WhoScored HTTP unavailable; switching to the connected extension for this run.',flush=True)
             return getattr(self.extension,method)(*args)
 
     def get_text(self,endpoint,params=None):return self._call('get_text',endpoint,params)
+    def register_fixture_season(self,path,season):
+        self.http.register_fixture_season(path,season)
+        self.extension.register_fixture_season(path,season)
     def get(self,endpoint,params=None):return self._call('get',endpoint,params)
     def qualification_path(self,path):return self._call('qualification_path',path)
     def seasons(self,path):return self._call('seasons',path)

@@ -285,11 +285,21 @@ class FixtureDatasetTests(unittest.TestCase):
         client = Who()
         client.get_text = lambda path: '<a href="/Regions/206/Tournaments/777/spain-segunda-division">LaLiga 2</a>'
         competition = next(c for c in COMPETITIONS if c.name == 'La Liga 2')
-        self.assertEqual(_who_paths(client, competition), ['Regions/206/Tournaments/777/spain-segunda-division'])
+        self.assertEqual(_who_paths(client, competition), ['regions/206/tournaments/777/spain-segunda-division'])
         who = WhoScoredClient()
         who.get_text = lambda path: ('<a href="/regions/250/tournaments/999/europe-conference-league-qualification">Q</a>'
                                     '<a href="/regions/250/tournaments/998/europe-europa-league-qualification">Other</a>')
         self.assertEqual(who.qualification_path('europe-conference-league'), 'regions/250/tournaments/999/europe-conference-league-qualification')
+
+    def test_second_division_discovery_uses_published_country_tournament_dropdown(self):
+        client=Who()
+        client.get_text=Mock(return_value='''<select id="tournaments">
+            <option value="/Regions/252/Tournaments/7/england-championship">Championship</option></select>
+            <a href="/regions/252/tournaments/7/england-championship">Championship</a>
+            <a href="/regions/252/tournaments/7/seasons/11184/stages/25588/show/england-championship-2026-2027">Current season</a>''')
+        competition=next(c for c in COMPETITIONS if c.name=='Championship')
+        self.assertEqual(_who_paths(client,competition),['regions/252/tournaments/7/england-championship'])
+        client.get_text.assert_called_once_with('regions/252/tournaments/2/england-premier-league')
 
     def test_fixture_transports_share_one_persistent_extension_connection(self):
         from contextlib import ExitStack

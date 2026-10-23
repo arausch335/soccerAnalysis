@@ -7,6 +7,7 @@ test('WhoScored access accepts only its origin and known fixture/page routes',()
   assert.ok(whoUrl('https://www.whoscored.com/matches/11/live'));
   for (const url of ['https://evil.test/','https://www.whoscored.com.evil.test/','http://www.whoscored.com/','https://a:b@www.whoscored.com/']) assert.equal(whoUrl(url),false);
   assert.ok(whoEndpoint('matches/11/live','text'));
+  assert.ok(whoEndpoint('','text'));
   assert.ok(whoEndpoint('Regions/252/Tournaments/2/Seasons/100/England-Premier-League','text'));
   assert.ok(whoEndpoint('Regions/250/Tournaments/12/Seasons/7804/Stages/18065/Show/europe-champions-league-2019-2020','text'));
   assert.ok(whoEndpoint('Regions/250/Tournaments/12/Seasons/7804','text'));
@@ -42,4 +43,11 @@ test('fixture requests use only the current stage, retain browser cookies and pr
 test('WhoScored profile lookups are constrained to public player history',()=>{
   assert.ok(whoEndpoint('players/463353/history','text'));
   for(const endpoint of ['players/463353/account','players/463353/history?url=evil','players/../history'])assert.equal(whoEndpoint(endpoint,'text'),false);
+});
+
+test('monthly fixture requests accept the published full season/stage route',async()=>{
+  page();location.pathname='/regions/252/tournaments/2/seasons/2458/stages/4345/fixtures/england-premier-league-2010-2011';
+  globalThis.fetch=async()=>({status:200,text:async()=>'{"tournaments":[]}',headers:{get:()=>null}});
+  assert.deepEqual((await whoPageOperation({kind:'json',endpoint:'tournaments/4345/data/',params:{d:'201009',isAggregate:'false'}})).payload,{tournaments:[]});
+  await assert.rejects(whoPageOperation({kind:'json',endpoint:'tournaments/4346/data/',params:{d:'201009',isAggregate:'false'}}));
 });

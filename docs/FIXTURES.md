@@ -154,3 +154,11 @@ for this command are written under `_system/extension_diagnostics/fixtures/`.
 Offline and `--api-only` runs do not open an extension listener.
 Interrupted fixture runs reuse their saved season schedules when rerun with the
 same command; do not remove their checkpoints to recover a connection.
+
+WhoScored fixture fallback uses published full competition/season/stage links;
+the abbreviated `/stages/<id>/fixtures` route returns a missing-page error.
+Secondary leagues are discovered from their country's tournament dropdown.
+Schedule HTTP 404s get one extension fallback; a missing page in the extension
+remains a coverage failure and is reported promptly. Update Python **and reload
+Soccer Collector in Chrome's extensions page** after pulling this change.
+Saved connection credentials and completed provider season schedules are retained.

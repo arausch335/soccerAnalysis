@@ -23,7 +23,7 @@ export async function whoPageOperation(args) {
     throw new Error('Unknown WhoScored fixture request.');
   }
   const stage=args.endpoint.match(/^tournaments\/(\d+)/)[1];
-  if (!new RegExp(`^/stages/${stage}/`, 'i').test(location.pathname)) throw new Error('Wrong WhoScored fixture stage.');
+  if (!new RegExp(`(?:^|/)stages/${stage}/(?:show|fixtures)(?:/|$)`, 'i').test(location.pathname)) throw new Error('Wrong WhoScored fixture stage.');
   const response=await fetch('/'+args.endpoint+'?'+new URLSearchParams(args.params), {
     credentials:'same-origin',signal:AbortSignal.timeout(Math.min(60000,Math.max(1000,args.timeout_ms || 30000))),
     headers:{'X-Requested-With':'XMLHttpRequest','Accept':'application/json'}
