@@ -119,7 +119,7 @@ def whoscored_profile(pid,text):
     if image is None or heading is None:raise ProviderError('WhoScored profile identity unavailable')
     header=heading.parent;body=header.text()
     birthday=re.search(r'Age:.*?\(\s*(\d{2})-(\d{2})-(\d{4})\s*\)',body)
-    club=next((n.text().strip() for n in header.nodes('a') if 'team-link' in n.attrs.get('class','')),None)
+    club=next((n.text().strip() for n in header.nodes('a') if 'team-link' in n.attrs.get('class','') and n.text().strip()),None)
     career=[]
     table=next((n for n in dom.root.nodes('table') if n.attrs.get('id')=='top-player-stats-summary-grid'),None)
     if table:
@@ -133,6 +133,8 @@ def whoscored_profile(pid,text):
             endyear=int(second) if second and len(second)==4 else year+1 if second else year
             career.append({'club':team.text().strip(),'start':f'{year}-07-01' if second else f'{year}-01-01',
                            'end':f'{endyear}-06-30' if second else f'{year}-12-31','precision':'season'})
+    # History repeats a club/season for every tournament it covered.
+    career=list({(row['club'],row['start'],row['end']):row for row in career}.values())
     return {'provider':'whoscored','id':str(pid),'name':heading.text().strip(),
             'birth_date':day(f'{birthday[3]}-{birthday[2]}-{birthday[1]}') if birthday else None,
             'club':club,'career':career,'sources':[f'https://www.whoscored.com/players/{pid}/history']}
@@ -188,7 +190,8 @@ class ProfileVerifier:
         if self.on_provider:self.on_provider(provider)
         self.report(f'[Identity lookup] {provider} player {pid}: checking birthday, club and career.')
         try:
-            value={**checked_profile(fetch(int(pid)),provider,str(pid)),'fetched_at':stamp()};ttl=timedelta(days=7)
+            value={**checked_profile(fetch(int(pid)),provider,str(pid)),'fetched_at':stamp()}
+            ttl=timedelta(days=7) if all(value.get(k) for k in ('birth_date','club','career')) else timedelta(hours=6)
         except (ProviderError,ValueError,KeyError,TypeError,AttributeError,IndexError,OSError) as exc:
             value={'error':str(exc)[:300]};ttl=timedelta(hours=6)
         with self.store.connect() as db:
@@ -204,6 +207,10 @@ class ProfileVerifier:
             investigation={'workflow':'main-profile-review-v1','checked_at':stamp(),'status':'checked','errors':[v['error'] for v in (left,right) if 'error' in v]}
             if 'error' not in left:investigation['source']=left
             if 'error' not in right:investigation['baseline']=right
+            for name,value in ((p['provider'],left),('sofascore',right)):
+                if 'error' in value:continue
+                missing=[label for key,label in (('birth_date','birthday'),('club','current club'),('career','career history')) if not value.get(key)]
+                if missing:investigation['errors'].append(name+': '+', '.join(missing)+' unavailable; available profile evidence retained.')
             p={**p,'investigation':investigation};checks=compare_profiles(p,self.root)
             p['investigation']['checks']=checks
             p['investigation']['status']='verified' if all(v=='match' for v in checks.values()) else 'conflict' if 'conflict' in checks.values() else 'incomplete'
@@ -232,7 +239,8 @@ def needs_profile_check(proposal):
     except (KeyError,TypeError,ValueError):return True
 
 
-LEGACY_EXTENSION_ERRORS=frozenset(('Unknown collector command.','Page returned no collection data.'))
+LEGACY_EXTENSION_ERRORS=frozenset(('Unknown collector command.','Page returned no collection data.',
+                                  'WhoScored profile needs its loaded career table'))
 
 
 def retry_legacy_extension_failures(root):

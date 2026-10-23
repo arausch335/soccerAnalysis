@@ -167,7 +167,21 @@ class WhoScoredTransport(WhoScoredClient):
     def season_events(self,stage,month):return self._call('season_events',stage,month)
     def match_details(self,mid):return self._call('match_details',mid)
     def match_teams(self,mid):return self._call('match_teams',mid)
-    def player_profile(self,pid):return self._call('player_profile',pid)
+    def player_profile(self,pid):
+        result=self._call('player_profile',pid)
+        if self.active!='http' or self.offline or (result.get('birth_date') and result.get('career')):return result
+        # An HTTP page can contain the header before History's table is loaded.
+        # Missing optional fields never justify discarding a validated birthday.
+        self.active='extension';self.extension.refresh_cache=True
+        self.report('WhoScored profile history is incomplete in HTTP; checking the connected extension.',flush=True)
+        try:rendered=self.extension.player_profile(pid)
+        except (ProviderError,ValueError,UnicodeError) as exc:
+            self.report('WhoScored extension profile unavailable; retaining available HTTP profile evidence: '+str(exc),flush=True)
+            return result
+        for key in ('birth_date','club','career'):
+            if not rendered.get(key) and result.get(key):rendered[key]=result[key]
+        return rendered
+
 
 
 create_whoscored_client=WhoScoredTransport

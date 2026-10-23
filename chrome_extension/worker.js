@@ -477,7 +477,7 @@ export async function executeWho(s,args) {
   const dataWait=Math.min(60000,Math.max(1000,args.timeout_ms || 30000));
   const manualWait=Math.min(300000,Math.max(1000,args.manual_wait_ms || 120000));
   let deadline=Date.now()+dataWait;
-  let result, waitingSince=null;
+  let result, profileHeader=null, waitingSince=null;
   while (Date.now()<deadline) {
     const current=await selectedTab(s);
     if (!whoUrl(current.url)) {await new Promise(r=>setTimeout(r,500));continue;}
@@ -501,11 +501,17 @@ export async function executeWho(s,args) {
     if (result?.status===200 && args.kind==='text' && /^matches\//.test(args.endpoint) &&
         (!/\bmatchCentreData["']?\s*[:=]\s*\{/.test(result.text || '') ||
          result.text.match(/\bmatchId["']?\s*[:=]\s*(\d+)/)?.[1]!==expectedMatch)) {await new Promise(r=>setTimeout(r,500));continue;}
-    if (result?.status===200 && expectedPlayer && (!/player-table-statistics-body[\s\S]*?<tr\b/i.test(result.text || '') || !/player-picture/.test(result.text || ''))) {await new Promise(r=>setTimeout(r,500));continue;}
+    if (result?.status===200 && expectedPlayer) {
+      const samePlayer=new RegExp(`/players/${expectedPlayer}\\.(?:jpg|png)`, 'i').test(result.text || '');
+      if(samePlayer && /header-name/.test(result.text || '')) profileHeader=result;
+      if (!samePlayer || !/player-table-statistics-body[\s\S]*?<tr\b/i.test(result.text || '')) {await new Promise(r=>setTimeout(r,500));continue;}
+    }
     if (result) return {...result,waiting_seconds:waitingSince===null ? 0 : (Date.now()-waitingSince)/1000};
     await new Promise(r=>setTimeout(r,500));
   }
   if (result?.status===403 && result.verification) return {...result,reason:'verification_required',
+    waiting_seconds:waitingSince===null ? 0 : (Date.now()-waitingSince)/1000};
+  if (profileHeader) return {...profileHeader,profile_partial:true,reason:'career_history_unavailable',
     waiting_seconds:waitingSince===null ? 0 : (Date.now()-waitingSince)/1000};
   return {ok:true,status:null,reason:'extension_timeout',error:'WhoScored data did not become ready before the extension deadline.',
     waiting_seconds:waitingSince===null ? 0 : (Date.now()-waitingSince)/1000,source_url:(await selectedTab(s)).url};

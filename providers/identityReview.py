@@ -36,10 +36,25 @@ def stamp():return datetime.now(timezone.utc).isoformat()
 def path_for(root=None):return review_root(root)/'_system'/'identity'/'review.sqlite'
 
 
+def unique_contexts(contexts,limit=5):
+    """One row per provider/baseline fixture pair, preserving richer observations."""
+    unique={}
+    for context in contexts:
+        mid=str(context.get('match_id') or '');native=str(context.get('provider_match_id') or '')
+        key=(mid,native,context.get('side')) if mid or native else json.dumps(context,sort_keys=True)
+        prior=unique.get(key,{})
+        workers=sorted({w for c in (prior,context) for w in [*c.get('workers',[]),c.get('worker')] if isinstance(w,str) and w})
+        merged={**prior,**{k:v for k,v in context.items() if v is not None and v!=''}}
+        if workers:merged['workers']=workers
+        unique[key]=merged
+    return list(unique.values())[-limit:]
+
+
 @lru_cache(maxsize=16)
 def _decisions(path,mtime):
     with sqlite3.connect(readonly_uri(Path(path).resolve()),uri=True) as db:
-        return [json.loads(row[0]) for row in db.execute('SELECT payload FROM decisions')]
+        rows=[json.loads(row[0]) for row in db.execute('SELECT payload FROM decisions')]
+        return [{**row,'contexts':unique_contexts(row.get('contexts',[]))} for row in rows]
 
 
 def decisions(root=None):
@@ -127,8 +142,7 @@ class ReviewStore:
                 if prior.get('investigation',{}).get('checked_at','')>p.get('investigation',{}).get('checked_at',''):
                     p['investigation']=prior['investigation']
                 contexts=prior.get('contexts',[])+[{**c,'worker':worker} for c in p.get('contexts',[])]
-                unique={json.dumps(c,sort_keys=True):c for c in contexts}
-                p={**p,'contexts':list(unique.values())[-5:],'first_seen':prior.get('first_seen',stamp()),'last_seen':stamp()}
+                p={**p,'contexts':unique_contexts(contexts),'first_seen':prior.get('first_seen',stamp()),'last_seen':stamp()}
                 db.execute('INSERT OR REPLACE INTO proposals VALUES(?,?)',(p['id'],json.dumps(p)))
                 reviewed=db.execute('SELECT payload FROM decisions WHERE id=?',(p['id'],)).fetchone()
                 if reviewed and p.get('investigation'):
@@ -150,7 +164,8 @@ class ReviewStore:
             except ValueError:continue  # Preserve human rejections and conflicting reviewed IDs.
 
     def proposals(self):
-        with self.connect() as db:return [json.loads(r[0]) for r in db.execute('SELECT payload FROM proposals')]
+        with self.connect() as db:rows=[json.loads(r[0]) for r in db.execute('SELECT payload FROM proposals')]
+        return [{**row,'contexts':unique_contexts(row.get('contexts',[]))} for row in rows]
 
     def snapshot(self):
         ds=decisions(self.root);by_id={d['id']:d for d in ds}

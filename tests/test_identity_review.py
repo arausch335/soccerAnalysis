@@ -189,3 +189,35 @@ class IdentityWorkerTests(unittest.TestCase):
         self.assertEqual(len(calls),before+1)
         run(self.args,runner=runner,session=self.session,sync_factory=NoSync)
         self.assertEqual(len(calls),before+1)
+
+
+class MatchContextDeduplicationTests(unittest.TestCase):
+    def test_repeated_reports_merge_one_match_and_keep_richer_provider_evidence(self):
+        from providers.identityReview import ReviewStore
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as root:
+            store=ReviewStore(root)
+            common={'match_id':'9757748','provider_match_id':'1592155','side':'home','match':'Dynamo Kyiv vs FC Barcelona'}
+            p={**proposal(),'contexts':[common]}
+            store.ingest([p],worker='msi')
+            store.ingest([{**p,'contexts':[{**common,'provider_match':'Dynamo Kyiv vs Barcelona','issue':'name mismatch'}]}],worker='main')
+            store.ingest([p],worker='main')
+            contexts=store.snapshot()['pending'][0]['contexts']
+            self.assertEqual(len(contexts),1)
+            self.assertEqual(contexts[0]['provider_match'],'Dynamo Kyiv vs Barcelona')
+            self.assertEqual(contexts[0]['workers'],['main','msi'])
+
+    def test_distinct_matches_and_sides_are_not_collapsed_and_legacy_rows_are_cleaned_on_read(self):
+        from providers.identityReview import ReviewStore,unique_contexts
+        from tempfile import TemporaryDirectory
+        import json
+        contexts=[{'match_id':'1','provider_match_id':'11','side':'home'},
+                  {'match_id':'2','provider_match_id':'12','side':'home'},
+                  {'match_id':'1','provider_match_id':'11','side':'away'}]
+        self.assertEqual(len(unique_contexts(contexts)),3)
+        with TemporaryDirectory() as root:
+            store=ReviewStore(root);p={**proposal(),'contexts':[contexts[0]]}
+            store.ingest([p]);saved=store.proposals()[0]
+            saved['contexts']=[{**contexts[0],'worker':worker} for worker in ['main','msi','local']]
+            with store.connect() as db:db.execute('UPDATE proposals SET payload=? WHERE id=?',(json.dumps(saved),saved['id']))
+            self.assertEqual(len(store.snapshot()['pending'][0]['contexts']),1)

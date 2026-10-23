@@ -755,3 +755,17 @@ FotMob feed. Other main-draw games have `competition_phase=main`. Provider round
 names remain intact. The source schedule and match IDs are unchanged. Done
 seasons remain frozen; explicitly reopen a season on Main to retry previously
 closed playoff gaps.
+
+
+WhoScored profile review retains birthdays and recorded History club-seasons even
+when Current Team is blank. Missing fields remain unavailable and block automatic
+confirmation; they do not erase the rest of the profile. API pages without a
+loaded History table fall back to the connected extension. Version 0.8.2 also
+retains the validated header if the History table fails to load before its normal
+deadline. Old "needs its loaded career table" failures are retried on Main after
+upgrading. WhoScored History contains competition participation seasons, not a
+complete transfer registry; repeated club-seasons are shown once.
+
+Identity review groups repeated observations by provider/baseline match IDs and
+side. It keeps richer fixture names and reporting-worker provenance while showing
+one match row per fixture pair. Existing review decisions remain unchanged.

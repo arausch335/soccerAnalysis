@@ -187,7 +187,7 @@ class ReportingStore:
                     raise ValueError('Reporting queue identity changed; restore the original worker queue')
                 # Suggestions are replayed after commit to repair an interrupted export,
                 # but identical proposals within a catch-up batch need processing once.
-                from providers.identityReview import validate
+                from providers.identityReview import validate,unique_contexts
                 suggestions = event.get('identity_suggestions', [])
                 if not isinstance(suggestions, list) or len(suggestions) > 500:
                     raise ValueError('Invalid identity suggestions')
@@ -202,7 +202,7 @@ class ReportingStore:
                     prior = suggestions_by_id.get(proposal['id'])
                     if prior:
                         contexts = prior.get('contexts', []) + proposal.get('contexts', [])
-                        proposal['contexts'] = list({encode(c): c for c in contexts}.values())[-5:]
+                        proposal['contexts'] = unique_contexts(contexts)
                         if prior.get('investigation', {}).get('checked_at', '') > proposal.get('investigation', {}).get('checked_at', ''):
                             proposal['investigation'] = prior['investigation']
                     suggestions_by_id[proposal['id']] = proposal

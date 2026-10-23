@@ -473,3 +473,29 @@ test('extension reload announces profile capabilities with an existing session',
   assert.deepEqual(connections[0].capabilities,['player-profiles-v1']);
   assert.equal(connections[0].client_id,'a'.repeat(32));store.connected=false;
 });
+
+
+test('WhoScored profile keeps birthday evidence when History has no rendered career rows',async()=>{
+ const url='https://www.whoscored.com/players/347070/history/bohdan-liedniev';
+ chrome.tabs.get=async()=>({id:1,url,status:'complete'});chrome.tabs.update=async()=>{};
+ const text='<h1 class="header-name">Bohdan Liedniev</h1><img class="player-picture" src="/players/347070.jpg">Age: 28 years old (07-04-1998)';
+ chrome.scripting={executeScript:async()=>[{frameId:0,result:{ok:true,status:200,source_url:url,text}}]};
+ const now=Date.now;let elapsed=0;
+ try {
+  Date.now=()=>now()+(elapsed+=500);
+  const result=await execute({tabId:1},{id:'who-profile-partial',action:'whoscored',args:{kind:'text',endpoint:'players/347070/history',timeout_ms:1000}});
+  assert.equal(result.status,200);assert.equal(result.profile_partial,true);assert.match(result.text,/07-04-1998/);
+ } finally {Date.now=now;}
+});
+
+test('WhoScored profile never retains a different player header',async()=>{
+ const url='https://www.whoscored.com/players/347070/history';
+ chrome.tabs.get=async()=>({id:1,url,status:'complete'});
+ chrome.scripting={executeScript:async()=>[{frameId:0,result:{ok:true,status:200,source_url:url,text:'<h1 class="header-name">Other</h1><img class="player-picture" src="/players/99.jpg">'}}]};
+ const now=Date.now;let elapsed=0;
+ try {
+  Date.now=()=>now()+(elapsed+=500);
+  const result=await execute({tabId:1},{id:'who-profile-wrong',action:'whoscored',args:{kind:'text',endpoint:'players/347070/history',timeout_ms:1000}});
+  assert.equal(result.reason,'extension_timeout');assert.equal(result.status,null);
+ } finally {Date.now=now;}
+});
