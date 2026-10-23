@@ -158,6 +158,29 @@ class ApiTests(unittest.TestCase):
         with self.assertRaisesRegex(SofaScoreError, 'Invalid season'):
             list(self.client.iter_season_events(17, 61627))
 
+    def test_missing_first_upcoming_page_completes_past_schedule(self):
+        self.session.get.side_effect = [
+            self.response(payload={'events': [{'id': 1}], 'hasNextPage': False}),
+            self.response(404),
+        ]
+        self.assertEqual(list(self.client.iter_season_events(17, 61627, include_upcoming=True)), [{'id': 1}])
+        self.assertEqual(self.session.get.call_count, 2)
+
+    def test_other_schedule_failures_are_not_treated_as_completion(self):
+        for direction, page, status in [('last', 0, 404), ('last', 1, 404),
+                                        ('next', 1, 404), ('next', 0, 403),
+                                        ('next', 0, 429), ('next', 0, 500)]:
+            with self.subTest(direction=direction, page=page, status=status):
+                def fetch(cid, sid, current_page, current_direction):
+                    if (current_direction, current_page) == (direction, page):
+                        raise SofaScoreRequestError('Schedule unavailable', status_code=status)
+                    return {'events': [{'id': 1 if current_direction == 'last' else 2}],
+                            'hasNextPage': current_direction == direction and current_page < page}
+                with patch.object(self.client, 'season_events', side_effect=fetch):
+                    with self.assertRaises(SofaScoreRequestError) as caught:
+                        list(self.client.iter_season_events(17, 61627, include_upcoming=True))
+                self.assertEqual(caught.exception.status_code, status)
+
     def test_loader_fetches_selected_season_in_chronological_order(self):
         def event(i):
             return {'id': i, 'startTimestamp': i * 100,

@@ -547,6 +547,14 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
         stack.enter_context(FileLock(str(system_path(root, '.collector.lock')), timeout=0))
         stack.enter_context(FileLock(str(output) + '.lock', timeout=0))
         if clients is None:
+            if not api_only:
+                from providers.transports.bridge import extension_scope,acquire_bridge
+                stack.enter_context(extension_scope())
+                bridge,_=acquire_bridge(report=report,
+                    connect_timeout=config.TRANSPORT['extension']['manual_wait_seconds'],
+                    diagnostics_dir=root/'_system/extension_diagnostics/fixtures',
+                    session_path=root/'_system/config/extension-session.json')
+                if not offline:bridge.start()
             if api_only:
                 from providers.safeClient import SafeSofaScoreClient, SafeFotMobClient, SafeWhoScoredClient
                 factories = dict(zip(PROVIDERS, (SafeSofaScoreClient, SafeFotMobClient, SafeWhoScoredClient)))

@@ -82,8 +82,9 @@ class SofaScoreClient(HttpClient):
         """Yield unique events lazily in provider page order, not kickoff order.
 
         SofaScoreLoader sorts these before loading match details sequentially.
-        Stop on hasNextPage=False; malformed/repeated pages raise instead of
-        silently treating an incomplete schedule as complete.
+        Stop on hasNextPage=False. After a completed past schedule, a 404 on
+        next/0 means no upcoming fixtures. Other errors and malformed/repeated
+        pages raise instead of treating an incomplete schedule as complete.
         """
         seen = set()
         directions = ("last", "next") if include_upcoming else ("last",)
@@ -91,7 +92,15 @@ class SofaScoreClient(HttpClient):
             direction_seen = set()
             page = 0
             while True:
-                payload = self.season_events(competition_id, season_id, page, direction)
+                try:
+                    payload = self.season_events(competition_id, season_id, page, direction)
+                except SofaScoreRequestError as exc:
+                    # The past direction has already completed before reaching
+                    # next/0. SofaScore returns 404 here for historical seasons
+                    # without upcoming fixtures, rather than an empty page.
+                    if direction == 'next' and page == 0 and exc.status_code == 404:
+                        break
+                    raise
                 events = payload.get("events")
                 has_next = payload.get("hasNextPage")
                 if (not isinstance(events, list) or not isinstance(has_next, bool)

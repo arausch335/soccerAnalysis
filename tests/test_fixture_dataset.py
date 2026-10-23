@@ -5,13 +5,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch,Mock
 
 from fixtures.builder import COMPETITIONS, FixtureCompetition
 from fixtures.dataset import (COLUMNS, ID_COLUMNS, _fotmob_events, _who_paths,
                               build, concord, schedules)
 from providers import reep
 from providers.httpClient import ProviderRequestError
+from providers.sofaScoreClient import SofaScoreClient
 from providers.whoScoredClient import WhoScoredClient
 from storage.pandasStore import atomic_json
 
@@ -236,6 +237,23 @@ class FixtureDatasetTests(unittest.TestCase):
         self.assertEqual(len(self.records()), 1)
         self.assertFalse(manifest['schedule_coverage_complete'])
 
+    def test_empty_upcoming_404_saves_complete_schedule_and_reuses_it(self):
+        client = self.clients['sofascore']
+        client.iter_season_events = SofaScoreClient.iter_season_events.__get__(client)
+        def page(cid, sid, index, direction):
+            if direction == 'next':
+                raise ProviderRequestError('HTTP 404 for events/next/0', status_code=404)
+            return {'events': [event()], 'hasNextPage': False}
+        client.season_events = Mock(side_effect=page)
+        manifest = self.build()
+        self.assertTrue(manifest['schedule_coverage_complete'])
+        self.assertEqual(manifest['rows'], 1)
+        self.assertEqual(client.season_events.call_count, 2)
+        with patch.object(client, 'season_events', side_effect=AssertionError('Checkpoint should be reused')):
+            resumed = self.build(offline=True)
+        self.assertTrue(resumed['schedule_coverage_complete'])
+        self.assertEqual(resumed['rows'], 1)
+
     def test_failed_refresh_retains_checkpoint_and_reports_gap(self):
         self.build()
         self.clients['sofascore'].seasons = lambda cid: (_ for _ in ()).throw(ValueError('unavailable'))
@@ -272,6 +290,48 @@ class FixtureDatasetTests(unittest.TestCase):
         who.get_text = lambda path: ('<a href="/regions/250/tournaments/999/europe-conference-league-qualification">Q</a>'
                                     '<a href="/regions/250/tournaments/998/europe-europa-league-qualification">Other</a>')
         self.assertEqual(who.qualification_path('europe-conference-league'), 'regions/250/tournaments/999/europe-conference-league-qualification')
+
+    def test_fixture_transports_share_one_persistent_extension_connection(self):
+        from contextlib import ExitStack
+        from providers.transports.bridge import acquire_bridge
+        from providers.transports.sofascore import SofaScoreTransport
+        from providers.transports.fotmob import FotMobTransport
+        from providers.transports.whoscored import WhoScoredTransport
+        shared=Mock();bindings=[]
+        # Use the actual transport constructors. Only replace network discovery
+        # with the deterministic schedule fixtures used throughout this suite.
+        def factory(provider,transport):
+            def create(root,**kwargs):
+                client=transport(root,**kwargs)
+                bridge,owns=acquire_bridge()
+                bindings.append((provider,bridge,owns))
+                stub=self.clients[provider]
+                for name in ('seasons','iter_season_events','season_events','season_stages'):
+                    if hasattr(stub,name):setattr(client,name,getattr(stub,name))
+                return client
+            return create
+        with ExitStack() as stack:
+            made=stack.enter_context(patch('providers.transports.bridge.ExtensionBridge',return_value=shared))
+            for provider,transport in [('sofascore',SofaScoreTransport),('fotmob',FotMobTransport),('whoscored',WhoScoredTransport)]:
+                module={'sofascore':'sofascore','fotmob':'fotmob','whoscored':'whoscored'}[provider]
+                stack.enter_context(patch('providers.transports.'+module+'.'+transport.__name__,side_effect=factory(provider,transport)))
+            manifest=build(data_root=self.root,output_csv=self.output,competitions=(self.competition,),
+                start_season=2010,end_season=2010,now=NOW,report=lambda *a,**k:None,send_to_main=False)
+        self.assertEqual(manifest['rows'],1)
+        self.assertEqual(len(bindings),3)
+        self.assertTrue(all(bridge is shared and not owns for _,bridge,owns in bindings))
+        made.assert_called_once();shared.start.assert_called_once();shared.close.assert_called_once()
+        self.assertEqual(made.call_args.kwargs['session_path'],self.root/'_system/config/extension-session.json')
+        self.assertEqual(made.call_args.kwargs['diagnostics_dir'],self.root/'_system/extension_diagnostics/fixtures')
+
+    def test_offline_fixture_build_does_not_start_an_extension_connection(self):
+        self.build()
+        with patch('providers.transports.bridge.ExtensionBridge') as made:
+            # The saved schedules are sufficient even when default transports
+            # are constructed. No extension connection is opened offline.
+            result=build(data_root=self.root,output_csv=self.output,competitions=(self.competition,),
+                start_season=2010,end_season=2010,now=NOW,offline=True,send_to_main=False,report=lambda *a,**k:None)
+        self.assertEqual(result['rows'],1);made.return_value.start.assert_not_called()
 
     def test_main_fixture_route_bypasses_worker_startup(self):
         import main

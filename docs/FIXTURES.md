@@ -105,6 +105,11 @@ missing/partial schedules; available fixtures are still exported with gap report
 If no baseline schedule is available, an existing dataset is preserved and only
 the coverage report is updated. Interruptions retain completed checkpoints.
 
+Once Sofascore's past schedule has finished paginating, a `404` on
+`events/next/0` means no upcoming fixtures and does not make that season partial.
+Missing past pages, failures on later promised pages, and other HTTP errors
+remain coverage failures; their available fixtures are retained.
+
 ## Direct compiled-file delivery to Main
 
 Fixture builds automatically queue `fixtures.csv` and the six
@@ -137,3 +142,15 @@ its scope and coverage report. A restricted `--competition` build consequently
 publishes that restricted snapshot. Only a full-scope build should replace a
 full-scope fixture history on Main. Sources, raw responses, request caches and
 credentials are never included in a compiled fixture bundle.
+
+
+The default fixture command initializes one persistent Soccer Collector connection
+at startup and shares it across Sofascore, FotMob and WhoScored. The connection
+uses the worker's existing `data/_system/config/extension-session.json`, just
+like normal collection, and stays alive across competition/season changes.
+Connect the printed code once; individual providers use APIs first and reuse
+this same connection when they need extension fallback. All extension diagnostics
+for this command are written under `_system/extension_diagnostics/fixtures/`.
+Offline and `--api-only` runs do not open an extension listener.
+Interrupted fixture runs reuse their saved season schedules when rerun with the
+same command; do not remove their checkpoints to recover a connection.
