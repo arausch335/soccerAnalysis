@@ -1,6 +1,7 @@
 """Aggregate named event flags. Coordinates/maps remain uninterpreted raw data."""
 from datetime import datetime, timezone
 from .providerLoader import ProviderLoader
+from .scores import whoscored_scores
 
 COUNTERS={
  'goals':('goalNormal','penaltyScored'),'assists':('assist',),'touches':('touches',),
@@ -42,7 +43,7 @@ class WhoScoredLoader(ProviderLoader):
                 by_player.setdefault((entry['teamId'],entry['playerId']),[]).append(entry)
         for side in ('home','away'):
             team=d[side];ev[side+'Team']={'id':team['teamId'],'name':team['name']}
-            ev[side+'Score']={'current':team['scores']['fulltime']}
+            ev[side+'Score']=whoscored_scores(team['scores'])
             players=[]
             for player in team['players']:
                 events=by_player.get((team['teamId'],player['playerId']),[])

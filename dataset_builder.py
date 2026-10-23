@@ -599,11 +599,8 @@ def _atomic_copy(source, destination, season=None):
 
 
 def _score(event, side):
-    values = event.get(side + 'Score') or {}
-    for key in ('display', 'normaltime', 'current'):
-        if values.get(key) is not None: return values[key]
-    return None
-
+    from providers.scores import final_score
+    return final_score(event,side)
 
 def fixtures_from_events(events, competition, season, *, include_qualifying=False):
     """Convert schedule events using the same schema as packaged fixtures.

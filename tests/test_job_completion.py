@@ -74,14 +74,43 @@ class CompletionTests(unittest.TestCase):
         self.assertFalse(self.summary()['done'])
         self.row['resources']={r:'failed' for r in self.job.resources};self.row['capabilities']=[];self.row['status']='failed'
         self.assertEqual(self.summary()['review'][0]['label'],'A vs B')
-    def test_configuration_change_does_not_reuse_waivers(self):
+    def test_configuration_change_keeps_reviewed_resources_but_requires_new_maps(self):
         self.row['resources']['whoscored_stats']='failed'
         with tempfile.TemporaryDirectory() as root:
             store=CompletionStore(root);store.record(self.job,'unavailable',mid='1',resources=['whoscored_stats'],reason='Confirmed missing data')
             self.assertTrue(self.summary(store)['done'])
             self.plan.jobs=[replace(j,spatial_capture='all') if j.id==self.job.id else j for j in self.plan.jobs]
             summary=self.summary(store)
-            self.assertIn('whoscored_stats',summary['remaining']['1']);self.assertFalse(summary['done'])
+            self.assertNotIn('whoscored_stats',summary['remaining']['1']);self.assertIn('heatmaps',summary['remaining']['1']);self.assertFalse(summary['done'])
+
+    def test_old_fast_reviews_are_recovered_after_momentum_requirement_changes(self):
+        from collection.jobCompletion import configuration_key
+        self.row['resources']['whoscored_stats']='failed'
+        old=configuration_key(self.job.competition,self.season,self.job.resources+['momentum'],'fast')
+        with tempfile.TemporaryDirectory() as root:
+            store=CompletionStore(root)
+            with store.connect() as db:
+                for mid,resource,action,reason in [('1','whoscored_stats','unavailable','No published event data'),('','_season','close','Season reviewed completely')]:
+                    db.execute('INSERT INTO actions(configuration,match_id,resource,action,reason,attempts,at) VALUES(?,?,?,?,?,?,?)',
+                        (old,mid,resource,action,reason,2,'2026-10-23'))
+                db.commit()
+            snapshot=store.snapshot(self.plan.jobs)
+            summary=compile_instructions(self.plan,'msi',self.reports,snapshot)['jobs'][self.job.id]
+            self.assertTrue(summary['done']);self.assertTrue(summary['closed'])
+            self.assertEqual(snapshot['history'][0]['competition'],self.job.competition)
+            self.assertEqual(snapshot['history'][0]['season'],self.season)
+            self.assertEqual(len(CompletionStore(root).snapshot()['history']),2)
+            full=replace(self.job,spatial_capture='all')
+            store.record(full,'retry',mid='1',resources=['whoscored_stats'])
+            self.assertFalse(self.summary(CompletionStore(root))['done'])
+
+    def test_reviews_do_not_leak_to_another_season_or_competition(self):
+        self.row['resources']['whoscored_stats']='failed'
+        with tempfile.TemporaryDirectory() as root:
+            store=CompletionStore(root)
+            for changed in (replace(self.job,season='2030/2031'),replace(self.job,competition='Bundesliga')):
+                store.record(changed,'unavailable',mid='1',resources=['whoscored_stats'],reason='Different season fixture')
+            self.assertFalse(self.summary(store)['done'])
 
 
 if __name__=='__main__':unittest.main()

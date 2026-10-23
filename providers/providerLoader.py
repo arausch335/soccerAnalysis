@@ -1,5 +1,6 @@
 """Shared standalone loading and transactional enrichment of a baseline match."""
 from copy import deepcopy
+from .scores import final_score
 from .matchLoader import MatchLoader
 from .identity import IdentityResolver, IdentityError, name_key, team_key, teams_match
 from .statistics import synthesize
@@ -58,14 +59,15 @@ class ProviderLoader(MatchLoader):
             if any(not teams_match(baseline[s+'Team'],ev[s+'Team'],self.provider,
                                    self.identity_resolver.review_root) for s in ('home','away')):
                 suggest_teams(self.identity_resolver.review_root,self.provider,baseline,[ev])
+        scores={side:final_score(match.metadata.get('event',{}),side) for side in ('home','away')}
         for side in ('home','away'):
             lineup=getattr(match,side+'_lineup')
             if lineup is None or not teams_match({'id':lineup.team.id,'name':lineup.team.name},
                     ev[side+'Team'],self.provider,self.identity_resolver.review_root,
                     match.metadata.get('id_namespace','sofascore') if not standalone else self.provider):
                 raise IdentityError(f'{self.provider}: match team mismatch')
-            score=getattr(match,side+'_score')
-            if ev.get(side+'Score',{}).get('current') != score:
+            score=scores[side] if scores[side] is not None else getattr(match,side+'_score')
+            if final_score(ev,side) != score:
                 raise IdentityError(f'{self.provider}: match score mismatch')
             used=set()
             for entry in decoded[side]['players']:
@@ -132,6 +134,8 @@ class ProviderLoader(MatchLoader):
                     lineup_differences.append(record)
                 else:
                     mismatches.append(record)
+        for side,score in scores.items():
+            if score is not None:setattr(match,side+'_score',score)
         # Commit only after every identity and every action pair validates.
         for appearance,providers,combined in pending:
             appearance.stats.raw['_providers']=providers

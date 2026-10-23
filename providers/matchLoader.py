@@ -1,5 +1,6 @@
 """Build shared domain objects from normalized event and lineup dictionaries."""
 from copy import deepcopy
+from .scores import final_score
 from datetime import datetime, timezone
 
 from models import (Competition, Season, FootballDataset, Team, Player, Match,
@@ -80,8 +81,8 @@ class MatchLoader:
             status = MatchStatus.UNKNOWN
         match = Match(event['id'], season,
                       datetime.fromtimestamp(event['startTimestamp'], timezone.utc),
-                      *teams, home_score=event.get('homeScore', {}).get('current'),
-                      away_score=event.get('awayScore', {}).get('current'),
+                      *teams, home_score=final_score(event,'home'),
+                      away_score=final_score(event,'away'),
                       round_number=event.get('roundInfo', {}).get('round'), status=status,
                       metadata={'event': deepcopy(event), 'lineups': deepcopy(payload)})
         for side, team, entries in zip(MatchSide, teams, prepared):

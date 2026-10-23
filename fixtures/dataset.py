@@ -23,6 +23,7 @@ from collection.selection import (COMPETITIONS as COLLECTION_COMPETITIONS,
                                   resolve_sofascore_season, season_key)
 from dataset_builder import FIXTURE_COLUMNS, _cached_provider_fixtures, fixtures_from_events
 from providers.events import whoscored_fixture
+from providers.scores import final_score
 from providers.httpClient import ProviderError
 from providers.identity import teams_match
 from providers.reep import PROVIDERS, index
@@ -313,7 +314,7 @@ def _compatible(event, other, provider, root, bridges, learned=None, reverse=Non
                 return False
     if all(e.get('status', {}).get('type') == 'finished' for e in (event, other)):
         for side in ('home', 'away'):
-            a, b = (e.get(side + 'Score', {}).get('current') for e in (event, other))
+            a, b = (final_score(e,side) for e in (event, other))
             if a is not None and b is not None and a != b:
                 return False
     return True
@@ -332,7 +333,7 @@ def _opponent_compatible(event, other, provider, root, bridges, learned, reverse
         return False
     known = []
     for side in ('home', 'away'):
-        score, other_score = (e.get(side + 'Score', {}).get('current') for e in (event, other))
+        score, other_score = (final_score(e,side) for e in (event, other))
         if score is None or other_score is None or score != other_score:
             return False
         a, b = event[side + 'Team'], other[side + 'Team']

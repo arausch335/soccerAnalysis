@@ -145,7 +145,7 @@ class DashboardModel:
         grid=build_grid(rows,plan,get_schedule,workers)
         from collection.workInstructions import compile_instructions
         from collection.jobCompletion import CompletionStore
-        decisions=CompletionStore(self.root).snapshot()
+        decisions=CompletionStore(self.root).snapshot(plan.jobs)
         reports=[{'inventory':{'records':{r['key']:r for r in rows if r['holder']==worker},
                    'schedules':info.get('saved_schedules',{})},'runtime':info.get('runtime') or {}} for worker,info in workers.items()]
         for worker,info in workers.items():
@@ -166,6 +166,10 @@ class DashboardModel:
     def collection_reviews(self):
         from collection.jobCompletion import CompletionStore
         value=self.status()
+        saved=CompletionStore(self.root).snapshot()
+        reviewed_seasons={(c.get('competition'),c.get('season'))
+            for row in saved['decisions'].values()
+            for c in [saved.get('configurations',{}).get(row['configuration'],{})]}
         jobs=[]
         for worker in value['workers']:
             for job in worker['jobs']:
@@ -184,8 +188,8 @@ class DashboardModel:
                             r['label']=event['homeTeam']['name']+' vs '+event['awayTeam']['name']
                         if not r.get('date') and event.get('startTimestamp'):
                             r['date']=datetime.fromtimestamp(event['startTimestamp'],timezone.utc).date().isoformat()
-                jobs.append({**item,'review':reviews})
-        return {'jobs':jobs,'history':CompletionStore(self.root).snapshot()['history'],
+                jobs.append({**item,'review':reviews,'has_review_history':(job['competition'],job['season']) in reviewed_seasons})
+        return {'jobs':jobs,'history':saved['history'],
                 'can_review':self.worker==value['coordinator']}
 
     def decide_collection(self,value):

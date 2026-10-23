@@ -261,7 +261,10 @@ def normalize(event, competition, season):
                           if event.get("slug") and event.get("customId") else None))
     for suffix, key in [("score", "current"), ("halftime", "period1"),
                         ("normaltime", "normaltime"), ("penalties", "penalties")]:
-        row[f"home_{suffix}"], row[f"away_{suffix}"] = home_score.get(key), away_score.get(key)
+        if suffix=="score":
+            from providers.scores import final_score
+            row["home_score"],row["away_score"]=final_score(event,"home"),final_score(event,"away")
+        else:row[f"home_{suffix}"], row[f"away_{suffix}"] = home_score.get(key), away_score.get(key)
     return row
 
 

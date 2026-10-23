@@ -804,3 +804,22 @@ Existing graph-only partial checkpoints are accepted without scraping the match
 again. Player statistics, team statistics and incidents remain required; full
 mode continues to require momentum. Resource coverage retains graph failures
 for visibility, and genuine connection/rate-limit safety stops still apply.
+
+
+Collection reviews are durable by competition, season, baseline match ID and
+resource. Changing fast/full requirements or reassigning a worker preserves
+confirmed unavailable data; newly required resources remain unresolved. Existing
+reviews from before momentum became optional are recovered without rewriting
+their history. Season closure carries forward only when its reviewed requirements
+cover the new configuration. Retry/Reopen explicitly withdraws affected waivers.
+The dashboard saves unfinished review drafts locally across refresh/reload, keeps
+unchanged forms in place while polling, and shows validation/save results beside
+the confirmation button.
+
+Fixture goals include extra time and exclude penalty-shootout kicks. WhoScored
+extra-time totals take precedence over its 90-minute scores; Sofascore overtime
+totals take precedence over current/display scores. Regulation and shootout
+values remain in the raw payload. The same rule applies to fixture exports,
+provider concordance and match enrichment; genuine score differences still fail
+validation. Older affected checkpoints normalize their baseline scores when an
+incomplete match is enriched again.

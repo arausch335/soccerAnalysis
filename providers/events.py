@@ -1,5 +1,6 @@
 """Small provider-neutral fixture dictionaries consumed by all domain loaders."""
 from datetime import datetime
+from .scores import whoscored_scores
 
 
 def timestamp(value):
@@ -24,5 +25,6 @@ def whoscored_fixture(row):
     return {'id':int(row['id']),'startTimestamp':timestamp(row['startTimeUtc']),
         'homeTeam':{'id':row['homeTeamId'],'name':row['homeTeamName']},
         'awayTeam':{'id':row['awayTeamId'],'name':row['awayTeamName']},
-        'homeScore':{'current':row.get('homeScore')},'awayScore':{'current':row.get('awayScore')},
+        'homeScore':whoscored_scores({'fulltime':row.get('homeScore'),'extratime':row.get('homeExtratimeScore')}),
+        'awayScore':whoscored_scores({'fulltime':row.get('awayScore'),'extratime':row.get('awayExtratimeScore')}),
         'status':{'type':'finished' if row.get('status')==6 else 'notstarted'}}

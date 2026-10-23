@@ -14,9 +14,25 @@ GROUPS=(('player_match_stats','Player match stats',('sofascore_stats','fotmob_en
 
 
 def configuration(job):
-    # Worker/assignment IDs and network pacing do not change required data.
-    value=[2,job.competition,job.as_dict()['season'],job.resources,job.spatial_capture]
+    return configuration_key(job.competition,job.as_dict()['season'],job.resources,job.spatial_capture)
+
+
+def configuration_key(competition,season,resources,spatial):
+    value=[2,competition,season,sorted(resources),spatial]
     return hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()[:24]
+
+
+def scoped_decisions(job,state):
+    """A reviewed resource remains reviewed when requirements or workers change."""
+    signature=configuration(job);contexts=state.get('configurations',{});selected={}
+    for row in state.get('decisions',{}).values():
+        context=contexts.get(row['configuration'],{})
+        if row['configuration']!=signature:
+            if (context.get('competition'),context.get('season'))!=(job.competition,job.as_dict()['season']):continue
+            if row['resource']=='_season' and row['action']=='close' and not set(job.resources)<=set(context.get('resources',[])):continue
+        key='|'.join((signature,row['match_id'],row['resource']))
+        if row['id']>selected.get(key,{}).get('id',-1):selected[key]=row
+    return selected
 
 
 class CompletionStore:
@@ -26,19 +42,47 @@ class CompletionStore:
         db=sqlite3.connect(self.path,timeout=10)
         db.execute('CREATE TABLE IF NOT EXISTS actions(id INTEGER PRIMARY KEY,configuration TEXT,match_id TEXT,resource TEXT,action TEXT,reason TEXT,attempts INTEGER,at TEXT)')
         db.execute('CREATE TABLE IF NOT EXISTS finished(configuration TEXT PRIMARY KEY,summary TEXT)')
+        db.execute('CREATE TABLE IF NOT EXISTS configurations(configuration TEXT PRIMARY KEY,context TEXT)')
         return closing(db)
-    def snapshot(self):
-        if not self.path.exists():return {'decisions':{},'history':[],'completed':{},'revision':0}
+    def register(self,db,job):
+        # Recover hashes written before contexts were stored, including the old
+        # fast requirement for momentum. Never remove or rewrite old decisions.
+        for spatial in ('fast','all'):
+            from config.workerPlan import requested_resources
+            resources=requested_resources(job.collection_types,spatial)
+            for required in (resources,sorted(set(resources)|{'momentum'})):
+                context={'competition':job.competition,'season':job.as_dict()['season'],
+                         'resources':required,'spatial_capture':spatial}
+                key=configuration_key(context['competition'],context['season'],required,spatial)
+                db.execute('INSERT OR IGNORE INTO configurations VALUES(?,?)',(key,json.dumps(context)))
+        context={'competition':job.competition,'season':job.as_dict()['season'],
+                 'resources':job.resources,'spatial_capture':job.spatial_capture}
+        db.execute('INSERT OR IGNORE INTO configurations VALUES(?,?)',(configuration(job),json.dumps(context)))
+
+    def snapshot(self,jobs=()):
+        if not self.path.exists() and not jobs:return {'decisions':{},'history':[],'completed':{},'revision':0,'configurations':{}}
         with self.connect() as db:
+            for job in jobs:self.register(db,job)
+            db.commit()
             rows=[dict(zip(('id','configuration','match_id','resource','action','reason','attempts','at'),row))
                   for row in db.execute('SELECT * FROM actions ORDER BY id')]
             completed={key:json.loads(value) for key,value in db.execute('SELECT configuration,summary FROM finished')}
+            contexts={key:json.loads(value) for key,value in db.execute('SELECT * FROM configurations')}
+            for key,summary in completed.items():
+                if key not in contexts and summary.get('competition') and summary.get('season'):
+                    context={k:summary[k] for k in ('competition','season')}
+                    context['resources']=list(summary.get('counts',{}))
+                    db.execute('INSERT OR IGNORE INTO configurations VALUES(?,?)',(key,json.dumps(context)))
+                    contexts[key]=context
+            db.commit()
         current={}
         for row in rows:current['|'.join(row[k] for k in ('configuration','match_id','resource'))]=row
-        return {'decisions':current,'history':rows[-200:],'completed':completed,'revision':rows[-1]['id'] if rows else 0}
+        history=[{**contexts.get(row['configuration'],{}),**row} for row in rows[-200:]]
+        return {'decisions':current,'history':history,'completed':completed,'configurations':contexts,'revision':rows[-1]['id'] if rows else 0}
     def freeze(self,job,summary,revision):
         if summary.get('frozen') or not summary.get('done') or summary.get('configuration')!=configuration(job):return False
         with self.connect() as db:
+            self.register(db,job);db.commit()
             db.execute('BEGIN IMMEDIATE')
             if db.execute('SELECT coalesce(max(id),0) FROM actions').fetchone()[0]!=revision:return False
             db.execute('INSERT OR IGNORE INTO finished VALUES(?,?)',(configuration(job),json.dumps({**summary,'competition':job.competition,'season':job.as_dict()['season']})))
@@ -52,13 +96,19 @@ class CompletionStore:
             raise ValueError('Choose a saved match and required resources')
         resources=resources if action in ('unavailable','retry') else ('_season',)
         with self.connect() as db:
-            if action in ('reopen','retry'):db.execute('DELETE FROM finished WHERE configuration=?',(configuration(job),))
+            db.execute('BEGIN IMMEDIATE')
+            self.register(db,job)
+            if action in ('reopen','retry'):
+                keys=[key for key,body in db.execute('SELECT configuration,context FROM configurations')
+                      if (json.loads(body)['competition'],json.loads(body)['season'])==(job.competition,job.as_dict()['season'])]
+                db.executemany('DELETE FROM finished WHERE configuration=?',[(key,) for key in keys])
             if action=='reopen':
-                current={}
-                for saved_mid,resource,act,saved_attempts in db.execute('SELECT match_id,resource,action,attempts FROM actions WHERE configuration=? ORDER BY id',(configuration(job),)).fetchall():
-                    current[(saved_mid,resource)]={'configuration':configuration(job),'match_id':saved_mid,'resource':resource,'action':act,'attempts':saved_attempts}
-                for row in current.values():
-                    if row['configuration']==configuration(job) and row['action']=='unavailable':
+                rows=[dict(zip(('id','configuration','match_id','resource','action','reason','attempts','at'),r))
+                      for r in db.execute('SELECT * FROM actions ORDER BY id')]
+                previous={'decisions':{str(r['id']):r for r in rows},
+                          'configurations':{key:json.loads(body) for key,body in db.execute('SELECT * FROM configurations')}}
+                for row in scoped_decisions(job,previous).values():
+                    if row['action']=='unavailable':
                         db.execute('INSERT INTO actions(configuration,match_id,resource,action,reason,attempts,at) VALUES(?,?,?,?,?,?,?)',
                             (configuration(job),row['match_id'],row['resource'],'retry',reason.strip(),row['attempts'],now()))
             for resource in resources:
@@ -68,7 +118,7 @@ class CompletionStore:
 
 
 def assess(job,records,schedules,history,decisions=None):
-    signature=configuration(job);state=decisions or {};decisions=state.get('decisions',{})
+    signature=configuration(job);state=decisions or {};decisions=scoped_decisions(job,state)
     frozen=state.get('completed',{}).get(signature)
     if frozen:
         closure=decisions.get('|'.join((signature,'','_season')),{})
