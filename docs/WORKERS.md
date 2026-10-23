@@ -745,13 +745,16 @@ running extension. A source-folder installation can simply reload that extension
 
 Bundesliga jobs retain Sofascore's two end-of-season promotion/relegation playoff
 matches. FotMob fixtures combine Bundesliga (54) with Bundesliga Qualification
-(9081), deduplicated by FotMob match ID. Missing supplemental coverage does not
+(9081), deduplicated by FotMob match ID. WhoScored also adds Bundesliga
+Qualification (tournament 388), resolving its season and stages through the same
+API-first, extension-fallback transport. This supplemental feed is included even
+when regular Bundesliga stage IDs are explicitly configured. Missing supplemental coverage does not
 discard the regular league fixtures. Provider match IDs are matched in the usual
 way, so playoff statistics and events use the same collection pipeline.
 
 Dataset `fixtures.csv` keeps `competition=Bundesliga` and adds
 `competition_phase=playoffs` plus a `competition_note` explaining the separate
-FotMob feed. Other main-draw games have `competition_phase=main`. Provider round
+FotMob and WhoScored feeds. Other main-draw games have `competition_phase=main`. Provider round
 names remain intact. The source schedule and match IDs are unchanged. Done
 seasons remain frozen; explicitly reopen a season on Main to retry previously
 closed playoff gaps.
@@ -793,3 +796,11 @@ Portable verification reports file counts at roughly 10% intervals, with a seaso
 message during incorporation; Main receives these logs and the `portable_import`
 phase in MSI's storage status. Shutdown interrupts verification, preserving the
 staged source and committed-part receipts for the next run. No recopy is needed.
+
+
+Fast mode still attempts and saves Sofascore momentum graphs when available,
+but missing or failed graphs do not prevent a match or season from completing.
+Existing graph-only partial checkpoints are accepted without scraping the match
+again. Player statistics, team statistics and incidents remain required; full
+mode continues to require momentum. Resource coverage retains graph failures
+for visibility, and genuine connection/rate-limit safety stops still apply.

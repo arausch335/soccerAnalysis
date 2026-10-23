@@ -140,8 +140,8 @@ class SofaScoreExtensionPayloads(SofaScoreClient):
             saved = self.responses.get((endpoint, ''))
             if saved is None:
                 try:saved = self._cached_response(endpoint)
-                except ProviderRequestError as exc:
-                    if exc.status_code != 404:raise
+                except (ProviderRequestError,ValueError) as exc:
+                    if getattr(exc,'status_code',None) != 404 and label!='momentum':raise
             if saved is not None and saved.get('status') == 200:
                 result[label] = saved['payload']
         return result
@@ -184,7 +184,7 @@ class SofaScoreExtensionPayloads(SofaScoreClient):
                             ('momentum',lambda:self.graph(mid))):
             if blocked:break
             try:request();coverage[key]='complete'
-            except ProviderRequestError as exc:
+            except (ProviderRequestError,ValueError) as exc:
                 coverage[key]='unavailable' if getattr(exc,'status_code',None)==404 else 'failed'
                 reasons[key]=str(exc)
                 if getattr(exc,'status_code',None)!=404:errors.append(f'{key}: {exc}')

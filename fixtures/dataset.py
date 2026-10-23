@@ -150,6 +150,9 @@ def _who_events(client, competition, start, baseline):
         if stages is not None:
             for stage in dict.fromkeys(stages):
                 collect_stage(stage)
+            existing = next((c for c in COLLECTION_COMPETITIONS if c.name == competition.name), None)
+            for path in existing.whoscored_supplemental_paths if existing else ():
+                collect_path(path)
         else:
             paths = _who_paths(client, competition)
             for path in dict.fromkeys(paths):

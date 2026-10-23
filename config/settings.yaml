@@ -18,7 +18,7 @@ collection:
     - Serie A
     - Ligue 1
   seasons: ["2023/24"]
-  spatial_capture: fast        # fast = average positions; all = every spatial endpoint
+  spatial_capture: fast        # fast = no spatial maps; all = every spatial endpoint
   build_dataset: false        # Package combined/Sofascore seasons after collection
   show_timing: true            # Per-game duration, season ETA, full collection ETA
 

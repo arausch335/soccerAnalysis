@@ -29,8 +29,14 @@ class CompletionTests(unittest.TestCase):
         fast=self.summary();self.assertTrue(fast['done']);self.assertNotIn('average_positions',fast['counts'])
         self.assertEqual(fast['groups'][0]['percent'],100)
         self.plan.jobs=[replace(j,spatial_capture='all') if j.id==self.job.id else j for j in self.plan.jobs]
-        full=self.summary();self.assertFalse(full['done']);self.assertEqual(set(full['remaining']['1']),{'average_positions','heatmaps','shotmaps','action_maps'})
+        full=self.summary();self.assertFalse(full['done']);self.assertEqual(set(full['remaining']['1']),{'momentum','average_positions','heatmaps','shotmaps','action_maps'})
         self.assertNotEqual(full['configuration'],fast['configuration'])
+    def test_fast_can_finish_with_missing_momentum_while_full_mode_requires_it(self):
+        self.row['resources']['momentum']='failed'
+        fast=self.summary();self.assertTrue(fast['done']);self.assertNotIn('momentum',fast['counts'])
+        self.plan.jobs=[replace(j,spatial_capture='all') if j.id==self.job.id else j for j in self.plan.jobs]
+        full=self.summary();self.assertFalse(full['done']);self.assertIn('momentum',full['remaining']['1'])
+
     def test_unavailable_requires_reasoned_review_and_closure_survives_restart(self):
         self.row['resources']['whoscored_stats']='unavailable'
         self.assertFalse(self.summary()['done']);self.assertEqual(len(self.summary()['review']),1)

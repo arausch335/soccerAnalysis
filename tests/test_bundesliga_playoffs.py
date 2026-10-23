@@ -3,7 +3,7 @@ from copy import deepcopy
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock,patch
 
 from collection.selection import competition_by_name,competition_phase
 from collection.seasonRunner import SeasonRunner
@@ -25,6 +25,44 @@ class BundesligaPlayoffTests(unittest.TestCase):
             self.assertEqual([call.args[0] for call in client.season_events.call_args_list],[54,9081])
             self.assertEqual(len(fixtures['fotmob']),3);self.assertFalse(errors)
             self.assertEqual(competition_phase('Bundesliga',fixtures['fotmob'][-1]),'playoffs')
+
+    def test_whoscored_includes_both_playoff_legs_with_configured_or_discovered_league_stages(self):
+        # Verified WhoScored tournament 388, season 9061, stage 20899.
+        for configured in (None,[100]):
+            with self.subTest(configured=configured),tempfile.TemporaryDirectory() as tmp:
+                competition=competition_by_name('Bundesliga');who=Mock()
+                def seasons(path):return [{'name':'2021/2022','path':path+'/seasons/9061'}]
+                who.seasons.side_effect=seasons
+                who.season_stages.side_effect=lambda path:[20899 if '/388/' in path else 100]
+                regular={'id':1,'status':6,'startTimeUtc':'2022-05-14T13:30:00Z',
+                    'homeTeamId':47,'homeTeamName':'Hertha Berlin','awayTeamId':38,'awayTeamName':'Hamburger SV'}
+                first={**regular,'id':1635702,'startTimeUtc':'2022-05-19T18:30:00Z'}
+                second={**regular,'id':1635703,'homeTeamId':38,'homeTeamName':'Hamburger SV',
+                    'awayTeamId':47,'awayTeamName':'Hertha Berlin','startTimeUtc':'2022-05-23T18:30:00Z'}
+                who.season_events.side_effect=lambda stage,month:[regular] if stage==100 else [first,second]
+                runner=SeasonRunner({'sofascore':Sofa(),'whoscored':who},tmp,providers=['sofascore','whoscored'],spatial=(),report=lambda *a,**k:None)
+                selected={**event(),'startTimestamp':1652985000}
+                with patch('collection.seasonRunner.configured_whoscored_stages',return_value=configured):
+                    fixtures,errors=runner._fixtures(competition,'2021/2022',[selected])
+                self.assertFalse(errors);self.assertEqual({r['id'] for r in fixtures['whoscored']},{1,1635702,1635703})
+                self.assertIn((20899,'202205'),[c.args for c in who.season_events.call_args_list])
+                self.assertTrue(any('/tournaments/388/' in c.args[0] for c in who.seasons.call_args_list))
+                from fixtures.dataset import _who_events
+                from fixtures.builder import FixtureCompetition
+                with patch('fixtures.dataset.configured_whoscored_stages',return_value=configured):
+                    exported=_who_events(who,FixtureCompetition('Bundesliga',35,fotmob_id=54),2021,[selected])
+                self.assertEqual({r['id'] for r in exported},{1,1635702,1635703})
+
+    def test_missing_whoscored_playoff_feed_preserves_regular_fixtures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            who=Mock()
+            who.seasons.side_effect=ProviderError('playoff feed unavailable')
+            who.season_events.return_value=[{'id':1,'status':6,'startTimeUtc':'2022-05-14T13:30:00Z',
+                'homeTeamId':47,'homeTeamName':'Hertha Berlin','awayTeamId':38,'awayTeamName':'Hamburger SV'}]
+            runner=SeasonRunner({'sofascore':Sofa(),'whoscored':who},tmp,providers=['sofascore','whoscored'],spatial=(),report=lambda *a,**k:None)
+            with patch('collection.seasonRunner.configured_whoscored_stages',return_value=[100]):
+                fixtures,errors=runner._fixtures(competition_by_name('Bundesliga'),'2021/2022',[event()])
+            self.assertFalse(errors);self.assertEqual([r['id'] for r in fixtures['whoscored']],[1])
 
     def test_missing_playoff_feed_does_not_discard_regular_fixtures(self):
         with tempfile.TemporaryDirectory() as tmp:

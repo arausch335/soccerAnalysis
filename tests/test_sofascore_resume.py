@@ -78,6 +78,40 @@ class SofaScoreResumeTests(unittest.TestCase):
             self.assertIn('event/1/player/7/statistics',bridge.reads)
             self.assertTrue(store.from_csv().matches[1].metadata['browser_details']['complete'])
 
+    def test_fast_collects_available_momentum_but_failures_do_not_block_or_repeat_the_match(self):
+        from collection.completion import sofascore_stats_complete
+        from providers.httpClient import ProviderRequestError
+        for status in (200,404,500,'invalid'):
+            with self.subTest(status=status),tempfile.TemporaryDirectory() as folder:
+                directory=Path(folder)/'premier-league/2024-2025';bridge=FakeBridge()
+                client=ExtensionSofaScoreClient(folder,extension_settings(),bridge=bridge,report=quiet)
+                if status!=200:
+                    def graph(mid):
+                        if status=='invalid':raise ValueError('Invalid graph payload')
+                        raise ProviderRequestError('Graph unavailable',status_code=status)
+                    client.graph=graph
+                runner=SeasonRunner({'sofascore':client},directory,providers=['sofascore'],spatial=(),report=quiet)
+                result=runner.run('EPL','2024/25',limit=1,build_csvs=False)
+                self.assertEqual(result.status.tolist(),['complete'])
+                match=PandasStore(directory/'match_checkpoints/1').from_csv().matches[1]
+                state=match.metadata['browser_details']['coverage']['momentum']
+                self.assertEqual(state,{200:'complete',404:'unavailable',500:'failed','invalid':'failed'}[status])
+                self.assertTrue(sofascore_stats_complete(match))
+                if status==200:self.assertIn('sofascore_momentum',match.metadata['raw_response_files'])
+                before=len(bridge.calls)
+                result=runner.run('EPL','2024/25',limit=1,build_csvs=False)
+                self.assertEqual(result.status.tolist(),['complete']);self.assertEqual(len(bridge.calls),before)
+                if status in (500,'invalid'):self.assertFalse(sofascore_stats_complete(match,require_momentum=True))
+
+    def test_fast_still_retries_required_detail_failures(self):
+        from collection.completion import sofascore_stats_complete
+        with tempfile.TemporaryDirectory() as folder:
+            directory=self.populate(folder);store=PandasStore(directory/'match_checkpoints/1')
+            match=store.from_csv().matches[1]
+            match.metadata['browser_details']={'complete':False,'coverage':{'statistics':'failed','incidents':'complete','momentum':'failed'},
+                'errors':['statistics: temporary failure','momentum: missing']}
+            self.assertFalse(sofascore_stats_complete(match))
+
     def test_api_inventory_skips_extension_on_another_worker(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);first=root/'first';self.populate(first)

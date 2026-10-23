@@ -200,23 +200,26 @@ class SeasonRunner:
                             self.report(f'whoscored: reusing {len(local)} locally saved fixtures.')
                             continue
                     events.update({row['id']:row for row in local})
-                    stages=configured_whoscored_stages(competition,season)
-                    if stages is None:
-                        stages=[]
-                        paths=(competition.whoscored_path,*competition.whoscored_supplemental_paths)
-                        for competition_path in paths:
+                    configured=configured_whoscored_stages(competition,season)
+                    stages=list(configured or [])
+                    paths=((competition.whoscored_path,) if configured is None else ())+competition.whoscored_supplemental_paths
+                    for competition_path in paths:
+                        supplemental=competition_path in competition.whoscored_supplemental_paths
+                        try:
                             if competition.parent and hasattr(client,'qualification_path'):
                                 competition_path=client.qualification_path(competition_path)
                             seasons=self._fetch(provider,f'seasons/{competition_path}',
                                 lambda competition_path=competition_path:client.seasons(competition_path))
                             found=[s for s in seasons if season_key(s['name'])==season_key(season)]
-                            if len(found)!=1:
-                                raise ValueError(f'WhoScored season {season} is not uniquely available')
+                            if len(found)!=1:raise ValueError(f'WhoScored season {season} is not uniquely available')
                             path=found[0]['path']
                             multi_stage=competition.name in ('Champions League','Europa League') or bool(competition.parent)
                             stage_key=('stages-v2/' if multi_stage else 'stage/')+path
                             discovered=self._fetch(provider,stage_key,lambda path=path:client.season_stages(path))
                             stages.extend([discovered] if isinstance(discovered,int) else discovered)
+                        except DATA_ERRORS as exc:
+                            if not supplemental:raise
+                            self.report(f'whoscored supplemental fixture discovery failed: {exc}')
                     result[provider]=list(events.values())
                     for stage in dict.fromkeys(stages):
                         for month in months_between(selected):
@@ -442,7 +445,7 @@ class SeasonRunner:
                 # backfill the checkpoint from cached or newly fetched data.
                 if (all(match.metadata.get('provider_status',{}).get(p)=='complete' for p in self.providers)
                         and self._spatial_done(match)
-                        and (self.baseline_provider!='sofascore' or sofascore_stats_complete(match))):
+                        and (self.baseline_provider!='sofascore' or sofascore_stats_complete(match,require_momentum=bool(self.spatial)))):
                     entry.update(status='complete',error='')
                     if match.metadata.get('browser_details') is not None:
                         self.browser_coverage[str(mid)]={**match.metadata['browser_details'],
@@ -491,7 +494,7 @@ class SeasonRunner:
                     continue
             errors=[]
             if self.baseline_provider=='sofascore':timing.set_provider('sofascore')
-            browser_done=resuming and sofascore_stats_complete(match)
+            browser_done=resuming and sofascore_stats_complete(match,require_momentum=bool(self.spatial))
             if self.baseline_provider=='sofascore' and getattr(sofa,'captures_details',False) and not browser_done:
                 errors.extend(self._browser_match_details(sofa,event,match));browser_done=True
             if self.baseline_provider=='sofascore' and not self._sofascore_blocked:
@@ -602,7 +605,8 @@ class SeasonRunner:
                     self._fetch('sofascore',key,lambda payload=payload:payload,refresh=True)
                     match.metadata.setdefault('raw_response_files',{})['sofascore_'+label]=str(self.cache.path('sofascore',key).relative_to(self.directory))
             match.metadata['browser_details']={**coverage,'complete':not coverage['errors']}
-            errors=coverage['errors']
+            from .completion import required_detail_errors
+            errors=required_detail_errors(coverage,require_momentum=bool(self.spatial))
             if coverage.get('blocked'):self._sofascore_blocked=True
         except DATA_ERRORS as exc:
             errors=[f'browser match details: {exc}']
