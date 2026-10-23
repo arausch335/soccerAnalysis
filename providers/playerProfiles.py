@@ -82,10 +82,14 @@ def fotmob_profile(pid,p):
     career=[]
     for row in rows:
         row=_object(row,'FotMob career entry')
-        if str(row.get('participantId'))!=str(pid):raise ProviderError('FotMob career belongs to another player')
+        participant=row.get('participantId')
+        if participant not in (None,'') and str(participant)!=str(pid):
+            raise ProviderError('FotMob career row identifies another player')
         if row.get('team') and not row.get('hasUncertainData'):
             career.append({'club':row['team'],'start':day(row.get('startDate')),'end':day(row.get('endDate'))})
-    return {'provider':'fotmob','id':str(pid),'name':p.get('name',''),'birth_date':day(p.get('birthDate')),
+    birthday=day(p.get('birthDate'))
+    if birthday=='0001-01-01':birthday=None  # Provider placeholder for an unknown birthday.
+    return {'provider':'fotmob','id':str(pid),'name':p.get('name',''),'birth_date':birthday,
             'club':_object(p.get('primaryTeam'),'FotMob current team').get('teamName'),'career':career,
             'sources':[f'https://www.fotmob.com/players/{pid}']}
 
@@ -240,7 +244,8 @@ def needs_profile_check(proposal):
 
 
 LEGACY_EXTENSION_ERRORS=frozenset(('Unknown collector command.','Page returned no collection data.',
-                                  'WhoScored profile needs its loaded career table'))
+                                  'WhoScored profile needs its loaded career table',
+                                  'FotMob career belongs to another player'))
 
 
 def retry_legacy_extension_failures(root):

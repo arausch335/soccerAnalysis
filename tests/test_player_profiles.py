@@ -100,6 +100,21 @@ class PlayerProfileTests(unittest.TestCase):
         self.assertEqual(p['career'],[{'club':'AEK Athens','start':'2023-07-01','end':'2024-06-30','precision':'season'}])
         with self.assertRaises(ProviderError):whoscored_profile(10,html)
 
+    def test_fotmob_missing_participant_ids_preserve_career_under_verified_profile(self):
+        payload={'id':253398,'name':'Abdula Dzelil','birthDate':{'utcTime':'0001-01-01T00:00:00.000Z'},'primaryTeam':None,
+                 'careerHistory':{'careerItems':{'senior':{'teamEntries':[
+                     {'participantId':None,'team':'Shkupi','startDate':'','endDate':''},
+                     {'team':'Renova','startDate':'','endDate':''},
+                     {'participantId':'','team':'KF Shkendija','startDate':'','endDate':''}]}}}}
+        value=fotmob_profile(253398,payload)
+        checked_profile(value,'fotmob','253398')
+        self.assertIsNone(value['birth_date']);self.assertIsNone(value['club'])
+        self.assertEqual([r['club'] for r in value['career']],['Shkupi','Renova','KF Shkendija'])
+        self.assertTrue(all(r['start'] is None and r['end'] is None for r in value['career']))
+        with self.assertRaisesRegex(ProviderError,'belongs to another'):fotmob_profile(123,payload)
+        payload['careerHistory']['careerItems']['senior']['teamEntries'][0]['participantId']=123
+        with self.assertRaisesRegex(ProviderError,'identifies another'):fotmob_profile(253398,payload)
+
     def test_fotmob_null_current_team_and_nullable_career_fields_stay_missing(self):
         histories=[None,{'careerItems':None},{'careerItems':{'senior':None}},
                    {'careerItems':{'senior':{'teamEntries':None}}}]
