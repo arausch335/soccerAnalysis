@@ -76,7 +76,29 @@ refresh();setInterval(refresh,5000);
 let reviewData=null,reviewBusy=false;
 function reviewDate(value){if(!value)return 'Date unavailable';const d=new Date(String(value).slice(0,10)+'T12:00:00Z');return Number.isNaN(d.valueOf())?'Date unavailable':d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'});}
 function profileLinks(v){return (v?.sources||[]).map((url,i)=>`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${i?'Career source':'Open profile'} ↗</a>`).join(' · ');}
-function careerList(v){const rows=(v?.career||[]).slice().sort((a,b)=>(a.start||'').localeCompare(b.start||''));return rows.length?`<ol class="profile-career">${rows.map(c=>`<li><span>${esc(c.club)}</span><small>${c.start?reviewDate(c.start):'Start unknown'} — ${c.end?reviewDate(c.end):'Present'}</small></li>`).join('')}</ol>`:'<p class="review-muted">Career history unavailable</p>';}
+function careerGroups(v){
+ const rows=(v?.career||[]).map(c=>({...c})).sort((a,b)=>(a.start||'').localeCompare(b.start||''));
+ if(v?.provider!=='whoscored')return rows;
+ const groups=[];
+ const season=c=>c.start&&c.end?(c.start.slice(0,4)===c.end.slice(0,4)?c.start.slice(0,4):c.start.slice(0,4)+'/'+c.end.slice(2,4)):null;
+ for(const row of rows){
+  const previous=groups[groups.length-1],label=season(row);
+  const sameClub=previous&&previous.club.trim().toLocaleLowerCase()===row.club.trim().toLocaleLowerCase();
+  if(sameClub&&previous.precision==='season'&&row.precision==='season'&&previous.end&&row.start&&row.end){
+   const nextDay=new Date(previous.end+'T00:00:00Z');nextDay.setUTCDate(nextDay.getUTCDate()+1);
+   if(row.start>nextDay.toISOString().slice(0,10))previous.coverageGap=true;
+   if(row.end>previous.end){previous.end=row.end;previous.lastSeason=label;}
+  }else groups.push({...row,firstSeason:label,lastSeason:label});
+ }
+ return groups;
+}
+function careerList(v){
+ const rows=careerGroups(v);
+ return rows.length?`<ol class="profile-career">${rows.map(c=>{
+  const period=c.precision==='season'&&c.firstSeason?`Seasons ${esc(c.firstSeason)}${c.lastSeason!==c.firstSeason?' — '+esc(c.lastSeason):''}`:`${c.start?reviewDate(c.start):'Start unknown'} — ${c.end?reviewDate(c.end):'Present'}`;
+  return `<li><span>${esc(c.club)}</span><small>${period}</small>${c.coverageGap?'<small>Some seasons are not reported.</small>':''}</li>`;
+ }).join('')}</ol>`:'<p class="review-muted">Career history unavailable</p>';
+}
 function identityComparison(p){
  const source=p.investigation?.source,baseline=p.investigation?.baseline;
  const cell=(label,content)=>`<div class="comparison-cell"><small class="field-label">${label}</small>${content}</div>`;
