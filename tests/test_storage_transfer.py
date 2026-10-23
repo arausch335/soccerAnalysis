@@ -38,7 +38,7 @@ class TransferTests(unittest.TestCase):
         self.assertFalse((self.outbox.directory/mid).exists())
         self.assertEqual(self.queue(),mid);self.assertEqual(self.outbox.queued(),0)
         self.assertEqual(self.server.archive.status()['received'],1)
-        self.assertEqual(self.server.archive.completed(),[])
+        self.assertEqual([key for key,_ in self.server.archive.completed()],[mid])
 
     def test_resume_chunks_after_interruption_and_reject_corruption(self):
         self.raw.write_bytes(b'x'*(CHUNK+71));mid=self.queue()
@@ -111,6 +111,32 @@ class TransferTests(unittest.TestCase):
         self.assertTrue((output/self.season/'player_match_stats.csv').is_file())
         for kind in ('player','team','match'):self.assertTrue((output/'concordance'/(kind+'_ids.csv')).is_file())
         self.assertFalse(list(output.rglob('raw')));self.assertEqual(self.server.archive.builds(),[])
+
+    def test_incomplete_season_match_is_integrated_without_publishing_a_dataset(self):
+        from tests.test_ensemble import populate
+        from collection.workerIdentity import ensure_identity
+        populate(self.root,limit=1)
+        files=season_files(self.root,self.season,'1')
+        mid=self.outbox.enqueue(files,kind='raw',season=self.season,completed=False)
+        self.outbox.send_one(self.peer)
+        hub=self.base/'msi';atomic_json(hub/'.soccer-scraper.json',{'format':1});ensure_identity(hub,'msi')
+        agent=StorageAgent(hub,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.base/'dataset',log=quiet)
+        agent.server=self.server
+        with patch('dataset_builder.build_dataset',side_effect=AssertionError('Unfinished season must not publish')):
+            agent.maintenance_once()
+        self.assertIn(1,PandasStore(hub/self.season/'match_checkpoints/1').from_csv().matches)
+        self.assertEqual(self.server.archive.commit('headless',mid)['state'],'imported')
+        self.assertEqual(self.server.archive.builds(),[])
+        self.assertIsNone(self.server.archive.publication())
+
+    def test_partial_match_acknowledgement_never_retires_another_pending_package(self):
+        first=self.queue();self.outbox.send_one(self.peer)
+        atomic_json(self.raw,{'events':[4,5,6]});second=self.queue();self.outbox.send_one(self.peer)
+        archive=self.server.archive;manifest=next(m for key,m in archive.completed() if key==second)
+        archive.incorporated(second,manifest)
+        self.assertEqual(archive.commit('headless',first)['state'],'received')
+        self.assertEqual(archive.commit('headless',second)['state'],'imported')
+        self.assertEqual(archive.builds(),[])
 
     def test_transfer_copies_are_collected_only_after_verified_incorporation(self):
         mid=self.queue(True);self.outbox.send_one(self.peer);archive=self.server.archive

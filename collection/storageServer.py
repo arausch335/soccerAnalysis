@@ -92,16 +92,21 @@ class Archive:
 
     def completed(self):
         with self.connect() as db:rows=db.execute("SELECT id,manifest FROM uploads WHERE state='received' ORDER BY rowid").fetchall()
-        return [(mid,json.loads(body)) for mid,body in rows if json.loads(body).get('completed')]
+        # Received means the upload is complete, even while its season is unfinished.
+        return [(mid,json.loads(body)) for mid,body in rows]
 
     def incorporated(self,mid,manifest):
         with self.lock,self.connect() as db:
-            # Retire only earlier match packages, never a newer season generation.
-            rows=db.execute('SELECT id,manifest FROM uploads WHERE owner=? AND rowid<=(SELECT rowid FROM uploads WHERE id=?)',
-                            (manifest['worker'],mid)).fetchall()
-            for key,body in rows:
-                if json.loads(body).get('season')==manifest['season']:db.execute("UPDATE uploads SET state='imported' WHERE id=?",(key,))
-            db.execute("INSERT INTO builds(season,state,revision) VALUES(?,'pending',1) ON CONFLICT(season) DO UPDATE SET state='pending',revision=revision+1",(manifest['season'],));db.commit()
+            db.execute("UPDATE uploads SET state='imported' WHERE id=?",(mid,))
+            if manifest.get('completed'):
+                # A full-season snapshot supersedes earlier packages. A single
+                # match must never acknowledge another match that was deferred.
+                rows=db.execute('SELECT id,manifest FROM uploads WHERE owner=? AND rowid<=(SELECT rowid FROM uploads WHERE id=?)',
+                                (manifest['worker'],mid)).fetchall()
+                for key,body in rows:
+                    if json.loads(body).get('season')==manifest['season']:db.execute("UPDATE uploads SET state='imported' WHERE id=?",(key,))
+                db.execute("INSERT INTO builds(season,state,revision) VALUES(?,'pending',1) ON CONFLICT(season) DO UPDATE SET state='pending',revision=revision+1",(manifest['season'],))
+            db.commit()
 
     def schedule_build(self,season):
         with self.connect() as db:db.execute("INSERT INTO builds(season,state,revision) VALUES(?,'pending',1) ON CONFLICT(season) DO UPDATE SET state='pending',revision=revision+1",(season,));db.commit()

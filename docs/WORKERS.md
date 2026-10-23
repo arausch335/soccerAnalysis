@@ -778,3 +778,12 @@ end). Equal-to-one-month, smaller differences, and missing birthdays remain for
 review; they never establish an automatic match. Existing human decisions are
 preserved. Automatic birthday rejections keep their dates and reason in reviewed
 history and are shared with workers like other rejected identity pairs.
+
+
+MSI incorporates every fully received raw upload in its background maintenance
+loop, including individual matches from unfinished or partial seasons. Only a
+completed-season snapshot schedules dataset publication to Main. A per-match
+incorporation acknowledges that package alone; it never retires other matches
+that are still waiting to be imported. Existing received packages become eligible
+after upgrading, without re-uploading them. Portable imports still verify their
+source files before incorporation and may occupy the maintenance loop first.

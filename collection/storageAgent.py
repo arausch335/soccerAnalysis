@@ -247,6 +247,7 @@ class StorageAgent:
         from dataset_builder import build_dataset
         check=Checkpoint(self.stop);check();changed=False
         if self.ensemble is not None:
+            self.maintenance_status={'state':'checking_staged_imports','message':'Checking portable bundles before queued uploads; original sources are retained until verification finishes'}
             changed=import_staged(self.root,self.ensemble,stop=self.stop,report=self.log_report,
                                   on_season=self.server.archive.schedule_build if self.server else None)
         if not self.server:return changed
