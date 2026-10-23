@@ -769,3 +769,12 @@ complete transfer registry; repeated club-seasons are shown once.
 Identity review groups repeated observations by provider/baseline match IDs and
 side. It keeps richer fixture names and reporting-worker provenance while showing
 one match row per fixture pair. Existing review decisions remain unchanged.
+
+
+Player proposals with two known birthdays more than one calendar month apart are
+automatically rejected and removed from manual review. The limit is measured
+from the earlier birthday to the same day of the next month (clamped at month
+end). Equal-to-one-month, smaller differences, and missing birthdays remain for
+review; they never establish an automatic match. Existing human decisions are
+preserved. Automatic birthday rejections keep their dates and reason in reviewed
+history and are shared with workers like other rejected identity pairs.

@@ -152,10 +152,17 @@ class ReviewStore:
         if proposals:self.auto_confirm()
 
     def auto_confirm(self):
-        from .playerProfiles import compare_profiles
-        reviewed={d['id'] for d in decisions(self.root)};groups={}
+        from .playerProfiles import compare_profiles,birthday_rejection_reason
+        existing=decisions(self.root);reviewed={d['id'] for d in existing}
+        confirmed={(d['kind'],d['provider'],d['source_id']) for d in existing if d['action']=='confirm'}
+        groups={}
         for p in self.proposals():
-            if p['kind']=='player':groups.setdefault((p['provider'],p['source_id']),[]).append(p)
+            if p['kind']!='player' or p['id'] in reviewed or (p['kind'],p['provider'],p['source_id']) in confirmed:continue
+            if birthday_rejection_reason(p):
+                try:self.decide(p['id'],'reject',automatic=True)
+                except ValueError:continue  # A human may have reviewed it in the meantime.
+                reviewed.add(p['id']);continue
+            groups.setdefault((p['provider'],p['source_id']),[]).append(p)
         for group in groups.values():
             if any(not p.get('investigation') for p in group):continue
             verified=[p for p in group if all(v=='match' for v in compare_profiles(p,self.root).values())]
@@ -183,8 +190,14 @@ class ReviewStore:
             if action=='confirm' and p['kind']=='player' and not p.get('investigation'):
                 raise ValueError('Birthday, club and career lookup is still queued')
             if automatic:
-                from .playerProfiles import compare_profiles
-                if not all(v=='match' for v in compare_profiles(p,self.root).values()):raise ValueError('Profile evidence is incomplete or conflicting')
+                from .playerProfiles import compare_profiles,birthday_rejection_reason
+                if action=='reject':
+                    from .identity import REVIEWED_PLAYER_IDS
+                    if str(REVIEWED_PLAYER_IDS.get((p['provider'],p['source_id'])))==p['target_id']:
+                        raise ValueError('Preserve the existing reviewed identity')
+                    if not birthday_rejection_reason(p):raise ValueError('Birthdays do not exceed the automatic rejection threshold')
+                elif not all(v=='match' for v in compare_profiles(p,self.root).values()):
+                    raise ValueError('Profile evidence is incomplete or conflicting')
                 if db.execute('SELECT 1 FROM decisions WHERE id=?',(pid,)).fetchone():raise ValueError('Preserve the existing review decision')
             existing=[json.loads(r[0]) for r in db.execute('SELECT payload FROM decisions')]
             if action=='confirm':
@@ -204,7 +217,9 @@ class ReviewStore:
                         if target in seen:raise ValueError('Team alias would create a cycle')
                         seen.add(target);target=aliases[target]
                     if target==p['source_id']:raise ValueError('Team alias would create a cycle')
-            value={**p,'action':action,'reviewed_at':stamp(),'review_method':'profile_evidence' if automatic else 'manual'}
+            method='birthday_mismatch' if automatic and action=='reject' else 'profile_evidence' if automatic else 'manual'
+            value={**p,'action':action,'reviewed_at':stamp(),'review_method':method}
+            if method=='birthday_mismatch':value['review_reason']=birthday_rejection_reason(p)
             db.execute('INSERT OR REPLACE INTO decisions VALUES(?,?)',(pid,json.dumps(value)))
         _decisions.cache_clear()
         return value

@@ -144,6 +144,25 @@ def whoscored_profile(pid,text):
             'club':club,'career':career,'sources':[f'https://www.whoscored.com/players/{pid}/history']}
 
 
+def birthday_rejection_reason(proposal):
+    """Reject a candidate only when two validated birthdays exceed one calendar month."""
+    if proposal.get('kind')!='player':return None
+    evidence=proposal.get('investigation') or {}
+    left=evidence.get('source');right=evidence.get('baseline')
+    if not left or not right or not left.get('birth_date') or not right.get('birth_date'):return None
+    checked_profile(left,proposal['provider'],proposal['source_id'])
+    checked_profile(right,'sofascore',proposal['target_id'])
+    if '0001-01-01' in (left['birth_date'],right['birth_date']):return None
+    first,last=sorted((date.fromisoformat(left['birth_date']),date.fromisoformat(right['birth_date'])))
+    from calendar import monthrange
+    year=first.year+(first.month==12);month=first.month%12+1
+    if year>9999:return None
+    boundary=date(year,month,min(first.day,monthrange(year,month)[1]))
+    if last<=boundary:return None
+    return (f"Birthdays {left['birth_date']} and {right['birth_date']} are more than one calendar month apart "
+            f"({(last-first).days} days).")
+
+
 def compare_profiles(proposal,root=None):
     """Verify exact dates and clubs; inconsistent overlapping career stints veto a link."""
     from .identity import team_key
