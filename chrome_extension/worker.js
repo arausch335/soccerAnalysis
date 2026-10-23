@@ -31,7 +31,8 @@ async function api(s, path, value) {
     headers: {Authorization: 'Bearer ' + s.token, 'X-Collector-Client': s.clientId,
       ...(value === undefined ? {} : {'Content-Type': 'application/json'})},
     body: value === undefined ? undefined : JSON.stringify(value),
-    signal: path === 'diagnostic' ? AbortSignal.timeout(5000) : controller?.signal
+    signal: path === 'diagnostic' ? AbortSignal.timeout(5000) :
+      path === 'disconnect' ? AbortSignal.timeout(1500) : controller?.signal
   });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || 'Python connection failed.');
@@ -352,17 +353,20 @@ async function poll() {
   if (polling) return;
   polling = true;
   controller = new AbortController();
+  const pollingController=controller;
   try {
     while (true) {
       const s = await state();
-      if (!s.connected || s.paused) break;
+      if (pollingController.signal.aborted || !s.connected || s.paused) break;
       if (s.reconnecting) {
         await selectedTab(s);
         await api(s,'connect',{client_id:s.clientId});
+        if (pollingController.signal.aborted) break;
         await save({reconnecting:false,message:'Reconnected automatically.'});
         await badge('ON');
       }
       const body = await api(s, 'command');
+      if (pollingController.signal.aborted) break;
       if (body.phase === 'closed') {
         await save({connected:true,reconnecting:true,message:'Python stopped or is restarting. Waiting to reconnect automatically.'});
         await badge('…');
@@ -377,7 +381,7 @@ async function poll() {
       await api(s, 'result', {id: body.command.id, result});
     }
   } catch (error) {
-    if (error.name !== 'AbortError') {
+    if (!pollingController.signal.aborted && error.name !== 'AbortError') {
       await save({connected:true,reconnecting:true,message:'Python connection interrupted. Retrying automatically; saved work is safe.'});
       await badge('!');
     }
@@ -435,15 +439,14 @@ async function message(msg, sender) {
     const s = await state();
     controller?.abort();
     controller = undefined;
-    if (s.clientId) {
-      try { await api(s, 'disconnect', {}); } catch (_) { /* Python may already be stopped. */ }
-    }
     await chrome.storage.session.clear();
     if (chrome.storage.local) await chrome.storage.local.remove('collectorConnection');
     await chrome.alarms.clear('collector');
     await chrome.alarms.clear(RELOAD_ALARM);
     await save({connected: false, message: 'Disconnected.'});
     await badge('');
+    // Local reset never depends on a stopped or unresponsive Python process.
+    if (s.base && s.token && s.clientId) void api(s,'disconnect',{}).catch(()=>{});
   } else throw new Error('Unknown popup action.');
   return {ok: true};
 }

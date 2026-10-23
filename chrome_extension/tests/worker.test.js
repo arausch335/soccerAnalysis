@@ -31,6 +31,20 @@ test('a webpage cannot access the connection state or send collector commands',a
   assert.equal(result.token,undefined);assert.equal(requests,before);
 });
 
+test('disconnect clears incomplete saved state and returns even when Python never responds',async()=>{
+  for(const clientId of [undefined,'a'.repeat(32)]) {
+    store={connected:true,reconnecting:true,base:'http://127.0.0.1:12345',token:'x'.repeat(43),clientId};
+    persistent={collectorConnection:{...store}};
+    globalThis.fetch=async()=>new Promise(()=>{});
+    const result=await Promise.race([send({action:'disconnect'}),new Promise(resolve=>setTimeout(()=>resolve({timeout:true}),100))]);
+    assert.equal(result.ok,true);assert.equal(store.connected,false);
+    assert.equal(store.clientId,undefined);assert.equal(persistent.collectorConnection,undefined);
+    assert.equal(badge,'');
+    assert.equal((await send({action:'status'})).connected,false);
+  }
+  store={connected:false,base:'http://127.0.0.1:12345',token:'x'.repeat(43),clientId:'a'.repeat(32)};
+});
+
 test('connect refuses any active tab outside Sofascore',async()=>{
   chrome.tabs.query=async()=>[{id:1,url:'https://accounts.google.com/'}];
   const before=requests;

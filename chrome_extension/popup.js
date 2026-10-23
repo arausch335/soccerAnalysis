@@ -9,7 +9,8 @@ async function refresh() {
   $('connect').disabled = !!s.connected;
   $('pause').disabled = !s.connected || s.paused;
   $('resume').disabled = !s.connected || !s.paused;
-  $('disconnect').disabled = !s.clientId;
+  // Clearing local state must also work with an incomplete/stale connection.
+  $('disconnect').disabled = false;
 }
 for (const action of ['connect', 'pause', 'resume', 'disconnect']) {
   $(action).addEventListener('click', async () => {
