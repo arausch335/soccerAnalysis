@@ -184,8 +184,9 @@ class SeasonRunner:
                                 client.season_events(competition_id,season))
                         for row in raw:
                             if row['status'].get('finished') and not row['status'].get('awarded'):
-                                fixture=fotmob_fixture(row);events[fixture['id']]=fixture
-                    result[provider]=list(events.values())
+                                fixture=fotmob_fixture(row,competition_id=competition_id);events[fixture['id']]=fixture
+                        # Keep the primary schedule if a supplemental feed is unavailable.
+                        result[provider]=list(events.values())
                 else:
                     events={}
                     from .whoScoredData import standalone_fixtures
@@ -358,7 +359,7 @@ class SeasonRunner:
                         self.clients['fotmob'].season_events(selected_id,canonical))
                 for row in raw:
                     if row['status'].get('finished') and not row['status'].get('awarded'):
-                        fixture=fotmob_fixture(row);events_by_id[fixture['id']]=fixture
+                        fixture=fotmob_fixture(row,competition_id=selected_id);events_by_id[fixture['id']]=fixture
             events=list(events_by_id.values())
             config={'schema_version':1,'competition':competition.name,'competition_id':competition_id,
                     'season':canonical,'season_id':season['id'],

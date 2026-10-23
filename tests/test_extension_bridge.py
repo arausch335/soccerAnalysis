@@ -34,6 +34,13 @@ class ExtensionBridgeTests(unittest.TestCase):
     def connect(self):
         self.assertEqual(self.http('/v1/connect',{'client_id':self.cid})[0],200)
 
+    def test_profile_capabilities_are_negotiated_and_legacy_clients_remain_compatible(self):
+        self.connect();self.assertFalse(self.bridge.capabilities)
+        self.assertEqual(self.http('/v1/connect',{'client_id':self.cid,'capabilities':['player-profiles-v1']})[0],200)
+        self.assertIn('player-profiles-v1',self.bridge.capabilities)
+        self.assertEqual(self.http('/v1/connect',{'client_id':self.cid,'capabilities':'invalid'})[0],400)
+        self.assertIn('player-profiles-v1',self.bridge.capabilities)
+
     def test_late_initial_connection_does_not_poison_future_requests(self):
         self.bridge.connect_timeout=.01
         with self.assertRaisesRegex(ProviderRequestError,'not connected yet'):self.bridge.request('page',{})

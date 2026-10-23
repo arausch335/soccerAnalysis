@@ -14,7 +14,7 @@ class IdentityReviewAgent:
         self.root=Path(root);self.bridge=bridge;self.on_change=on_change;self.report=report
         self.stop=threading.Event();self.thread=None
         self.path=self.root/'_system/workers/identity-review.json'
-        self.status={}
+        self.status={};self.extension_checked=False
 
     def save(self,state,message):
         value={'state':state,'message':message}
@@ -25,7 +25,12 @@ class IdentityReviewAgent:
         if not self.bridge.ready:
             self.save('waiting_for_extension','Connect Main to Soccer Collector using the code printed in its console. Profile checks wait here.')
             return False
-        from providers.playerProfiles import investigate_queue
+        if 'player-profiles-v1' not in getattr(self.bridge,'capabilities',()):
+            self.save('update_extension','Reload Soccer Collector in chrome://extensions, then reconnect it to Main. The connected extension does not support player profiles.')
+            return False
+        from providers.playerProfiles import investigate_queue,retry_legacy_extension_failures
+        if not self.extension_checked:
+            retry_legacy_extension_failures(self.root);self.extension_checked=True
         self.save('checking','Checking queued player profiles on Main.')
         changed=investigate_queue(self.root,self.report)
         if changed:self.on_change()

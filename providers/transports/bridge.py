@@ -38,6 +38,7 @@ class ExtensionBridge:
         self.server = None
         self.thread = None
         self.client_id = None
+        self.capabilities = frozenset()
         self.pending = None
         self.closed = False
         self.phase = 'waiting'
@@ -153,6 +154,12 @@ class ExtensionBridge:
                         if bridge.client_id and bridge.client_id != cid:
                             self.reply(409, {'error': 'Another tab is connected; disconnect it first'})
                             return
+                        capabilities=value.get('capabilities',[])
+                        if (not isinstance(capabilities,list) or len(capabilities)>16 or
+                                any(not isinstance(c,str) or not re.fullmatch(r'[a-z0-9-]{1,64}',c) for c in capabilities)):
+                            self.reply(400, {'error':'Invalid extension capabilities'})
+                            return
+                        bridge.capabilities=frozenset(capabilities)
                         bridge.client_id = cid
                         bridge.connected.set()
                         bridge.user_paused = False

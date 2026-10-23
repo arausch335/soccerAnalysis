@@ -723,3 +723,35 @@ required configuration and excluded from routine audits and future scrape jobs.
 Use Reopen season on Main to reassess them. Changing required data creates a new
 completion scope. Worker `--retry` retries unfinished work; it does not override
 Main's frozen Done decision.
+
+
+## Main identity review and extension upgrades
+
+Run `python main.py --worker-id main --monitor --identity-review` to check player
+profiles on Main. Leave Chrome open and connect Soccer Collector to the code
+printed by Main. Main checks the connected extension supports profile lookups;
+if it is too old, the identity review page asks you to reload it instead of
+recording lookup failures. After reloading the current extension and reconnecting,
+Main retries lookups that failed with an incompatible-extension error immediately.
+Successful profile evidence and human identity decisions are preserved.
+
+After pulling code, prepare the folder loaded in Chrome with
+`python -m tools.extension_setup` (or pass `--output` with its original folder).
+Then open `chrome://extensions`, click Reload on Soccer Collector, and confirm
+its popup shows version 0.8.1 or later. Git changes alone do not reload Chrome's
+running extension. A source-folder installation can simply reload that extension.
+
+## Bundesliga promotion/relegation playoffs
+
+Bundesliga jobs retain Sofascore's two end-of-season promotion/relegation playoff
+matches. FotMob fixtures combine Bundesliga (54) with Bundesliga Qualification
+(9081), deduplicated by FotMob match ID. Missing supplemental coverage does not
+discard the regular league fixtures. Provider match IDs are matched in the usual
+way, so playoff statistics and events use the same collection pipeline.
+
+Dataset `fixtures.csv` keeps `competition=Bundesliga` and adds
+`competition_phase=playoffs` plus a `competition_note` explaining the separate
+FotMob feed. Other main-draw games have `competition_phase=main`. Provider round
+names remain intact. The source schedule and match IDs are unchanged. Done
+seasons remain frozen; explicitly reopen a season on Main to retry previously
+closed playoff gaps.

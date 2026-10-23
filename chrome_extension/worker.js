@@ -25,6 +25,7 @@ const save = values => chrome.storage.session.set(values);
 const badge = text => chrome.action.setBadgeText({text});
 
 async function api(s, path, value) {
+  if (path === 'connect') value={...value,capabilities:['player-profiles-v1']};
   const response = await fetch(s.base + '/v1/' + path, {
     method: value === undefined ? 'GET' : 'POST',
     headers: {Authorization: 'Bearer ' + s.token, 'X-Collector-Client': s.clientId,
@@ -455,7 +456,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   return true;
 });
 async function resumeSavedConnection(){
-  const s=await state();if(s.connected){await chrome.alarms.create('collector',{periodInMinutes:0.5});void poll();}
+  const s=await state();if(s.connected){await save({reconnecting:true});await chrome.alarms.create('collector',{periodInMinutes:0.5});void poll();}
 }
 if(chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(resumeSavedConnection);
 if(chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(resumeSavedConnection);

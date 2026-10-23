@@ -46,6 +46,7 @@ class FixtureCompetition:
     first_season: int = 2010
     fotmob_id: int | None = None
     fotmob_qualification_id: int | None = None
+    fotmob_playoff_id: int | None = None
 
 
 # SofaScore unique-tournament IDs. Qualifying rounds of the UEFA tournaments
@@ -55,7 +56,7 @@ COMPETITIONS = (
     FixtureCompetition('Championship', SOFASCORE_COMPETITION_IDS['Championship'], fotmob_id=48),
     FixtureCompetition('La Liga', SOFASCORE_COMPETITION_IDS['La Liga'], fotmob_id=87),
     FixtureCompetition('La Liga 2', SOFASCORE_COMPETITION_IDS['La Liga 2'], fotmob_id=140),
-    FixtureCompetition('Bundesliga', SOFASCORE_COMPETITION_IDS['Bundesliga'], fotmob_id=54),
+    FixtureCompetition('Bundesliga', SOFASCORE_COMPETITION_IDS['Bundesliga'], fotmob_id=54, fotmob_playoff_id=9081),
     FixtureCompetition('2. Bundesliga', SOFASCORE_COMPETITION_IDS['2. Bundesliga'], fotmob_id=146),
     FixtureCompetition('Serie A', SOFASCORE_COMPETITION_IDS['Serie A'], fotmob_id=55),
     FixtureCompetition('Serie B', SOFASCORE_COMPETITION_IDS['Serie B'], fotmob_id=86),
@@ -108,6 +109,7 @@ def _fotmob_event(row, competition_id, season_id, qualifying):
                                 not str(round_name).isdigit() else None)}
     event['tournament']={'qualificationOrPreliminary':qualifying,
                          'uniqueTournament':{'id':competition_id}}
+    if competition_id==9081:event['tournament']['name']='Bundesliga, Relegation/Promotion Playoffs'
     event['season']={'id':season_id}
     home=(event['homeScore'] or {}).get('current')
     away=(event['awayScore'] or {}).get('current')
@@ -124,6 +126,8 @@ def _fotmob_season_events(client, competition, start, *, include_upcoming):
     ids=[(competition.fotmob_id,False)]
     if competition.fotmob_qualification_id is not None:
         ids.append((competition.fotmob_qualification_id,True))
+    if competition.fotmob_playoff_id is not None:
+        ids.append((competition.fotmob_playoff_id,False))
     events={}
     for competition_id,qualifying in ids:
         if competition_id is None:
@@ -151,6 +155,9 @@ def _schedule_events(client, competition, start, season_id, *, provider,
                 f'{label}.json')
     refresh=refresh_current and start == current_start
     save_checkpoint=False
+    if provider=='fotmob' and competition.fotmob_playoff_id and checkpoint.exists():
+        saved=json.loads(checkpoint.read_text(encoding='utf-8'))
+        if saved.get('playoff_competition_id')!=competition.fotmob_playoff_id:refresh=True
     if checkpoint.exists() and not refresh:
         events=_events_from_checkpoint(checkpoint,provider,competition_id,season_id)
     else:
@@ -181,7 +188,7 @@ def _schedule_events(client, competition, start, season_id, *, provider,
         tournament_id=((event.get('tournament') or {}).get('uniqueTournament') or {}).get('id')
         event_season_id=(event.get('season') or {}).get('id')
         allowed_ids=({competition.sofascore_id} if provider=='sofascore' else
-                     {competition.fotmob_id,competition.fotmob_qualification_id})
+                     {competition.fotmob_id,competition.fotmob_qualification_id,competition.fotmob_playoff_id})
         if tournament_id is not None and tournament_id not in allowed_ids:
             raise ValueError(f'{competition.name} {label}: fixture {event["id"]} has another tournament ID')
         if event_season_id is not None and event_season_id != season_id:
@@ -191,7 +198,8 @@ def _schedule_events(client, competition, start, season_id, *, provider,
         raise ValueError(f'{competition.name} {label}: duplicate fixture IDs')
     if save_checkpoint:
         atomic_json(checkpoint,{'provider':provider,'competition_id':competition_id,
-                                'season_id':season_id,'events':events})
+                                'season_id':season_id,'events':events,
+                                'playoff_competition_id':competition.fotmob_playoff_id})
     return events
 
 

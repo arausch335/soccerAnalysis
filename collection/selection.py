@@ -20,7 +20,8 @@ class CompetitionSelection:
 COMPETITIONS=[
     CompetitionSelection('Premier League',SOFASCORE_COMPETITION_IDS['Premier League'],47,'regions/252/tournaments/2/england-premier-league'),
     CompetitionSelection('La Liga',SOFASCORE_COMPETITION_IDS['La Liga'],87,'regions/206/tournaments/4/spain-laliga'),
-    CompetitionSelection('Bundesliga',SOFASCORE_COMPETITION_IDS['Bundesliga'],54,'regions/81/tournaments/3/germany-bundesliga'),
+    CompetitionSelection('Bundesliga',SOFASCORE_COMPETITION_IDS['Bundesliga'],54,'regions/81/tournaments/3/germany-bundesliga',
+        fotmob_supplemental_ids=(9081,)),
     CompetitionSelection('Serie A',SOFASCORE_COMPETITION_IDS['Serie A'],55,'regions/108/tournaments/5/italy-serie-a'),
     CompetitionSelection('Ligue 1',SOFASCORE_COMPETITION_IDS['Ligue 1'],53,'regions/74/tournaments/22/france-ligue-1'),
     CompetitionSelection('Champions League',SOFASCORE_COMPETITION_IDS['Champions League'],42,
@@ -73,9 +74,19 @@ def with_reviewed_schedule_results(competition,season,season_id,events):
     return result
 
 
-def is_qualification_event(event):
+def is_qualification_event(event,competition=None):
     """True only for pre-main-competition qualification fixtures."""
+    if competition=='Bundesliga':return False  # Promotion/relegation playoffs belong to the league season.
     return bool((event.get('tournament') or {}).get('qualificationOrPreliminary'))
+
+
+def competition_phase(competition,event):
+    tournament=event.get('tournament') or {};round_info=event.get('roundInfo') or {}
+    labels=' '.join(str(value or '') for value in (tournament.get('name'),tournament.get('slug'),
+                                                   round_info.get('name'),round_info.get('slug')))
+    if competition=='Bundesliga' and re.search(r'relegation|relegations?|play[ -]?offs?',labels,re.I):
+        return 'playoffs'
+    return 'qualifying' if is_qualification_event(event,competition) else 'main'
 
 
 def in_competition(event,competition):

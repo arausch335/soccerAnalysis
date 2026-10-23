@@ -462,3 +462,14 @@ test('Chrome startup restores a saved connection and recreates a closed provider
   await send({action:'disconnect'});assert.equal(store.connected,false);assert.equal(persistent.collectorConnection,undefined);
   await startup();assert.equal(store.connected,false);
 });
+
+
+test('extension reload announces profile capabilities with an existing session',async()=>{
+  store={connected:true,paused:false,reconnecting:false,tabId:1,base:'http://127.0.0.1:12345',token:'x'.repeat(43),clientId:'a'.repeat(32)};
+  chrome.tabs.get=async()=>({id:1,url:'https://www.sofascore.com/'});
+  const connections=[];
+  globalThis.fetch=async(url,args)=>{if(url.endsWith('/connect'))connections.push(JSON.parse(args.body));return {ok:true,json:async()=>({phase:'closed'})};};
+  await installed();for(let i=0;i<50&&!connections.length;i++)await new Promise(r=>setTimeout(r,5));
+  assert.deepEqual(connections[0].capabilities,['player-profiles-v1']);
+  assert.equal(connections[0].client_id,'a'.repeat(32));store.connected=false;
+});

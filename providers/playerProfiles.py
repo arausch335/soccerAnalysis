@@ -232,6 +232,27 @@ def needs_profile_check(proposal):
     except (KeyError,TypeError,ValueError):return True
 
 
+LEGACY_EXTENSION_ERRORS=frozenset(('Unknown collector command.','Page returned no collection data.'))
+
+
+def retry_legacy_extension_failures(root):
+    """Retry incompatible-extension errors once a capable extension connects."""
+    from .identityReview import ReviewStore
+    store=ReviewStore(root);reset=0
+    with store.connect() as db:
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profiles'").fetchone():
+            for provider,pid,payload in db.execute('SELECT provider,id,payload FROM profiles').fetchall():
+                if json.loads(payload).get('error') in LEGACY_EXTENSION_ERRORS:
+                    db.execute('DELETE FROM profiles WHERE provider=? AND id=?',(provider,pid))
+        for pid,payload in db.execute('SELECT id,payload FROM proposals').fetchall():
+            proposal=json.loads(payload)
+            if any(error in LEGACY_EXTENSION_ERRORS for error in proposal.get('investigation',{}).get('errors',[])):
+                # Human decisions and successful cached profiles remain intact.
+                proposal.pop('investigation',None)
+                db.execute('UPDATE proposals SET payload=? WHERE id=?',(json.dumps(proposal),pid));reset+=1
+    return reset
+
+
 def investigate_queue(root,report=print):
     """Main checks queued profiles through its explicitly enabled extension session."""
     from contextlib import ExitStack

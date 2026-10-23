@@ -17,7 +17,7 @@ import config
 
 from collection.files import atomic_csv
 from collection.paths import collection_directory, collection_name, discover_collections
-from collection.selection import is_qualification_event, season_label
+from collection.selection import is_qualification_event, season_label, competition_phase
 from collection.jsonFiles import read_json
 from providers.events import fotmob_fixture, whoscored_fixture
 from providers.identity import (IdentityError, REJECTED_PLAYER_ID_LINKS,
@@ -42,7 +42,7 @@ PLAYER_PROVIDER_ID_COLUMNS = ('sofascore_id', 'fotmob_id', 'whoscored_id')
 FIXTURE_COLUMNS = (
     'match_id', 'date', 'kickoff_utc', 'season', 'competition', 'matchweek', 'round_name',
     'status', 'awarded', 'home_team_id', 'home_team', 'away_team_id', 'away_team',
-    'home_score', 'away_score', 'winner_code', 'venue', 'city')
+    'home_score', 'away_score', 'winner_code', 'venue', 'city', 'competition_phase', 'competition_note')
 TEAM_NAME_OVERRIDES = {'9788': 'Borussia Mönchengladbach'}
 TEAM_CROSSWALK = Path(__file__).resolve().parent / 'providers' / 'team_id_crosswalk.json'
 
@@ -226,7 +226,7 @@ def standardize_fixture_team_names(fixtures_path, team_ids_path):
         raise ValueError(f'{team_ids_path} has blank team names or FotMob IDs')
     names = dict(zip(teams.fotmob_id, teams.team_name))
     fixtures = pd.read_csv(fixtures_path, dtype=str, keep_default_na=False)
-    if not set(FIXTURE_COLUMNS).issubset(fixtures.columns):
+    if not (set(FIXTURE_COLUMNS)-{'competition_phase','competition_note'}).issubset(fixtures.columns):
         raise ValueError(f'{fixtures_path} is missing fixture columns')
     for side in ('home', 'away'):
         missing = set(fixtures[side + '_team_id']) - names.keys()
@@ -369,7 +369,7 @@ def _source_id_rows(source, player_rows, team_rows, match_rows, review_root=None
     baseline_column = baseline + '_id'
     schedule = json.loads((source / 'schedule.json').read_text(encoding='utf-8')).get('events', [])
     events = {str(event['id']): event for event in schedule
-              if is_qualification_event(event)==competition.endswith(' Qualifiers')}
+              if is_qualification_event(event,competition)==competition.endswith(' Qualifiers')}
 
     if (source / 'player_match_stats.csv').exists():
         stats = pd.read_csv(source / 'player_match_stats.csv', dtype=str, keep_default_na=False)
@@ -461,7 +461,7 @@ def _source_id_rows(source, player_rows, team_rows, match_rows, review_root=None
     for match in matches.itertuples():
         if _identifier(match.id) not in events: continue
         metadata = json.loads(match.metadata)
-        if is_qualification_event(metadata.get('event') or {}) and not competition.endswith(' Qualifiers'): continue
+        if is_qualification_event(metadata.get('event') or {},competition) and not competition.endswith(' Qualifiers'): continue
         match_key = (competition, season, baseline, _identifier(match.id))
         match_row = match_rows.get(match_key)
         if match_row is not None:
@@ -613,13 +613,16 @@ def fixtures_from_events(events, competition, season, *, include_qualifying=Fals
     """
     rows = []
     for event in events:
-        qualifying = is_qualification_event(event)
+        qualifying = is_qualification_event(event,competition)
         if qualifying and not include_qualifying: continue
         kickoff = datetime.fromtimestamp(event['startTimestamp'], timezone.utc)
         round_info = event.get('roundInfo') or {}
         venue = event.get('venue') or {}
         status = event.get('status') or {}
+        phase=competition_phase(competition,event)
         rows.append({
+            'competition_phase':phase,
+            'competition_note':('Bundesliga promotion/relegation playoff, included in this season; FotMob competition 9081.' if phase=='playoffs' else ''),
             'match_id': event['id'], 'date': kickoff.date().isoformat(),
             'kickoff_utc': kickoff.isoformat(), 'season': season_label(season),
             'competition': (competition + ' Qualification' if qualifying and not competition.endswith(' Qualifiers') else competition),

@@ -18,10 +18,37 @@ class MainIdentityReviewTests(unittest.TestCase):
                 self.assertFalse(agent.step());investigate.assert_not_called()
             self.assertEqual(agent.status['state'],'waiting_for_extension')
 
+    def test_old_extension_is_reported_without_issuing_or_caching_failed_lookups(self):
+        with tempfile.TemporaryDirectory() as root:
+            agent=IdentityReviewAgent(root,SimpleNamespace(ready=True,capabilities=set()))
+            with patch('providers.playerProfiles.investigate_queue') as investigate:
+                self.assertFalse(agent.step());investigate.assert_not_called()
+            self.assertEqual(agent.status['state'],'update_extension')
+            self.assertIn('Reload Soccer Collector',agent.status['message'])
+
+    def test_extension_upgrade_retries_only_protocol_failures_and_preserves_decisions(self):
+        import json
+        from providers.identityReview import ReviewStore,stamp
+        from providers.playerProfiles import retry_legacy_extension_failures
+        with tempfile.TemporaryDirectory() as root:
+            store=ReviewStore(root)
+            p=dict(kind='player',provider='whoscored',source_id='1',target_id='2',source_name='One',target_name='Two',
+                   investigation={'checked_at':stamp(),'errors':['Unknown collector command.']})
+            store.ingest([p]);proposal=store.proposals()[0];store.decide(proposal['id'],'reject')
+            with store.connect() as db:
+                db.execute('CREATE TABLE profiles(provider TEXT,id TEXT,payload TEXT,expires TEXT,PRIMARY KEY(provider,id))')
+                for pid,error in [('1','Unknown collector command.'),('2','HTTP 429')]:
+                    db.execute('INSERT INTO profiles VALUES(?,?,?,?)',('whoscored',pid,json.dumps({'error':error}),'2099'))
+            self.assertEqual(retry_legacy_extension_failures(root),1)
+            self.assertNotIn('investigation',store.proposals()[0])
+            self.assertEqual(store.snapshot()['decisions'][0]['action'],'reject')
+            with store.connect() as db:self.assertEqual(db.execute('SELECT id FROM profiles').fetchall(),[('2',)])
+            self.assertEqual(retry_legacy_extension_failures(root),0)
+
     def test_background_checks_reuse_main_extension_and_identity_root(self):
         with tempfile.TemporaryDirectory() as root,ExitStack() as stack:
             stack.enter_context(identity_scope(root));stack.enter_context(extension_scope())
-            bridge,_=acquire_bridge();bridge.connected.set();bridge.client_id='connected'
+            bridge,_=acquire_bridge();bridge.connected.set();bridge.client_id='connected';bridge.capabilities={'player-profiles-v1'}
             changed=Mock();agent=IdentityReviewAgent(root,bridge,on_change=changed)
             def investigate(path,report):
                 self.assertEqual(review_root(),Path(root))
