@@ -28,6 +28,7 @@ from .sofascoreTeams import team_stat_rows as sofascore_team_rows, TEAM_STAT_COL
 from .playerStatsSchema import PLAYER_MATCH_COLUMNS
 from .progress import get_job, network_count
 from .completion import sofascore_stats_complete
+from providers.matchComparison import provider_error
 from .jsonFiles import clear_json_cache, read_json
 from .whoScoredExports import event_rows as whoscored_event_rows, match_payload as whoscored_match_payload, EVENT_COLUMNS
 
@@ -520,7 +521,7 @@ class SeasonRunner:
                     else:disabled[provider]=unavailable[provider]
                     atomic_json(self.directory/'provider_discovery.json',{'errors':disabled,'counts':{k:len(v) for k,v in fixtures.items()}})
                 if provider in disabled:
-                    errors.append(f'{provider}: {disabled[provider]}');match.metadata['provider_status'][provider]='failed';continue
+                    errors.append(provider_error(provider,disabled[provider]));match.metadata['provider_status'][provider]='failed';continue
                 timing.set_provider(provider)
                 try:
                     fixture=match_fixture(event,fixtures[provider],provider=provider,review_root=self.identity_resolver.review_root,baseline=self.baseline_provider);pid=fixture['id'];client=self.clients[provider]
@@ -536,7 +537,9 @@ class SeasonRunner:
                         errors.append(f'{provider}: {len(mismatches)} player identity mismatch(es)')
                     match.metadata.setdefault('raw_response_files',{})[provider]=str(self.cache.path(provider,f'match/{pid}').relative_to(self.directory))
                 except DATA_ERRORS as exc:
-                    errors.append(f'{provider}: {exc}');match.metadata['provider_status'][provider]='failed'
+                    errors.append(provider_error(provider,exc));match.metadata['provider_status'][provider]='failed'
+                    if getattr(exc,'fixture_comparison',None):
+                        match.metadata.setdefault('provider_comparisons',{})[provider]=exc.fixture_comparison
                     if isinstance(exc,ProviderRequestError) and exc.status_code in (401,403,429):disabled[provider]=str(exc)
             # An I/O failure propagates; never record an unsaved match as complete.
             if hasattr(sofa,'audit'):

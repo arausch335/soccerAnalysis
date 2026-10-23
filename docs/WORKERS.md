@@ -823,3 +823,14 @@ values remain in the raw payload. The same rule applies to fixture exports,
 provider concordance and match enrichment; genuine score differences still fail
 validation. Older affected checkpoints normalize their baseline scores when an
 incomplete match is enriched again.
+
+
+Collection review shows provider and Sofascore fixture scores side by side,
+including reported regulation/extra-time/shootout breakdowns and direct match
+links. Workers send compact mismatch evidence in their normal inventory reports;
+raw payloads stay on MSI. Player partials include the exact player IDs/names and
+issue. Starter disagreements and omitted lineup entries do not necessarily
+create identity proposals, so these appear as lineup discrepancies rather than
+an unexplained identity count. Existing summary-only failures show a request
+to update/retry the worker until a detailed report arrives. A retry targets the
+remaining match; it does not require confirming its data unavailable.

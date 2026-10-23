@@ -342,6 +342,13 @@ class PortableProgress:
         evidence=dict(match.metadata.get('collection_evidence',{}))
         evidence.setdefault('label',match.home_team.name+' vs '+match.away_team.name)
         evidence.setdefault('date',match.kickoff.date().isoformat())
+        from providers.matchComparison import fixture_summary
+        if evidence.get('error') or match.metadata.get('provider_comparisons'):
+            event=match.metadata.get('event')
+            if event:evidence['baseline_fixture']=fixture_summary(event,'sofascore')
+            evidence['provider_comparisons']=match.metadata.get('provider_comparisons',{})
+            evidence['identity_mismatches']={provider:rows[:16] for provider,rows in match.metadata.get('identity_mismatches',{}).items()
+                if rows and match.metadata.get('provider_status',{}).get(provider)!='complete'}
         if competition in ('Champions League','Europa League'):
             from .selection import event_competition
             directory=self.root/re.sub('[^a-z0-9]+','-',competition.lower()).strip('-')/season_label(match.season.name)

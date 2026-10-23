@@ -25,7 +25,7 @@ def rules_version(root,worker):
            'providers/concordance/teams.json','review_data.py','storage/pandasStore.py']
     files.extend(str(p.relative_to(project)) for p in sorted((project/'models').rglob('*.py')))
     files.extend(['providers/fotMobLoader.py','providers/providerLoader.py','providers/matchLoader.py',
-                  'providers/events.py','providers/scores.py','providers/statistics.py'])
+                  'providers/events.py','providers/scores.py','providers/matchComparison.py','providers/statistics.py'])
     files.append('collection/playerStatsSchema.py')
     digest=hashlib.sha256()
     for name in sorted(set(files)):

@@ -156,7 +156,10 @@ def assess(job,records,schedules,history,decisions=None):
             missing[mid]=unresolved
             candidate={'match_id':mid,'label':evidence.get('label') or '', 'date':evidence.get('date'), 'resources':unresolved,
                        'attempts':attempts,'error':evidence.get('error',''),'states':{k:resources.get(k,'pending') for k in unresolved},
-                       'retrying':retrying}
+                       'retrying':retrying,'baseline_fixture':evidence.get('baseline_fixture'),
+                       'provider_match_ids':row.get('provider_match_ids',{}),
+                       'provider_comparisons':evidence.get('provider_comparisons',{}),
+                       'identity_mismatches':evidence.get('identity_mismatches',{})}
             candidates.append(candidate)
     attempted=history.get(job.id,{})
     small=len(missing)<=max(5,math.ceil(len(targets)*.02))

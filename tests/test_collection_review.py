@@ -56,6 +56,20 @@ class CollectionReviewTests(unittest.TestCase):
         self.assertEqual(restored['history'][0]['competition'],self.job.competition)
         self.assertEqual(restored['history'][0]['reason'],'Verified source data unavailable')
 
+    def test_provider_comparison_and_exact_player_issue_reach_collection_review(self):
+        path=self.ensemble/'reporting/workers/msi.json';saved=json.loads(path.read_text())
+        record=next(r for r in saved['records'].values() if r.get('namespace')=='sofascore')
+        baseline={'provider':'sofascore','match_id':'1','date':'2021-10-18','home_team':'A','away_team':'B','home_score':2,'away_score':3}
+        other={**baseline,'provider':'whoscored','match_id':'901','home_score':1}
+        comparison={'baseline':baseline,'source':other,'issue':'match score mismatch'}
+        record['evidence'].update(baseline_fixture=baseline,provider_comparisons={'whoscored':comparison},
+            identity_mismatches={'fotmob':[{'provider_player_name':'Player One','baseline_player_name':'Player One','issue':'fotmob: starter mismatch'}]})
+        atomic_json(path,saved)
+        job=next(j for j in self.read()['jobs'] if j['id']==self.job.id);review=job['review'][0]
+        self.assertEqual(review['provider_comparisons']['whoscored'],comparison)
+        self.assertEqual(review['identity_mismatches']['fotmob'][0]['baseline_player_name'],'Player One')
+        self.assertFalse(job['done'])
+
     def test_review_fixture_date_and_names_are_backfilled_from_season_schedule(self):
         atomic_json(self.root/'premier-league'/self.job.as_dict()['season']/'schedule.json',{'events':[
             {'id':1,'homeTeam':{'name':'Tottenham'},'awayTeam':{'name':'Chelsea'},'startTimestamp':1632065400}]})

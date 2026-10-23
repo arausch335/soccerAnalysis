@@ -49,8 +49,13 @@ class ProviderLoader(MatchLoader):
                 raise IdentityError(f'{self.provider}: baseline data cannot be enriched twice')
         decoded=decoded or self.decode(payload,event)
         ev=decoded['event']; pending=[];mismatches=[];lineup_differences=[]
+        from .matchComparison import comparison
+        def disagreement(message):
+            error=IdentityError(f'{self.provider}: {message}')
+            error.fixture_comparison=comparison(match,self.provider,ev,message)
+            return error
         if ev['startTimestamp']//86400!=int(match.kickoff.timestamp())//86400:
-            raise IdentityError(f'{self.provider}: match date mismatch')
+            raise disagreement('match date mismatch')
         if not standalone and match.metadata.get('id_namespace','sofascore')=='sofascore':
             from .identityReview import suggest_teams
             baseline={'id':match.id,'startTimestamp':int(match.kickoff.timestamp()),
@@ -65,10 +70,10 @@ class ProviderLoader(MatchLoader):
             if lineup is None or not teams_match({'id':lineup.team.id,'name':lineup.team.name},
                     ev[side+'Team'],self.provider,self.identity_resolver.review_root,
                     match.metadata.get('id_namespace','sofascore') if not standalone else self.provider):
-                raise IdentityError(f'{self.provider}: match team mismatch')
+                raise disagreement('match team mismatch')
             score=scores[side] if scores[side] is not None else getattr(match,side+'_score')
             if final_score(ev,side) != score:
-                raise IdentityError(f'{self.provider}: match score mismatch')
+                raise disagreement('match score mismatch')
             used=set()
             for entry in decoded[side]['players']:
                 appearance=None
@@ -93,7 +98,8 @@ class ProviderLoader(MatchLoader):
                         'provider_player_name':entry['name'],
                         'baseline_player_id':candidate.player.id if candidate else None,
                         'baseline_player_name':candidate.player.name if candidate else None,
-                        'issue':str(exc) or type(exc).__name__}
+                        'issue':str(exc) or type(exc).__name__,
+                        'provider_starter':entry.get('starter'),'baseline_starter':appearance.starter if appearance else None}
                     # Providers frequently publish different unused benches. No
                     # player statistics are lost, so retain the discrepancy for
                     # auditing without making the enrichment permanently partial.
@@ -148,4 +154,7 @@ class ProviderLoader(MatchLoader):
         match.metadata.setdefault('provider_match_ids',{})[self.provider]=ev['id']
         match.metadata.setdefault('identity_mismatches',{})[self.provider]=mismatches
         match.metadata.setdefault('lineup_differences',{})[self.provider]=lineup_differences
+        if mismatches:
+            match.metadata.setdefault('provider_comparisons',{})[self.provider]=comparison(match,self.provider,ev,'Player/lineup disagreement')
+        else:match.metadata.get('provider_comparisons',{}).pop(self.provider,None)
         return match
