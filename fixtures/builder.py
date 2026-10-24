@@ -98,10 +98,13 @@ def _fotmob_event(row, competition_id, season_id, qualifying):
     """Keep the common fixture schema without requesting match-detail stats."""
     event=fotmob_fixture(row)
     status=row['status']
-    event['status']={'type':('finished' if status.get('finished') else
-                             'canceled' if status.get('cancelled') else
-                             'inprogress' if status.get('started') else 'notstarted'),
-                     'awarded':bool(status.get('awarded'))}
+    reason = status.get('reason') or {}
+    reason_text = ' '.join(str(v) for v in reason.values()) if isinstance(reason,dict) else str(reason)
+    if status.get('cancelled') or re.search(r'cancel', reason_text, re.I):state='canceled'
+    elif status.get('abandoned') or re.search(r'abandon', reason_text, re.I):state='abandoned'
+    elif status.get('postponed') or re.search(r'postpon', reason_text, re.I):state='postponed'
+    else:state='finished' if status.get('finished') else 'inprogress' if status.get('started') else 'notstarted'
+    event['status']={'type':state, 'awarded':bool(status.get('awarded')), 'reason':reason}
     event['isAwarded']=bool(status.get('awarded'))
     round_value=row.get('round')
     round_name=row.get('roundName')
@@ -115,7 +118,7 @@ def _fotmob_event(row, competition_id, season_id, qualifying):
     home=(event['homeScore'] or {}).get('current')
     away=(event['awayScore'] or {}).get('current')
     reason=(status.get('reason') or {}).get('shortKey')
-    if (status.get('finished') and not status.get('awarded') and
+    if (state=='finished' and not status.get('awarded') and
             home is not None and away is not None):
         event['winnerCode']=(1 if home > away else 2 if away > home else
                              None if str(reason).startswith('penalt') else 3)

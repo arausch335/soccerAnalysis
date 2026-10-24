@@ -49,7 +49,7 @@ class BundesligaPlayoffTests(unittest.TestCase):
                 self.assertTrue(any('/tournaments/388/' in c.args[0] for c in who.seasons.call_args_list))
                 from fixtures.dataset import _who_events
                 from fixtures.builder import FixtureCompetition
-                with patch('fixtures.dataset.configured_whoscored_stages',return_value=configured):
+                with patch('config.WHOSCORED_STAGE_IDS',{'Bundesliga 2021/2022':configured}):
                     exported=_who_events(who,FixtureCompetition('Bundesliga',35,fotmob_id=54),2021,[selected])
                 self.assertEqual({r['id'] for r in exported},{1,1635702,1635703})
 

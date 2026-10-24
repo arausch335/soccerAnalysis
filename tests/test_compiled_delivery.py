@@ -51,6 +51,15 @@ class CompiledDeliveryTests(unittest.TestCase):
         self.assertEqual(outbox(self.root, 'headless').queued(), 0)
         self.assertFalse(list((self.main / '_system/compiled/receiver/objects').glob('*')))
 
+    def test_legacy_bundle_without_attempt_audit_is_still_accepted(self):
+        (self.source / 'fixture_concordance/attempts.csv').unlink()
+        audit=self.output / 'fixture_concordance/attempts.csv'
+        audit.parent.mkdir(parents=True);audit.write_text('stale audit from a different snapshot')
+        result = deliver(self.root, self.source, report=lambda *a, **k: None)
+        self.assertEqual(result['state'], 'installed_on_main')
+        self.assertTrue((self.output / 'fixtures.csv').exists())
+        self.assertFalse(audit.exists())
+
     def test_offline_bundle_remains_queued_and_retries_after_restart(self):
         atomic_json(system_path(self.root, 'reporting.json'), {**self.options, 'url': 'http://127.0.0.1:1'})
         result = deliver(self.root, self.source, report=lambda *a, **k: None)

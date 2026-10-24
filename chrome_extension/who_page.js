@@ -7,6 +7,16 @@ export async function whoPageOperation(args) {
   if (challenge()) return {...base,status:403,verification:true};
   if (args.kind === 'text') {
     const text=document.documentElement.outerHTML;
+    if (/^regions\//i.test(args.endpoint || '')) {
+      const seasons=document.querySelector('select#seasons');
+      const stages=document.querySelector('select#stages');
+      const seasonPage=/\/seasons\/\d+/i.test(args.endpoint);
+      const fixtures=/href=["'][^"']*\/stages\/\d+\/(?:show|fixtures)\//i.test(text);
+      if (document.readyState!=='complete' || !seasons?.options?.length ||
+          (seasonPage && !stages?.options?.length && !fixtures)) {
+        return {...base,status:202,reason:'directory_loading'};
+      }
+    }
     const match=(args.endpoint || '').match(/^matches\/(\d+)\/live$/i);
     const sameMatch=match && text.match(/\bmatchId["']?\s*[:=]\s*(\d+)/)?.[1]===match[1];
     const hasData=/\bmatchCentreData["']?\s*[:=]\s*\{/.test(text);

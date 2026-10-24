@@ -19,7 +19,7 @@ import pandas as pd
 import config
 from collection.files import atomic_csv
 from collection.selection import (COMPETITIONS as COLLECTION_COMPETITIONS,
-                                  configured_whoscored_stages, months_between,
+                                  months_between,
                                   resolve_sofascore_season, season_key)
 from dataset_builder import FIXTURE_COLUMNS, _cached_provider_fixtures, fixtures_from_events
 from providers.events import whoscored_fixture
@@ -27,9 +27,10 @@ from providers.scores import final_score
 from providers.httpClient import ProviderError
 from providers.identity import teams_match
 from providers.reep import PROVIDERS, index
-from providers.whoScoredClient import _Directory
+from providers.whoScoredClient import _Directory, directory_path
 from storage.layout import system_path
 from storage.pandasStore import atomic_json
+from .reconcile import reconcile, summarize, ATTEMPT_COLUMNS
 from .builder import (COMPETITIONS, EUROPEAN_COMPETITIONS, _fotmob_event,
                       _slug, current_season_start, season_label)
 
@@ -51,9 +52,11 @@ NAME_COLUMNS = tuple(f'{p}_{side}_team' for p in PROVIDERS for side in ('home', 
 CHECK_COLUMNS = tuple(f'{p}_{field}' for p in PROVIDERS[1:]
                       for field in ('fixture_check', 'match_method'))
 COLUMNS = (*FIXTURE_COLUMNS, *ID_COLUMNS, *NAME_COLUMNS, *CHECK_COLUMNS,
+           'whoscored_stage_id','whoscored_stage','whoscored_round',
            'match_identity_status', 'home_team_identity_status', 'away_team_identity_status')
 ERRORS = (ProviderError, OSError, ValueError, KeyError, TypeError)
-FORMAT = 'soccer-fixture-schedule-v1'
+FORMAT = 'soccer-fixture-schedule-v2'
+SCHEDULE_SCOPE = 'all-published-stages-and-supplements-v2'
 
 
 class _PartialSchedule(ProviderError):
@@ -93,11 +96,17 @@ def _validate_sofa(events, competition, season_id=None):
 
 def _load(path, provider, competition, start):
     value = json.loads(path.read_text(encoding='utf-8'))
-    if (value.get('format'), value.get('provider'), value.get('competition_id'), value.get('season')) != (
-            FORMAT, provider, competition.sofascore_id, season_label(start)):
+    if ((value.get('provider'), value.get('competition_id'), value.get('season')) != (
+            provider, competition.sofascore_id, season_label(start))
+            or value.get('format') not in (FORMAT, 'soccer-fixture-schedule-v1')):
         raise ValueError('Schedule checkpoint identity mismatch: ' + str(path))
     return (_validate_sofa(value['events'], competition) if provider == 'sofascore'
             else _validate(value['events']))
+
+
+def _complete_checkpoint(path):
+    value = json.loads(path.read_text(encoding='utf-8'))
+    return value.get('format') == FORMAT and value.get('scope') == SCHEDULE_SCOPE
 
 
 def _saved_source(root, competition, start):
@@ -116,14 +125,17 @@ def _who_paths(client, competition):
     parser.feed(client.get_text(next(c.whoscored_path for c in COLLECTION_COMPETITIONS if c.name == parent)))
     suffixes = {
         'Championship': ('england-championship',),
-        'La Liga 2': ('spain-segunda-division', 'spain-laliga2', 'spain-laliga-2'),
+        'La Liga 2': ('spain-segunda-division', 'spain-segunda-divisi%C3%B3n', 'spain-laliga2', 'spain-laliga-2'),
         '2. Bundesliga': ('germany-bundesliga-ii', 'germany-2-bundesliga'),
         'Serie B': ('italy-serie-b',), 'Ligue 2': ('france-ligue-2',),
         'Conference League': ('europe-conference-league', 'europe-europa-conference-league'),
     }[competition.name]
-    paths = {p.lstrip('/').lower() for p in (*parser.competition_paths, *parser.links)
-             if re.fullmatch(r'/regions/\d+/tournaments/\d+/(?:seasons/\d+/(?:stages/\d+/(?:show|fixtures)/)?|show/)?[a-z0-9-]+/?', p, re.I)
-             and any(re.search(re.escape(suffix)+r'(?:-\d{4}-\d{4})?/?$',p,re.I) for suffix in suffixes)}
+    paths = set()
+    for raw in (*parser.competition_paths, *parser.links):
+        try: path = directory_path(raw)
+        except (ValueError, UnicodeError): continue
+        if any(re.search(re.escape(suffix)+r'(?:-\d{4}-\d{4})?/?$',path,re.I) for suffix in suffixes):
+            paths.add(path)
     # A tournament dropdown gives the stable competition route. Prefer it to
     # links to individual stages of its currently selected season.
     stable={p for p in paths if '/seasons/' not in p.lower()}
@@ -135,51 +147,74 @@ def _who_paths(client, competition):
 
 def _who_events(client, competition, start, baseline):
     season = f'{start}/{start + 1}'
-    events = {}
+    events, errors = {}, []
+    client.fixture_scope = {'competition':competition.name,'season':season,'stages':[]}
+    # Include June qualifiers even when the baseline only has main-stage games;
+    # COVID-delayed seasons can extend into the following summer.
+    months = sorted(set(months_between(baseline)) | {
+        f'{year}{month:02d}' for year, values in ((start, range(6,13)), (start+1, range(1,7))) for month in values})
 
-    def register(path):
+    def failed(exc):
+        if getattr(exc, 'status_code', None) in (401,403,429):
+            raise exc
+        errors.append(str(exc))
+
+    def collect_path(path, qualifying=False):
         prepare=getattr(client,'register_fixture_season',None)
         if callable(prepare):prepare(path,season)
-
-    def collect_stage(stage):
-        for month in months_between(baseline):
-            for row in client.season_events(stage, month):
-                event = whoscored_fixture(row)
-                prior = events.get(event['id'])
-                if prior is not None and prior != event:
-                    raise ValueError('Contradictory WhoScored schedule entries')
-                events[event['id']] = event
-
-    def collect_path(path):
-        register(path)
         found = [s for s in client.seasons(path) if season_key(s['name']) == season]
         if len(found) != 1:
             raise ValueError(f'WhoScored season {competition.name} {season} unavailable or ambiguous')
-        for stage in dict.fromkeys(client.season_stages(found[0]['path'])):
-            collect_stage(stage)
+        # Configured IDs are hints for other collection workflows. A full
+        # fixture history always enumerates the season's published stages.
+        stages = list(dict.fromkeys(client.season_stages(found[0]['path'])))
+        for stage in stages:
+            names=getattr(client,'stage_names',{})
+            name=names.get(stage,'') if isinstance(names,dict) else ''
+            client.fixture_scope['stages'].append(dict(id=stage,name=name,competition_path=path,
+                season_path=found[0]['path'],qualifying=qualifying,months=months))
+            for month in months:
+                try:
+                    for row in client.season_events(stage, month):
+                        event = whoscored_fixture(row)
+                        event['stageInfo'] = {'id':stage, 'name':name}
+                        event['tournament'] = {'qualificationOrPreliminary':qualifying,
+                            'name':event['stageInfo']['name'] or competition.name}
+                        if competition.name in ('Bundesliga','2. Bundesliga','Ligue 1','Ligue 2') and 'qualification' in path.lower():
+                            event['tournament']['name'] = competition.name + ', Promotion/Relegation Playoffs'
+                        event['roundInfo'] = {'round':row.get('round'), 'name':row.get('roundName')}
+                        prior = events.get(event['id'])
+                        if prior is not None and any(prior.get(k)!=event.get(k) for k in
+                                ('startTimestamp','homeTeam','awayTeam','homeScore','awayScore','status')):
+                            raise ValueError('Contradictory WhoScored schedule entries')
+                        events[event['id']] = event
+                except ERRORS as exc:
+                    failed(ProviderError(f'WhoScored stage {stage} month {month}: {exc}')
+                           if getattr(exc,'status_code',None) not in (401,403,429) else exc)
 
     try:
-        stages = configured_whoscored_stages(competition, season)
-        if stages is not None:
-            existing = next((c for c in COLLECTION_COMPETITIONS if c.name == competition.name), None)
-            if existing:register(existing.whoscored_path)
-            for stage in dict.fromkeys(stages):
-                collect_stage(stage)
-            existing = next((c for c in COLLECTION_COMPETITIONS if c.name == competition.name), None)
-            for path in existing.whoscored_supplemental_paths if existing else ():
-                collect_path(path)
-        else:
-            paths = _who_paths(client, competition)
-            for path in dict.fromkeys(paths):
-                collect_path(path)
-            if competition.name in EUROPEAN_COMPETITIONS:
+        paths = _who_paths(client, competition)
+        for path in dict.fromkeys(paths):
+            try:collect_path(path)
+            except ERRORS as exc:failed(exc)
+        domestic = {
+            '2. Bundesliga': (673,2010),
+            'Ligue 1': (660,2016),
+            'Ligue 2': (661,2016),
+        }.get(competition.name)
+        if domestic and start >= domestic[1]:
+            try:collect_path(client.supplemental_path(paths[0], domestic[0]))
+            except ERRORS as exc:failed(exc)
+        if competition.name in EUROPEAN_COMPETITIONS:
+            try:
                 qualifying = client.qualification_path(paths[0])
-                if qualifying not in paths:
-                    collect_path(qualifying)
+                if qualifying in paths:raise ValueError('WhoScored qualifying directory resolved to the main competition')
+                collect_path(qualifying, True)
+            except ERRORS as exc:failed(exc)
     except ERRORS as exc:
-        if events:
-            raise _PartialSchedule(events.values(), exc) from exc
+        if events:raise _PartialSchedule(events.values(), exc) from exc
         raise
+    if errors:raise _PartialSchedule(events.values(), ValueError('; '.join(errors)))
     return list(events.values())
 
 
@@ -204,6 +239,9 @@ def _fotmob_events(client, competition, start):
                 if previous:
                     if any(previous[key] != event[key] for key in ('startTimestamp', 'homeTeam', 'awayTeam')):
                         raise ValueError('Conflicting FotMob fixture IDs across feeds')
+                    if all(e.get('status',{}).get('type')=='finished' for e in (previous,event)) and any(final_score(previous,side)!=final_score(event,side) for side in ('home','away')):
+                        raise ValueError('Conflicting FotMob results across feeds')
+                    if qualifying:previous['tournament']['qualificationOrPreliminary']=True
                     continue
                 events[event['id']] = event
         except ERRORS as exc:
@@ -224,29 +262,38 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
     for provider in PROVIDERS:
         path = _checkpoint(root, provider, competition, start)
         origin = 'checkpoint'
+        scope_details = {}
         error = ''
         events = []
         complete = True
         try:
-            if path.exists() and not refresh:
+            reusable = path.exists() and _complete_checkpoint(path)
+            if path.exists():
                 events = _load(path, provider, competition, start)
-            elif provider == 'sofascore' and (source / 'schedule.json').exists() and not refresh:
-                cfg = source / 'config.json'
-                saved = json.loads(cfg.read_text(encoding='utf-8')) if cfg.exists() else {}
-                if saved.get('id_namespace', saved.get('baseline_provider', 'sofascore')) != 'sofascore':
-                    raise ValueError('Saved schedule is not in the Sofascore ID namespace')
-                if saved.get('competition', competition.name) != competition.name or season_key(saved.get('season', f'{start}/{start + 1}')) != f'{start}/{start + 1}':
-                    raise ValueError('Saved collection belongs to another competition/season')
-                events = _validate_sofa(json.loads((source / 'schedule.json').read_text(encoding='utf-8'))['events'], competition)
-                origin = 'saved_collection'
+                scope_details = json.loads(path.read_text(encoding='utf-8')).get('scope_details',{})
+            if reusable and not refresh:
+                pass
             else:
-                if provider != 'sofascore' and not refresh:
+                # Collection schedules predate full-scope fixture checkpoints.
+                # Retain them as a fallback, but never claim qualifiers/playoffs
+                # were fetched just because the main schedule exists.
+                if provider == 'sofascore' and not events and (source / 'schedule.json').exists():
+                    cfg = source / 'config.json'
+                    saved = json.loads(cfg.read_text(encoding='utf-8')) if cfg.exists() else {}
+                    if saved.get('id_namespace', saved.get('baseline_provider', 'sofascore')) != 'sofascore':
+                        raise ValueError('Saved schedule is not in the Sofascore ID namespace')
+                    if saved.get('competition', competition.name) != competition.name or season_key(saved.get('season', f'{start}/{start+1}')) != f'{start}/{start+1}':
+                        raise ValueError('Saved collection belongs to another competition/season')
+                    events = _validate_sofa(json.loads((source / 'schedule.json').read_text(encoding='utf-8'))['events'], competition)
+                    origin = 'saved_collection'
+                if provider != 'sofascore' and not events and not refresh:
                     events = _cached_provider_fixtures(source, provider)
                 if offline:
                     if not events:
                         raise ValueError('No saved fixture schedule (offline)')
                     complete = False  # Local match caches need not cover a whole season.
-                    origin = 'saved_provider_cache'
+                    origin = 'legacy_checkpoint' if path.exists() else origin if provider == 'sofascore' else 'saved_provider_cache'
+                    error = 'Saved schedule has no proof of full stage/qualifying scope; online upgrade required'
                 else:
                     if provider in blocked:
                         raise ValueError('Provider paused for this run: ' + blocked[provider])
@@ -255,10 +302,15 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                     try:
                         if provider == 'sofascore':
                             season = resolve_sofascore_season(client, competition, season_label(start))
-                            events = []
+                            events = list(events)
+                            fetched = {}
                             for event in client.iter_season_events(competition.sofascore_id, season['id'], include_upcoming=True):
                                 _validate_sofa([event], competition, season['id'])
-                                events.append(event)
+                                if event['id'] in fetched and fetched[event['id']] != event:
+                                    raise ValueError('Conflicting Sofascore schedule entries')
+                                fetched[event['id']] = event
+                                events = list({e['id']:e for e in (*events,event)}.values())
+                            events = list(fetched.values())
                         elif provider == 'fotmob':
                             events, feed_errors = _fotmob_events(client, competition, start)
                             if feed_errors:
@@ -266,16 +318,25 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                                 error = '; '.join(feed_errors)
                         else:
                             events = _who_events(client, competition, start, result['sofascore'])
+                            scope_details = client.fixture_scope
                         origin = 'provider_schedule'
                     finally:
                         client.refresh_cache = False
             _validate(events)
             if not events:
                 raise ValueError('No fixtures returned')
+            if complete and competition.name in EUROPEAN_COMPETITIONS:
+                phases = {bool((e.get('tournament') or {}).get('qualificationOrPreliminary')) for e in events}
+                if phases != {False,True}:
+                    raise _PartialSchedule(events,ValueError('Main and qualifying fixtures are not both present'))
             if complete and origin != 'checkpoint':
                 atomic_json(path, {'format': FORMAT, 'provider': provider,
-                    'competition_id': competition.sofascore_id, 'season': season_label(start), 'events': events})
+                    'competition_id': competition.sofascore_id, 'season': season_label(start),
+                    'scope': SCHEDULE_SCOPE, 'scope_details':scope_details, 'events': events})
         except ERRORS as exc:
+            if provider=='whoscored':
+                detail=getattr(clients.get(provider),'fixture_scope',{})
+                if isinstance(detail,dict):scope_details=detail
             error = f'{type(exc).__name__}: {exc}'
             complete = False
             if (getattr(exc, 'status_code', None) in (401, 403, 429)
@@ -283,7 +344,10 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                 blocked[provider] = error
             # A failed refresh must retain the last complete schedule.
             if path.exists():
-                events = _load(path, provider, competition, start)
+                try:
+                    prior = _load(path, provider, competition, start)
+                    events = list({e['id']:e for e in (*prior,*events)}.values())
+                except ERRORS as invalid:error += '; unusable checkpoint: ' + str(invalid)
                 origin = 'stale_checkpoint'
             elif provider != 'sofascore':
                 events = _cached_provider_fixtures(source, provider)
@@ -302,7 +366,7 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
         result[provider] = events
         coverage.append(dict(competition=competition.name, season=season_label(start), provider=provider,
             status='complete' if complete else 'partial' if events else 'missing',
-            fixtures=len(events), source=origin, error=error))
+            fixtures=len(events), source=origin, error=error,scope_details=json.dumps(scope_details,sort_keys=True)))
     return result, coverage
 
 
@@ -369,6 +433,7 @@ def concord(snapshots, root, *, include_upcoming=True):
     """Learn only fixture-validated links; report global ID collisions explicitly."""
     bridges = index(root)
     learned, reverse = defaultdict(set), defaultdict(set)
+    seasonal, seasonal_reverse = defaultdict(set), defaultdict(set)
     observations, issues, aliases = [], [], []
     methods = {}
     days_by_season = {}
@@ -396,12 +461,14 @@ def concord(snapshots, root, *, include_upcoming=True):
                     methods[p, str(event['id'])] = method
                     for side in ('home', 'away'):
                         a, b = event[side + 'Team'], other[side + 'Team']
+                        seasonal[competition.name,start,p,str(a['id'])].add(str(b['id']))
+                        seasonal_reverse[competition.name,start,p,str(b['id'])].add(str(a['id']))
                         learned[p, str(a['id'])].add(str(b['id']))
                         reverse[p, str(b['id'])].add(str(a['id']))
                         aliases.append(dict(sofascore_team_id=str(a['id']), sofascore_name=a['name'],
                             provider=p, provider_team_id=str(b['id']), provider_name=b['name'],
                             sofascore_match_id=str(event['id']), provider_match_id=str(other['id']),
-                            method='reep_team_id' if bridges.same('team', 'sofascore', a['id'], p, b['id']) is True else method))
+                            competition=competition.name, season=season_label(start), method='reep_team_id' if bridges.same('team', 'sofascore', a['id'], p, b['id']) is True else method))
                 elif len(found) > 1:
                     issues.append(dict(sofascore_match_id=str(event['id']), provider=p,
                         issue='ambiguous_fixture', candidate_ids='|'.join(str(e['id']) for e in found)))
@@ -431,7 +498,7 @@ def concord(snapshots, root, *, include_upcoming=True):
                     aliases.append(dict(sofascore_team_id=str(a['id']), sofascore_name=a['name'],
                         provider=p, provider_team_id=str(b['id']), provider_name=b['name'],
                         sofascore_match_id=str(event['id']), provider_match_id=str(other['id']),
-                        method='learned_team_ids_and_fixture'))
+                        competition=competition.name, season=season_label(start), method='learned_team_ids_and_fixture'))
 
     # A provider fixture cannot be assigned to two different baseline fixtures.
     assignments = defaultdict(set)
@@ -464,6 +531,10 @@ def concord(snapshots, root, *, include_upcoming=True):
         for p in SOURCES:
             row[p + '_match_id'] = resolved_match.get(p + '_id', '')
         row['match_identity_status'] = resolved_match['identity_status']
+        who = matches.get('whoscored',{})
+        row['whoscored_stage_id'] = (who.get('stageInfo') or {}).get('id','')
+        row['whoscored_stage'] = (who.get('stageInfo') or {}).get('name','')
+        row['whoscored_round'] = (who.get('roundInfo') or {}).get('name') or (who.get('roundInfo') or {}).get('round','')
         for p in PROVIDERS[1:]:
             problem = problem_map.get((str(event['id']), p), '')
             if problem:
@@ -481,11 +552,17 @@ def concord(snapshots, root, *, include_upcoming=True):
             native = {'sofascore': team['id']}
             conflicts = set()
             for p in PROVIDERS[1:]:
-                peers = learned[p, str(team['id'])]
-                if len(peers) == 1 and len(reverse[p, next(iter(peers))]) == 1:
+                peers = seasonal[competition.name,start,p,str(team['id'])]
+                if len(peers) > 1:
+                    conflicts.add(p)  # Competing profiles within this season remain ambiguous.
+                elif p in matches:
+                    native[p] = matches[p][side+'Team']['id']
+                elif len(peers) == 1 and len(seasonal_reverse[competition.name,start,p,next(iter(peers))]) == 1:
                     native[p] = next(iter(peers))
-                elif peers:
-                    conflicts.add(p)
+                elif not peers:
+                    global_peers = learned[p,str(team['id'])]
+                    if len(global_peers)==1 and len(reverse[p,next(iter(global_peers))])==1:
+                        native[p]=next(iter(global_peers))
             resolved = _ids(bridges, 'team', native)
             if conflicts:
                 resolved['identity_status'] = 'conflict'
@@ -500,18 +577,40 @@ def concord(snapshots, root, *, include_upcoming=True):
             row['sofascore_' + side + '_team'] = team['name']
             for p in PROVIDERS[1:]:
                 row[p + '_' + side + '_team'] = matches[p][side + 'Team']['name'] if p in matches else ''
-            key = (str(team['id']), tuple(resolved.get(p + '_id', '') for p in SOURCES))
-            team_rows[key] = dict(team_name=team['name'], **{p + '_id': resolved.get(p + '_id', '') for p in SOURCES}, identity_status=resolved['identity_status'])
+            key = (competition.name, start, str(team['id']), tuple(resolved.get(p + '_id', '') for p in SOURCES))
+            team_rows[key] = dict(competition=competition.name,season=season_label(start),team_name=team['name'], **{p + '_id': resolved.get(p + '_id', '') for p in SOURCES}, identity_status=resolved['identity_status'])
         rows.append(row)
     return rows, list(team_rows.values()), match_rows, aliases, issues
 
 
 def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=None):
-    rows, teams, matches, aliases, issues = concord(snapshots, root, include_upcoming=include_upcoming)
+    canonical, attempts, counts = [], [], {}
+    for competition, start, feeds in snapshots:
+        cleaned = {}
+        for provider, events in feeds.items():
+            cleaned[provider], audit = reconcile(events, provider, competition.name, start)
+            attempts.extend(audit)
+            counts[competition.name,season_label(start),provider] = summarize(events,cleaned[provider],competition.name)
+        canonical.append((competition,start,cleaned))
+    coverage = [{**c, **counts.get((c['competition'],c['season'],c['provider']),{})} for c in coverage]
+    # The Premier League has 20 clubs throughout this scope. Other leagues can
+    # change size, include playoffs, or have legitimately shortened seasons.
+    for c in coverage:
+        expected = 380 if c['competition']=='Premier League' and int(c['season'][:4]) < (scope or {}).get('current_season',current_season_start()) else None
+        c['expected_finished'] = expected
+        c['expected_fixtures'] = expected
+        c['count_check'] = ('pass' if c.get('finished_fixtures')==expected and c.get('canonical_fixtures')==expected else 'mismatch') if expected else 'not_applicable'
+    rows, teams, matches, aliases, issues = concord(canonical, root, include_upcoming=include_upcoming)
     frame = pd.DataFrame(rows, columns=COLUMNS)
     for column in ('match_id', 'matchweek', 'home_team_id', 'away_team_id',
                    'home_score', 'away_score', 'winner_code'):
         frame[column] = pd.to_numeric(frame[column], errors='raise').astype('Int64')
+    # Matching completeness is distinct from transport and schedule completeness.
+    for c in coverage:
+        subset=frame[(frame['season']==c['season']) & frame['competition'].isin((c['competition'],c['competition']+' Qualification'))]
+        c['matched_fixtures'] = (int(subset[c['provider']+'_fixture_check'].eq('validated').sum())
+                                 if c['provider']!='sofascore' else len(subset))
+        c['unmatched_fixtures'] = len(subset)-c['matched_fixtures']
     if frame.sofascore_match_id.duplicated().any():
         raise ValueError('Duplicate baseline match IDs across competition seasons')
     if rows:
@@ -521,17 +620,21 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
     folder.mkdir(parents=True, exist_ok=True)
     atomic_csv(frame, output)
     for name, records, columns in (
-        ('team_ids', teams, ('team_name', *(p + '_id' for p in SOURCES), 'identity_status')),
+        ('attempts', attempts, ATTEMPT_COLUMNS),
+        ('team_ids', teams, ('competition','season','team_name', *(p + '_id' for p in SOURCES), 'identity_status')),
         ('match_ids', matches, ('competition', 'season', 'date', 'home_team_name', 'away_team_name', *(p + '_id' for p in SOURCES), 'identity_status')),
-        ('team_aliases', aliases, ('sofascore_team_id', 'sofascore_name', 'provider', 'provider_team_id', 'provider_name', 'sofascore_match_id', 'provider_match_id', 'method')),
+        ('team_aliases', aliases, ('sofascore_team_id', 'sofascore_name', 'provider', 'provider_team_id', 'provider_name', 'sofascore_match_id', 'provider_match_id', 'competition','season','method')),
         ('issues', issues, ('sofascore_match_id', 'provider', 'issue', 'candidate_ids')),
-        ('coverage', coverage, ('competition', 'season', 'provider', 'status', 'fixtures', 'source', 'error')),
+        ('coverage', coverage, ('competition', 'season', 'provider', 'status', 'fixtures', 'source', 'error','scope_details','raw_fixtures','canonical_fixtures','finished_fixtures','superseded_fixtures','phases','expected_finished','expected_fixtures','count_check','matched_fixtures','unmatched_fixtures')),
     ):
         atomic_csv(pd.DataFrame(records, columns=columns).drop_duplicates(), folder / (name + '.csv'))
     missing_ids = {column: int(frame[column].fillna('').eq('').sum()) for column in ID_COLUMNS}
-    manifest = dict(format='soccer-cross-provider-fixtures-v1', updated_at=datetime.now(timezone.utc).isoformat(),
+    manifest = dict(format='soccer-cross-provider-fixtures-v2', updated_at=datetime.now(timezone.utc).isoformat(),
         baseline='sofascore', scope=scope or {}, rows=len(frame), reep=index(root).metadata,
         schedule_coverage_complete=bool(coverage) and all(c['status'] == 'complete' for c in coverage),
+        count_checks_passed=all(c.get('count_check')!='mismatch' for c in coverage),
+        fixture_attempts=len(attempts), raw_fixture_rows=sum(c.get('raw_fixtures',0) for c in coverage if c['provider']=='sofascore'),
+        count_mismatches=[c for c in coverage if c.get('count_check')=='mismatch'],
         missing_ids=missing_ids, all_four_ids_complete=not any(missing_ids.values()),
         all_provider_fixtures_validated=all(frame[p + '_fixture_check'].eq('validated').all() for p in PROVIDERS[1:]),
         issues=len(issues), fixture_checks={p: frame[p + '_fixture_check'].value_counts().to_dict() for p in PROVIDERS[1:]})
@@ -553,7 +656,7 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
     if offline and (refresh_current or refresh_reep or refresh_schedules):
         raise ValueError('Offline mode cannot refresh provider schedules or Reep')
     root.mkdir(parents=True, exist_ok=True)
-    scope = dict(start_season=start_season, end_season=end, include_upcoming=include_upcoming,
+    scope = dict(start_season=start_season, end_season=end, current_season=current, include_upcoming=include_upcoming,
                  competitions=[c.name for c in competitions])
     snapshots, coverage, blocked = [], [], {}
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -604,7 +707,7 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
         if send_to_main:
             from collection.compiledDelivery import deliver
             manifest['delivery'] = deliver(root, output.parent, fixture_csv=output, attempt=not offline, report=report)
-    report(f"Wrote {manifest['rows']} fixtures to {output}. Coverage complete: {manifest['schedule_coverage_complete']}", flush=True)
+    report(f"Wrote {manifest['rows']} fixtures to {output}. Coverage complete: {manifest['schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
     return manifest
 
 
@@ -632,7 +735,7 @@ def main(argv=None):
             refresh_current=args.refresh_current, refresh_reep=args.refresh_reep,
             refresh_schedules=args.refresh_schedules, include_upcoming=args.include_upcoming,
             send_to_main=args.send_to_main, api_only=args.api_only)
-        return 0 if manifest['schedule_coverage_complete'] else 2
+        return 0 if manifest['schedule_coverage_complete'] and manifest['count_checks_passed'] else 2
     except (ProviderError, OSError, ValueError) as exc:
         print(f'Fixture build needs attention: {exc}', flush=True)
         return 2

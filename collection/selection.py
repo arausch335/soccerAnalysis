@@ -77,7 +77,7 @@ def with_reviewed_schedule_results(competition,season,season_id,events):
 
 def is_qualification_event(event,competition=None):
     """True only for pre-main-competition qualification fixtures."""
-    if competition=='Bundesliga':return False  # Promotion/relegation playoffs belong to the league season.
+    if competition in ('Bundesliga','2. Bundesliga','Championship','La Liga 2','Serie B','Ligue 1','Ligue 2'):return False  # Promotion/relegation playoffs belong to the league season.
     return bool((event.get('tournament') or {}).get('qualificationOrPreliminary'))
 
 
@@ -85,7 +85,7 @@ def competition_phase(competition,event):
     tournament=event.get('tournament') or {};round_info=event.get('roundInfo') or {}
     labels=' '.join(str(value or '') for value in (tournament.get('name'),tournament.get('slug'),
                                                    round_info.get('name'),round_info.get('slug')))
-    if competition=='Bundesliga' and re.search(r'relegation|relegations?|play[ -]?offs?',labels,re.I):
+    if competition in ('Bundesliga','2. Bundesliga','Championship','La Liga 2','Serie B','Ligue 1','Ligue 2') and re.search(r'relegation|relegations?|play[ -]?offs?',labels,re.I):
         return 'playoffs'
     return 'qualifying' if is_qualification_event(event,competition) else 'main'
 

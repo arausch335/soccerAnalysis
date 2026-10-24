@@ -476,7 +476,7 @@ export async function executeWho(s,args) {
   if (!whoEndpoint(args.endpoint,args.kind,args.params)) throw new Error('Unknown WhoScored collection endpoint.');
   const stage=args.kind==='json' ? args.endpoint.match(/^tournaments\/(\d+)/)[1] : null;
   if (stage && (!whoEndpoint(args.page_path,'text') ||
-      !new RegExp(`^regions/\\d+/tournaments/\\d+/seasons/\\d+/stages/${stage}/(?:show|fixtures)/[a-z0-9-]+$`,'i').test(args.page_path))) {
+      !new RegExp(`^regions/\\d+/tournaments/\\d+/seasons/\\d+/stages/${stage}/(?:show|fixtures)/[^/]+$`,'i').test(args.page_path))) {
     throw new Error('WhoScored fixture request needs its published competition/season stage URL. Update Python and refresh season discovery.');
   }
   const url='https://www.whoscored.com/'+(stage ? args.page_path : args.endpoint);
@@ -514,6 +514,7 @@ export async function executeWho(s,args) {
       if(samePlayer && /header-name/.test(result.text || '')) profileHeader=result;
       if (!samePlayer || !/player-table-statistics-body[\s\S]*?<tr\b/i.test(result.text || '')) {await new Promise(r=>setTimeout(r,500));continue;}
     }
+    if (result?.status===202) {await new Promise(r=>setTimeout(r,500));continue;}
     if (result) return {...result,waiting_seconds:waitingSince===null ? 0 : (Date.now()-waitingSince)/1000};
     await new Promise(r=>setTimeout(r,500));
   }

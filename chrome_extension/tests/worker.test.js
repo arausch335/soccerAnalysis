@@ -537,3 +537,14 @@ test('WhoScored profile never retains a different player header',async()=>{
   assert.equal(result.reason,'extension_timeout');assert.equal(result.status,null);
  } finally {Date.now=now;}
 });
+
+test('WhoScored directory loading responses are polled until selectors are ready',async()=>{
+ const endpoint='regions/250/tournaments/30/seasons/6843/europe-europa-league';
+ const url='https://www.whoscored.com/'+endpoint;let reads=0;
+ chrome.tabs.get=async()=>({id:1,url,status:'complete'});
+ chrome.scripting.executeScript=async()=>[{frameId:0,result:++reads===1?
+  {ok:true,status:202,reason:'directory_loading',source_url:url}:
+  {ok:true,status:200,text:'<select id="stages"><option>Group A</option></select>',source_url:url}}];
+ const result=await execute({tabId:1},{id:'directory-ready',action:'whoscored',args:{kind:'text',endpoint}});
+ assert.equal(result.status,200);assert.equal(reads,2);
+});

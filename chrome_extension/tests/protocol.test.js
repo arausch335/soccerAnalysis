@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {connectionCode, sofaUrl, matchUrl, matchId} from '../protocol.js';
+import {connectionCode, sofaUrl, matchUrl, matchId, whoEndpoint} from '../protocol.js';
 import {pageOperation} from '../page.js';
 
 const token = 'x'.repeat(43);
@@ -109,4 +109,15 @@ test('profile reads allow only birthday and transfer-history resources',async()=
   await pageOperation({operation:'read',endpoint:'player/7/transfer-history',timeout_ms:1000});
   assert.deepEqual(endpoints,['/api/v1/player/7','/api/v1/player/7/transfer-history']);
   for(const endpoint of ['player/7/account','player/7/../../settings','player/7?path=private'])await assert.rejects(pageOperation({operation:'read',endpoint,timeout_ms:1000}));
+});
+
+test('WhoScored accepts Unicode and encoded slugs without accepting encoded URL syntax',()=>{
+ for(const slug of ['spain-segunda-división','spain-segunda-divisi%C3%B3n']) {
+  assert.equal(whoEndpoint('regions/206/tournaments/63/'+slug,'text'),true);
+  assert.equal(whoEndpoint('regions/206/tournaments/63/seasons/6961/stages/15376/show/'+slug,'text'),true);
+ }
+ for(const slug of ['../private','%2e%2e','abc%2fdef','abc%5cdef','abc%252fdef','abc?secret','abc#fragment']) {
+  assert.equal(whoEndpoint('regions/206/tournaments/63/'+slug,'text'),false);
+ }
+ assert.equal(whoEndpoint('regions%2f206/tournaments/63/valid','text'),false);
 });

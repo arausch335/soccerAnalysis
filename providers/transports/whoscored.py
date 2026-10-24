@@ -9,7 +9,7 @@ from storage.pandasStore import atomic_json
 from storage.requestCache import RequestCache
 from ..httpClient import ProviderError, ProviderRequestError
 from ..safeClient import SafeWhoScoredClient, PersistentGate
-from ..whoScoredClient import WhoScoredClient
+from ..whoScoredClient import WhoScoredClient, directory_path
 
 
 class WhoScoredExtensionGate(PersistentGate):
@@ -90,7 +90,11 @@ class ExtensionWhoScoredClient(WhoScoredClient):
 
     def _fetch(self,endpoint,params,kind):
         endpoint=endpoint.lstrip('/')
-        if '..' in endpoint or '\\' in endpoint or not re.fullmatch(r'(?:|players/\d+/history|matches/\d+/live|regions/\d+/tournaments/\d+/[a-zA-Z0-9-]+|regions/\d+/tournaments/\d+/seasons/\d+(?:/(?:stages/\d+/(?:show|fixtures)/)?[a-zA-Z0-9-]+)?|seasons/\d+/[^?#]+|tournaments/\d+/data/|stages/\d+/[^?#]+)',endpoint,re.I):
+        if endpoint.lower().startswith('regions/'):
+            endpoint=directory_path(endpoint)
+            valid_directory=True
+        else:valid_directory=False
+        if not valid_directory and ('..' in endpoint or '\\' in endpoint or not re.fullmatch(r'(?:|players/\d+/history|matches/\d+/live|regions/\d+/tournaments/\d+/[a-zA-Z0-9-]+|regions/\d+/tournaments/\d+/seasons/\d+(?:/(?:stages/\d+/(?:show|fixtures)/)?[a-zA-Z0-9-]+)?|seasons/\d+/[^?#]+|tournaments/\d+/data/|stages/\d+/[^?#]+)',endpoint,re.I)):
             raise ValueError('Endpoint is outside the WhoScored collection contract')
         if params and (kind!='json' or set(params)!={'d','isAggregate'} or not re.fullmatch(r'\d{6}',str(params['d'])) or params['isAggregate']!='false'):
             raise ValueError('Invalid WhoScored fixture parameters')
@@ -182,6 +186,10 @@ class WhoScoredTransport(WhoScoredClient):
                                           **(ext_paths if isinstance(ext_paths,dict) else {})}
             self.report('WhoScored HTTP unavailable; switching to the connected extension for this run.',flush=True)
             return getattr(self.extension,method)(*args)
+
+    @property
+    def stage_names(self):
+        return getattr(self.http if self.active=='http' else self.extension,'stage_names',{})
 
     def get_text(self,endpoint,params=None):return self._call('get_text',endpoint,params)
     def register_fixture_season(self,path,season):

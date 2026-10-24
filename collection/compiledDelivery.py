@@ -8,7 +8,7 @@ from filelock import FileLock
 
 from storage.pandasStore import atomic_json
 from .storageServer import Archive
-from .storageTransfer import (CHUNK, MAX_MANIFEST, FIXTURE_DATASET_PATHS, Outbox,
+from .storageTransfer import (CHUNK, MAX_MANIFEST, FIXTURE_DATASET_PATHS, FIXTURE_REQUIRED_PATHS, Outbox,
                               Peer, check_hash, encode, identifier, link_or_copy,
                               validate_manifest)
 from .workerRuntime import now
@@ -20,7 +20,8 @@ def receipt_path(root):
 
 def fixture_files(output, *, fixture_csv=None):
     output = Path(output)
-    files = {name: output / name for name in FIXTURE_DATASET_PATHS}
+    files = {name: output / name for name in FIXTURE_DATASET_PATHS
+             if name in FIXTURE_REQUIRED_PATHS or (output / name).is_file()}
     if fixture_csv is not None:
         files['fixtures.csv'] = Path(fixture_csv)
     if not all(path.is_file() and not path.is_symlink() for path in files.values()):
@@ -97,7 +98,7 @@ class CompiledReceiver(Archive):
     def register(self, worker, manifest):
         validate_manifest(manifest)
         paths = {f['path'] for f in manifest['files']}
-        if manifest['kind'] != 'dataset' or manifest['worker'] != worker or paths != FIXTURE_DATASET_PATHS:
+        if manifest['kind'] != 'dataset' or manifest['worker'] != worker or not FIXTURE_REQUIRED_PATHS <= paths <= FIXTURE_DATASET_PATHS:
             raise PermissionError('Only owned compiled fixture bundles may be delivered to Main')
         mid = identifier(manifest)
         with self.lock, self.connect() as db:
@@ -119,6 +120,10 @@ class CompiledReceiver(Archive):
                     link_or_copy(receiver.objects / check_hash(sha), target)
             from .storageAgent import install_dataset
             install_dataset(Objects(), manifest, self.output, self.directory / 'downloads')
+            # A legacy seven-file snapshot must not inherit a newer audit.
+            installed = {f['path'] for f in manifest['files']}
+            for name in FIXTURE_DATASET_PATHS - FIXTURE_REQUIRED_PATHS - installed:
+                (self.output / name).unlink(missing_ok=True)
             atomic_json(receipt_path(self.root), {'id': mid, 'worker': worker, 'received_at': now(), 'route': 'worker_to_main'})
             self.incorporated(mid, manifest)
             self.collected()

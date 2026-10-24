@@ -20,6 +20,12 @@ class PortableTransferTests(unittest.TestCase):
         atomic_json(self.root/'_system/config/storage-secrets.json',{'secret':'must-not-copy'})
         self.bundle=self.base/'sd/main-data'
         self.bundle.parent.mkdir()
+        # These tiny fixtures model a card with available space, independently
+        # of the developer's disk. Low-space cases override this explicitly.
+        usage=shutil.disk_usage(self.base)
+        available=type(usage)(max(usage.total,64*1024**3),usage.used,32*1024**3)
+        capacity=patch('tools.prepare_transfer.shutil.disk_usage',return_value=available)
+        capacity.start();self.addCleanup(capacity.stop)
     def test_verified_bundle_excludes_machine_state_and_merges_preserving_receiver_identity(self):
         prepare(self.root,self.bundle,quiet);manifest=verify_bundle(self.bundle)
         self.assertEqual(manifest['worker'],'main');self.assertEqual(manifest['seasons'],1)

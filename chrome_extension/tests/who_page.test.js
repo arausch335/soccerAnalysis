@@ -26,3 +26,17 @@ test('verification takes precedence over missing coverage text',async()=>{
  page('matchId: 11, matchCentreData: null','Verify you are human. No statistics available');
  const result=await whoPageOperation(args);assert.equal(result.status,403);assert.equal(result.verification,true);
 });
+
+test('directory waits for seasons and stage selector or implicit fixtures link',async()=>{
+ page('<html>Loading</html>','Europa League');
+ const args={kind:'text',endpoint:'regions/250/tournaments/30/seasons/6843/europe-europa-league'};
+ assert.equal((await whoPageOperation(args)).status,202);
+ document.querySelector=selector=>selector==='select#seasons'?{options:[{}]}:null;
+ assert.equal((await whoPageOperation(args)).status,202);
+ document.querySelector=selector=>selector.startsWith('select#')?{options:[{}]}:null;
+ assert.equal((await whoPageOperation(args)).status,200);
+ document.querySelector=selector=>selector==='select#seasons'?{options:[{}]}:null;
+ document.documentElement.outerHTML='<a href="/regions/252/tournaments/2/seasons/6829/stages/15151/fixtures/england-premier-league">Fixtures</a>';
+ assert.equal((await whoPageOperation(args)).status,200);
+ document.readyState='loading';assert.equal((await whoPageOperation(args)).status,202);
+});

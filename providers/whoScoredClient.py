@@ -4,28 +4,48 @@ from html import unescape
 from html.parser import HTMLParser
 import json
 import re
+from urllib.parse import unquote, quote
 from .httpClient import HttpClient, ProviderError
+
+
+def directory_path(path):
+    """Validate published routes before decoding UTF-8 slugs (never URL syntax)."""
+    if not isinstance(path, str):
+        raise ValueError('Invalid WhoScored directory path')
+    if re.search(r'%(?:2f|5c|2e)',path,re.I):raise ValueError('Encoded URL syntax in WhoScored route')
+    path = unquote(unescape(path), errors='strict')
+    if path.startswith('//'):raise ValueError('Invalid WhoScored absolute route')
+    path = path.lstrip('/')
+    if not re.fullmatch(r'regions/\d+/tournaments/\d+/(?:seasons/\d+(?:/(?:stages/\d+/(?:show|fixtures)/)?[^/]+)?|(?:show/)?[^/]+)/?', path, re.I):
+        raise ValueError('Invalid WhoScored directory route')
+    slug = path.rstrip('/').rsplit('/', 1)[-1]
+    if not slug or any(not (c.isalnum() or c == '-') for c in slug):
+        raise ValueError('Invalid WhoScored directory slug')
+    return quote(path.rstrip('/'), safe='/-').lower()
 
 
 class _Directory(HTMLParser):
     def __init__(self):
-        super().__init__(); self.select=None; self.option=None; self.options=[];self.stage_paths=[];self.links=[];self.competition_paths=[]
+        super().__init__(); self.select=None; self.option=None; self.options=[];self.stage_paths=[];self.links=[];self.competition_paths=[];self.stage_names={};self.stage_option=None
 
     def handle_starttag(self, tag, attrs):
         attrs=dict(attrs)
         if tag=='select': self.select=attrs.get('id')
         if tag=='option' and self.select=='seasons': self.option=[attrs.get('value'), '']
         if tag=='option' and self.select=='stages' and attrs.get('value'):
-            self.stage_paths.append(attrs['value'])
+            self.stage_paths.append(attrs['value']);self.stage_option=[attrs['value'], '']
         if tag=='option' and self.select=='tournaments' and attrs.get('value'):
             self.competition_paths.append(attrs['value'])
         if tag=='a' and attrs.get('href'): self.links.append(attrs['href'])
 
     def handle_data(self, data):
         if self.option is not None: self.option[1]+=data
+        if self.stage_option is not None:self.stage_option[1]+=data
 
     def handle_endtag(self, tag):
         if tag=='option' and self.option is not None: self.options.append(self.option); self.option=None
+        if tag=='option' and self.stage_option is not None:
+            self.stage_names[self.stage_option[0]]=self.stage_option[1].strip();self.stage_option=None
         if tag=='select': self.select=None
 
 
@@ -60,36 +80,72 @@ class WhoScoredClient(HttpClient):
         result=whoscored_profile(player_id,self.get_text(f'players/{int(player_id)}/history'))
         return result
 
+    def _directory(self, path, ready):
+        # A 200 response can be a partially rendered/cached shell. Refresh that
+        # directory once; leave monthly fixture caches reusable on a resume.
+        refresh = getattr(self, 'refresh_cache', False)
+        try:
+            for attempt in range(2):
+                parser = _Directory(); parser.feed(self.get_text(path))
+                if ready(parser):
+                    return parser
+                if getattr(self, 'offline', False) or attempt:
+                    raise ProviderError('WhoScored directory is incomplete: ' + path)
+                self.refresh_cache = True
+        finally:
+            self.refresh_cache = refresh
+
     def qualification_path(self,parent_path):
-        parser=_Directory();parser.feed(self.get_text(parent_path))
         family=('conference-league' if 'conference-league' in parent_path.lower() else
                 'champions-league' if 'champions-league' in parent_path.lower() else 'europa-league')
-        links={path.lstrip('/') for path in parser.links
-               if re.fullmatch(r'/regions/250/tournaments/\d+/(?:show/)?[a-zA-Z0-9-]+/?',path,re.I)
-               and 'qualif' in path.lower() and family in path.lower()}
-        if len(links)>1:raise ProviderError('WhoScored qualifying competition is ambiguous')
-        return next(iter(links)) if links else parent_path
+        parser=self._directory(parent_path, lambda p: any(family in path.lower() and 'qualif' in path.lower() for path in (*p.competition_paths,*p.links)))
+        links=set()
+        for path in (*parser.competition_paths, *parser.links):
+            try: path=directory_path(path)
+            except (ValueError, UnicodeError): continue
+            if (re.fullmatch(r'regions/250/tournaments/\d+/(?:show/)?[^/]+',path,re.I)
+                    and 'qualif' in path and family in path):links.add(path)
+        if len(links)!=1:
+            raise ProviderError('WhoScored qualifying directory is missing or ambiguous')
+        return links.pop()
+
+    def supplemental_path(self, parent_path, tournament_id):
+        parser=self._directory(parent_path, lambda p: bool(p.competition_paths))
+        paths=set()
+        for raw in parser.competition_paths:
+            try:path=directory_path(raw)
+            except (ValueError,UnicodeError):continue
+            if re.fullmatch(r'regions/\d+/tournaments/'+str(int(tournament_id))+r'/(?:show/)?[^/]+',path):paths.add(path)
+        if len(paths)!=1:raise ProviderError('WhoScored playoff directory is missing or ambiguous')
+        return paths.pop()
 
     def seasons(self, competition_path):
-        parser=_Directory(); parser.feed(self.get_text(competition_path))
-        if not parser.options: raise ProviderError('WhoScored season directory is missing')
-        return [{'name':name.strip(),'path':unescape(path)} for path,name in parser.options]
+        parser=self._directory(competition_path, lambda p: bool(p.options))
+        return [{'name':name.strip(),'path':directory_path(path)} for path,name in parser.options]
 
     def season_stages(self, season_path):
-        parser=_Directory(); parser.feed(self.get_text(season_path))
-        # Multi-stage cups expose every stage in the stage <select>; ordinary
-        # links usually contain only the currently selected stage.
-        paths=[*parser.stage_paths,*parser.links]
-        stages=sorted({int(m.group(1)) for path in paths
-                       if (m:=re.search(r'/stages/(\d+)/(?:show|fixtures)',path,re.I))})
-        if not stages:raise ProviderError('WhoScored season has no fixture stages')
-        # Preserve the published route: /stages/<id>/fixtures alone is a 404.
+        parser=self._directory(season_path, lambda p: bool(p.stage_paths) or any(
+            re.search(r'/stages/\d+/(?:show|fixtures)',link,re.I) for link in p.links))
+        # A domestic league may have no stage select: its published Fixtures
+        # link is the implicit single stage. Never use links from another season.
+        context=re.search(r'(regions/\d+/tournaments/\d+/seasons/\d+)',season_path,re.I)
+        paths={}
+        for raw in (*parser.stage_paths,*parser.links):
+            try:path=directory_path(raw)
+            except (ValueError,UnicodeError):continue
+            if context and not path.startswith(context[1].lower()+'/'):continue
+            found=re.search(r'/stages/(\d+)/(show|fixtures)/',path,re.I)
+            if found:
+                stage=int(found[1])
+                if stage not in paths or found[2].lower()=='fixtures':paths[stage]=path
+        if not paths:raise ProviderError('WhoScored season has no fixture stages')
         if not hasattr(self,'fixture_paths'):self.fixture_paths={}
-        for path in paths:
-            found=re.search(r'/stages/(\d+)/(show|fixtures)(?:/|$)',path,re.I)
-            if found and (int(found[1]) not in self.fixture_paths or found[2].lower()=='fixtures'):
-                self.fixture_paths[int(found[1])]=unescape(path).lstrip('/')
-        return stages
+        if not hasattr(self,'stage_names'):self.stage_names={}
+        self.fixture_paths.update(paths)
+        for raw,name in parser.stage_names.items():
+            found=re.search(r'/stages/(\d+)/',raw,re.I)
+            if found and int(found[1]) in paths:self.stage_names[int(found[1])]=name
+        return sorted(paths)
 
     def register_fixture_season(self,competition_path,season):
         """Retain directory context even when stage IDs come from checkpoints."""

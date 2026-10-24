@@ -36,11 +36,15 @@ export function whoUrl(text) {
 }
 
 export function whoEndpoint(endpoint,kind,params={}) {
-  if (typeof endpoint!=='string' || endpoint.includes('..') || /[?#\\]/.test(endpoint)) return false;
+  if (typeof endpoint!=='string' || /%(?:2f|5c|2e)/i.test(endpoint)) return false;
+  // Decode once, then allow letters/numbers/hyphens in slugs only. Encoded
+  // slashes, traversal, query strings and double encoding remain disallowed.
+  try { endpoint=decodeURIComponent(endpoint); } catch (_) { return false; }
+  if (endpoint.includes('..') || /[?#\\%]/.test(endpoint)) return false;
   if (kind==='json') return /^tournaments\/\d+\/data\/$/.test(endpoint) &&
     Object.keys(params).sort().join(',')==='d,isAggregate' && /^\d{6}$/.test(params.d) && params.isAggregate==='false';
   return kind==='text' && Object.keys(params).length===0 &&
-    /^(?:|players\/\d+\/history|matches\/\d+\/live|regions\/\d+\/tournaments\/\d+\/[a-z0-9-]+|regions\/\d+\/tournaments\/\d+\/seasons\/\d+(?:\/(?:stages\/\d+\/(?:show|fixtures)\/)?[a-z0-9-]+)?|seasons\/\d+\/[a-z0-9-]+|stages\/\d+\/[a-z0-9-]+)$/i.test(endpoint);
+    /^(?:|players\/\d+\/history|matches\/\d+\/live|regions\/\d+\/tournaments\/\d+\/(?:show\/)?[\p{L}\p{N}-]+|regions\/\d+\/tournaments\/\d+\/seasons\/\d+(?:\/(?:stages\/\d+\/(?:show|fixtures)\/)?[\p{L}\p{N}-]+)?|seasons\/\d+\/[\p{L}\p{N}-]+|stages\/\d+\/[\p{L}\p{N}-]+)$/iu.test(endpoint);
 }
 
 export function fotmobUrl(text) {

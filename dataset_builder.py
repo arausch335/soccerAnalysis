@@ -619,7 +619,7 @@ def fixtures_from_events(events, competition, season, *, include_qualifying=Fals
         phase=competition_phase(competition,event)
         rows.append({
             'competition_phase':phase,
-            'competition_note':('Bundesliga promotion/relegation playoff, included in this season; FotMob competition 9081; WhoScored tournament 388.' if phase=='playoffs' else ''),
+            'competition_note':('Bundesliga promotion/relegation playoff, included in this season; FotMob competition 9081; WhoScored tournament 388.' if phase=='playoffs' and competition=='Bundesliga' else 'Promotion/relegation or promotion playoff, included in this season.' if phase=='playoffs' else ''),
             'match_id': event['id'], 'date': kickoff.date().isoformat(),
             'kickoff_utc': kickoff.isoformat(), 'season': season_label(season),
             'competition': (competition + ' Qualification' if qualifying and not competition.endswith(' Qualifiers') else competition),

@@ -16,8 +16,9 @@ FORMAT='soccer-data-transfer-v1'
 CHUNK=1024*1024
 MAX_FILE=2*1024**3
 MAX_MANIFEST=32*1024**2
-FIXTURE_DATASET_PATHS = frozenset({'fixtures.csv', *(f'fixture_concordance/{name}' for name in (
+FIXTURE_REQUIRED_PATHS = frozenset({'fixtures.csv', *(f'fixture_concordance/{name}' for name in (
     'match_ids.csv', 'team_ids.csv', 'team_aliases.csv', 'issues.csv', 'coverage.csv', 'manifest.json'))})
+FIXTURE_DATASET_PATHS = FIXTURE_REQUIRED_PATHS | {'fixture_concordance/attempts.csv'}
 
 
 def digest(path):

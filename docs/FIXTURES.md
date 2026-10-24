@@ -21,7 +21,8 @@ fixture collection from running alongside an active match collector.
 
 ## Output
 
-`dataset/fixtures.csv` has one row per Sofascore fixture. Root paths follow
+`dataset/fixtures.csv` has one row per canonical Sofascore fixture. Uniquely proven
+replacement records are consolidated; their original IDs remain in the attempt audit. Root paths follow
 `config/settings.yaml`. Sofascore supplies baseline names, scores and ordinary
 `match_id`/`home_team_id`/`away_team_id` fields. Each row also includes:
 
@@ -33,9 +34,10 @@ fixture collection from running alongside an active match collector.
   `{sofascore,fotmob,whoscored,reep}_home_team_id`, and
   `{sofascore,fotmob,whoscored,reep}_away_team_id`.
 - Original provider home/away names, identity statuses and matching methods.
+- `whoscored_stage_id`, `whoscored_stage` and `whoscored_round` when a matching
+  published stage supplies them.
 
-Future scores and unavailable IDs stay blank. Scores follow the existing fixture
-export's Sofascore display/normal-time/current preference. Penalty shootout scores
+Future scores and unavailable IDs stay blank. Scores follow the shared final-score rules, including extra time when played. Penalty shootout scores
 are not inferred from these fields. Reep supplies canonical IDs; a bridge without
 an independently checked provider schedule is labelled `bridge_only`.
 
@@ -45,10 +47,11 @@ match-statistics concordance without overwriting it:
 | File | Contents |
 | --- | --- |
 | `match_ids.csv` | Four-source match IDs and competition/season context |
-| `team_ids.csv` | Four-source club IDs, baseline names and identity status |
+| `team_ids.csv` | Four-source club IDs, baseline names, competition/season and identity status |
+| `attempts.csv` | Superseded/corrected IDs, replacement ID, original date/status/scores and reason |
 | `team_aliases.csv` | Observed names/IDs, fixture evidence and matching method |
 | `issues.csv` | Ambiguities, contradictory mappings and failed bridge checks |
-| `coverage.csv` | Competition/season/provider, counts, source and errors |
+| `coverage.csv` | Raw/canonical/finished counts, phase/status breakdowns, matching gaps, expected counts, source and errors |
 | `manifest.json` | Scope, Reep release/checksums, missing IDs and validation totals |
 
 ## Matching
@@ -63,15 +66,35 @@ scoreline, can identify a differently named team. `opponent_date_score` records
 that evidence. Score alone does not join two unknown clubs. Swapped sides and
 multiple equally plausible fixtures are not resolved by guessing.
 
-Accepted IDs are reused across seasons, including a second pass over earlier
-name variants. One-to-many or many-to-one club mappings are flagged and their
-ambiguous provider team ID remains blank. A provider match cannot be assigned to
+Accepted IDs are reused across seasons when unambiguous, including a second pass
+over earlier name variants. A fixture-validated historical profile is retained in
+its competition/season; a different profile in another season does not erase it.
+Competing IDs within one season remain flagged, with ambiguous team IDs blank. A provider match cannot be assigned to
 two baseline matches. Published Reep IDs are never invented from name matches.
 
 ## Resume and refresh
 
+Every WhoScored season enumerates **all published stages**, including group A–L
+and Final Stage in Europa League 2017–2018, groups/finals in the Champions and
+Conference Leagues, and league-phase/finals in newer seasons. Ordinary leagues
+can expose a single stage through their Fixtures link. Stage-ID settings do not
+restrict this full-history inventory. UEFA qualification is a separate published
+competition, discovered from tournament options as well as anchors. Separate
+German/French playoff directories and second-division playoff stages are included
+when published for that season. Missing qualifying/playoff pages are coverage gaps.
+Accented and percent-encoded Segunda División routes are supported.
+
+A partially rendered WhoScored directory is refreshed once, and Chrome waits for
+its selectors before returning HTML. Independent stages/months continue after a
+transient failure; authentication/rate-limit stops still pause the provider.
+
 Complete provider/competition/season schedules are checkpointed under
-`data/_system/fixtures/cross_provider/`. Re-running reuses them. Filtering upcoming
+`data/_system/fixtures/cross_provider/`. Version 2 checkpoints record full-scope
+collection. Re-running reuses them. Older checkpoints and ordinary collection
+`schedule.json` files have no proof that all stages/qualifiers were fetched: an
+online run upgrades them once, reusing valid response caches. Offline exports
+retain their fixtures but report partial scope. Failed upgrades preserve the old
+checkpoint and available partial results. Do not delete caches to upgrade. Filtering upcoming
 fixtures does not truncate checkpoints. Partial responses remain in the shared
 request cache. Missing supplemental feeds are reported while retaining available
 main fixtures. Failed refreshes retain the last complete checkpoint, marked stale.
@@ -101,7 +124,7 @@ importer verifies bulk checksums and follows published ID redirects.
 The manifest distinguishes schedule-request completion, complete four-source
 ID coverage, and independent provider fixture validation. A completed request
 does not prove that a provider has every historical match. Exit code 2 signals
-missing/partial schedules; available fixtures are still exported with gap reports.
+missing/partial schedules or failed expected-count checks; available fixtures are still exported with gap reports.
 If no baseline schedule is available, an existing dataset is preserved and only
 the coverage report is updated. Interruptions retain completed checkpoints.
 
@@ -110,9 +133,32 @@ Once Sofascore's past schedule has finished paginating, a `404` on
 Missing past pages, failures on later promised pages, and other HTTP errors
 remain coverage failures; their available fixtures are retained.
 
+## Fixture attempts and counts
+
+A postponed/canceled/abandoned league entry is superseded only by a unique active
+record with the same teams/orientation, competition/season/phase and compatible
+round/leg. Finished replacements can have moved earlier. Cup legs and replays
+are retained unless an explicit reviewed correction identifies the replacement.
+Unresolved postponements stay in the dataset. Original source schedules are never
+modified, and `attempts.csv` keeps the old and replacement native IDs and fixture
+fields; raw response bodies are not included in the compiled audit.
+
+Reviewed exceptions cover FotMob's abandoned Bournemouth–Luton match 4193691
+(2023–2024), replayed as 4421797, and Sofascore's Blackpool–Wigan opening-day
+venue swap 1379596 → 1380091 (2010–2011). FotMob cancellation/postponement/abandonment
+reasons take priority over its `finished` flag.
+
+Coverage separates raw entries, canonical fixtures, finished games and superseded
+attempts for each provider and phase. Completed Premier League seasons in this
+scope must have 380 canonical and 380 finished games. Current seasons do not have
+a finished-game requirement. Other leagues are not forced to 380: team counts,
+playoffs, formats and shortened seasons differ. The manifest reports request-scope
+completion, expected-count checks, missing IDs and independently matched fixtures
+separately. A successful download alone does not prove a complete dataset.
+
 ## Direct compiled-file delivery to Main
 
-Fixture builds automatically queue `fixtures.csv` and the six
+Fixture builds automatically queue `fixtures.csv` and all seven
 `fixture_concordance/` files for **worker → Main** delivery. Raw data continues
 to use **worker → MSI**. Compiled fixture bundles never enter MSI's raw outbox.
 

@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import Mock,patch
 from providers import SofaScoreLoader
 from providers.whoScoredClient import WhoScoredClient
+from providers.httpClient import ProviderError
 from collection.selection import competition_by_name,in_competition
 from collection.seasonRunner import SeasonRunner
 from collection.ensembleProgress import PortableProgress
@@ -90,7 +91,8 @@ class QualifierTests(unittest.TestCase):
         client.get_text=Mock(return_value='<a href="/Regions/250/Tournaments/757/Show/International-UEFA-Champions-League-Qualification">Qualifying</a>')
         self.assertIn('/757/',client.qualification_path('regions/250/tournaments/12/europe-champions-league'))
         client.get_text=Mock(return_value='<a href="/regions/250/tournaments/30/europe-europa-league">Other competition</a>')
-        self.assertEqual(client.qualification_path('regions/250/tournaments/12/europe-champions-league'),'regions/250/tournaments/12/europe-champions-league')
+        with self.assertRaises(ProviderError):
+            client.qualification_path('regions/250/tournaments/12/europe-champions-league')
 
 
 if __name__=='__main__':unittest.main()
