@@ -36,6 +36,13 @@ class ReviewedClubProfiles(unittest.TestCase):
         self.assertEqual(str(exported[0]['sofascore_home_team_id']),'37426')
         self.assertEqual(reep.index(self.root).resolve('team',{'fotmob_id':'210132'})['sofascore_id'],'3294')
 
+    def test_published_club_name_cannot_block_an_approved_numeric_profile(self):
+        rows=[['team','sofascore','2742','rtCesena'],['team','fotmob','9880','rtCesena'],
+              ['team','fotmob','584022','rtCesena'],['team','whoscored','265','rtCesena'],
+              ['team','whoscored','19415','rtCesena'],['team','whoscored','Cesena','rtCesena']]
+        result=reep.Index({'rows':rows}).resolve('team',{'sofascore_id':'2742'})
+        self.assertEqual((result['fotmob_id'],result['whoscored_id']),('584022','19415'))
+
     def test_packaging_normalizes_generic_team_fields_without_touching_the_source(self):
         import csv
         from dataset_builder import _atomic_copy,_fixture_team_names

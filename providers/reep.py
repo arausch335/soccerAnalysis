@@ -114,8 +114,12 @@ class Index:
             for provider in PROVIDERS:
                 candidates = self.canonical.get((kind, reep, provider), set())
                 if kind=='team':
-                    from .teamProfiles import canonical_team_id
+                    from .teamProfiles import canonical_team_id,reviewed_team
                     candidates={canonical_team_id(provider,n) for n in candidates}
+                    # Some published historical profiles contain a club name
+                    # alongside numeric IDs. It must not block an approved ID.
+                    if any(reviewed_team(provider,n) for n in candidates):
+                        candidates={n for n in candidates if n.isdigit()}
                 if not result.get(provider + '_id') and len(candidates) == 1:
                     result[provider + '_id'] = next(iter(candidates))
             if any(result.get(p + '_id') and self.ids(kind, p, result[p + '_id']) != {reep}
