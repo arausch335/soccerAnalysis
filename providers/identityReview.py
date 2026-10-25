@@ -82,7 +82,8 @@ def revision(root=None):
     links=sorted(tuple(d[k] for k in ('kind','provider','source_id','target_id')) for d in decisions(root) if d['action']=='confirm')
     from .reep import version
     reep=version(root)
-    return hashlib.sha256(json.dumps([links,reep]).encode()).hexdigest() if links or reep else ''
+    from .teamProfiles import version as team_profiles_version
+    return hashlib.sha256(json.dumps([links,reep,team_profiles_version()]).encode()).hexdigest() if links or reep else ''
 
 
 def validate(proposal):

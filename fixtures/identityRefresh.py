@@ -16,6 +16,7 @@ import pandas as pd
 
 from collection.files import atomic_csv
 from providers.reep import PROVIDERS, index, snapshot
+from providers.teamProfiles import reviewed_team
 from storage.pandasStore import atomic_json
 
 SOURCES = (*PROVIDERS, 'reep')
@@ -36,7 +37,7 @@ def resolve_rows(rows, bridges, kind, *, suffix='_id', status='identity_status')
     """Only fill unique, nonconflicting bridges; enforce one-to-one match IDs."""
     proposed, review = [], []
     for row in rows:
-        if row.get(status)=='conflict':
+        if row.get(status)=='conflict' and not (kind=='team' and reviewed_team('sofascore',row.get('sofascore'+suffix))):
             proposed.append({})
             review.append(dict(kind=kind,sofascore_id=row.get('sofascore'+suffix,''),
                                reason='existing_identity_conflict',provider='',candidate_id=''))

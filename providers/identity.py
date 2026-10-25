@@ -124,6 +124,8 @@ def teams_match(left, right, provider, review_root=None, baseline='sofascore'):
     from .reep import index
     left_id, right_id = left.get('id'), right.get('id')
     if left_id is not None and right_id is not None and provider:
+        from .teamProfiles import same_reviewed_team
+        if same_reviewed_team(baseline,left_id,provider,right_id):return True
         if baseline == provider:
             return str(left_id) == str(right_id)
         reviewed = REVIEWED_TEAM_IDS.get((provider, str(left_id))) if baseline == 'sofascore' else None

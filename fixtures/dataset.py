@@ -26,6 +26,7 @@ from providers.events import whoscored_fixture
 from providers.scores import final_score
 from providers.httpClient import ProviderError
 from providers.identity import teams_match
+from providers.teamProfiles import canonical_team_id
 from providers.reep import PROVIDERS, index
 from providers.whoScoredClient import _Directory, directory_path
 from storage.layout import system_path
@@ -418,11 +419,11 @@ def _opponent_compatible(event, other, provider, root, bridges, learned, reverse
         reviewed = REVIEWED_TEAM_IDS.get((provider, str(a['id'])))
         if reviewed is not None and str(b['id']) != str(reviewed):
             return False
-        peers = learned.get((provider, str(a['id'])), set())
+        peers = {canonical_team_id(provider,n) for n in learned.get((provider, str(a['id'])), set())}
         inverse = reverse.get((provider, str(b['id'])), set())
-        if peers and peers != {str(b['id'])} or inverse and inverse != {str(a['id'])}:
+        if peers and peers != {canonical_team_id(provider,b['id'])} or inverse and inverse != {str(a['id'])}:
             return False
-        known.append(teams_match(a, b, provider, root) or peers == {str(b['id'])} and inverse == {str(a['id'])})
+        known.append(teams_match(a, b, provider, root) or peers == {canonical_team_id(provider,b['id'])} and inverse == {str(a['id'])})
     return any(known) or bridges.same('match', 'sofascore', event['id'], provider, other['id']) is True
 
 
@@ -554,7 +555,7 @@ def concord(snapshots, root, *, include_upcoming=True):
             conflicts = set()
             for p in PROVIDERS[1:]:
                 peers = seasonal[competition.name,start,p,str(team['id'])]
-                if len(peers) > 1:
+                if len({canonical_team_id(p,n) for n in peers}) > 1:
                     conflicts.add(p)  # Competing profiles within this season remain ambiguous.
                 elif p in matches:
                     native[p] = matches[p][side+'Team']['id']

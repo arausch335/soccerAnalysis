@@ -73,6 +73,9 @@ class Index:
             self.canonical[kind, reep, provider].add(str(native))
 
     def ids(self, kind, provider, native):
+        if kind=='team':
+            from .teamProfiles import canonical_team_id
+            native=canonical_team_id(provider,native)
         return self.native.get((kind, provider, str(native)), set())
 
     def canonical_id(self, value):
