@@ -14,14 +14,16 @@ from fixtures.builder import FixtureCompetition
 
 
 class FinalScoreTests(unittest.TestCase):
-    def test_extra_time_is_the_final_total_not_a_delta_and_penalties_stay_separate(self):
+    def test_extra_time_period_is_added_to_regulation_and_penalties_stay_separate(self):
         source=event()
-        source['homeScore']={'current':7,'display':1,'normaltime':1,'overtime':2,'penalties':5}
-        source['awayScore']={'current':6,'display':1,'normaltime':1,'overtime':2,'penalties':4}
+        source['homeScore']={'current':7,'display':2,'normaltime':1,'overtime':1,'penalties':5}
+        source['awayScore']={'current':6,'display':2,'normaltime':1,'overtime':1,'penalties':4}
         self.assertEqual((final_score(source,'home'),final_score(source,'away')),(2,2))
         frame=fixtures_from_events([source],'Europa League','2024/2025')
         self.assertEqual((frame.iloc[0].home_score,frame.iloc[0].away_score),(2,2))
-        source['homeScore'].pop('overtime');self.assertEqual(final_score(source,'home'),1)
+        source['homeScore'].pop('overtime');self.assertEqual(final_score(source,'home'),2)
+        source['homeScore'].pop('current');source['homeScore'].pop('display')
+        self.assertEqual(final_score(source,'home'),1)
         source['isAwarded']=True;source['homeScore']['display']=3
         self.assertEqual(final_score(source,'home'),3)
 
@@ -35,8 +37,8 @@ class FinalScoreTests(unittest.TestCase):
         self.assertEqual(final_score(whoscored_fixture(row),'home'),0)
 
     def test_enrichment_repairs_old_shootout_score_and_uses_whoscored_extra_time(self):
-        source=event();source['homeScore']={'current':7,'normaltime':1,'overtime':2,'penalties':5}
-        source['awayScore']={'current':6,'normaltime':1,'overtime':2,'penalties':4}
+        source=event();source['homeScore']={'current':2,'normaltime':1,'overtime':1,'penalties':5}
+        source['awayScore']={'current':2,'normaltime':1,'overtime':1,'penalties':4}
         sofa=SofaScoreLoader(None);season=sofa.select_season(17,'Premier League',61627,'2024/2025')
         match=sofa._build_match(season,source,lineup())
         self.assertEqual((match.home_score,match.away_score),(2,2))
@@ -53,8 +55,8 @@ class FinalScoreTests(unittest.TestCase):
         self.assertEqual((match.home_score,match.away_score),(2,2))
 
     def test_fixture_concordance_accepts_same_extra_time_total_but_rejects_real_differences(self):
-        source=event();source['homeScore']={'current':2,'display':1,'normaltime':1,'overtime':2}
-        source['awayScore']={'current':1,'display':1,'normaltime':1,'overtime':1}
+        source=event();source['homeScore']={'current':2,'display':2,'normaltime':1,'overtime':1}
+        source['awayScore']={'current':1,'display':1,'normaltime':1,'overtime':0}
         other=deepcopy(source);other['id']=11
         other['homeScore']={'current':2};other['awayScore']={'current':1}
         with tempfile.TemporaryDirectory() as root:
@@ -64,3 +66,34 @@ class FinalScoreTests(unittest.TestCase):
             other['homeScore']['current']=3
             rows,*_=concord([(competition,2024,{'sofascore':[source],'whoscored':[other]})],Path(root))
             self.assertEqual(rows[0]['whoscored_match_id'],'')
+
+    def test_real_madrid_chelsea_raw_period_fields_produce_two_three(self):
+        source=event();source['homeScore']={'current':2,'display':2,'normaltime':1,'overtime':1}
+        source['awayScore']={'current':3,'display':3,'normaltime':3,'overtime':0}
+        self.assertEqual((final_score(source,'home'),final_score(source,'away')),(2,3))
+        from providers.matchComparison import fixture_summary
+        result=fixture_summary(source,'sofascore')
+        self.assertEqual(result['regulation'],[1,3]);self.assertEqual(result['extra_time_period'],[1,0])
+        self.assertEqual(result['extra_time'],[2,3])
+
+    def test_legacy_whoscored_totals_and_missing_current_are_readable(self):
+        source=event();source['homeScore']={'current':2,'normaltime':1,'overtime':2}
+        self.assertEqual(final_score(source,'home'),2)
+
+    def test_published_final_totals_override_inconsistent_historical_extra_time_fields(self):
+        source=event()
+        # FC Midtjylland-Celtic, 2021-07-28: the historical overtime field is 3,
+        # while both final total fields say 2. It must not become 3 or 4.
+        source['homeScore']={'current':2,'display':2,'normaltime':1,'overtime':3}
+        self.assertEqual(final_score(source,'home'),2)
+        # Borac-Cluj has a goal in extra2 despite overtime being recorded as 0.
+        source['awayScore']={'current':1,'display':1,'normaltime':0,'overtime':0,'extra1':0,'extra2':1}
+        self.assertEqual(final_score(source,'away'),1)
+        source['homeScore']={'normaltime':1,'overtime':1,'penalties':5}
+        self.assertEqual(final_score(source,'home'),2)
+
+    def test_liverpool_psg_shootout_kicks_are_not_added_to_match_goals(self):
+        source=event()
+        source['homeScore']={'current':1,'display':0,'normaltime':0,'overtime':0,'penalties':1}
+        source['awayScore']={'current':5,'display':1,'normaltime':1,'overtime':0,'penalties':4}
+        self.assertEqual((final_score(source,'home'),final_score(source,'away')),(0,1))

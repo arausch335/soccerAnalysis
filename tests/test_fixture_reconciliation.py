@@ -101,6 +101,25 @@ class PublishedDirectoryTests(unittest.TestCase):
 
 
 class FixtureAttemptTests(unittest.TestCase):
+    def test_cup_replacement_uses_the_played_same_round_without_deleting_other_legs(self):
+        old={**event(1),'status':{'type':'postponed'},'roundInfo':{'round':2,'leg':1}}
+        played={**event(2,day=DAY+86400),'roundInfo':{'round':2,'leg':1}}
+        other_leg={**event(3,2,1,day=DAY+8*86400),'roundInfo':{'round':2,'leg':2}}
+        kept,_=reconcile([old,played,other_leg],'sofascore','Champions League',2024)
+        self.assertEqual([e['id'] for e in kept],[2,3])
+
+    def test_a_reviewed_replay_supersedes_an_original_marked_finished(self):
+        original={**event(1),'reviewedReplacement':2}
+        replay=event(2,day=DAY+86400)
+        kept,audit=reconcile([original,replay],'sofascore','Europa League',2024)
+        self.assertEqual([e['id'] for e in kept],[2])
+        self.assertEqual(audit[0]['reason'],'reviewed_abandoned_replay')
+        self.assertEqual(audit[0]['original_status'],'finished')
+
+    def test_two_legitimate_completed_matches_are_not_inferred_to_be_a_replay(self):
+        kept,_=reconcile([event(1),event(2,day=DAY+86400)],'sofascore','Europa League',2024)
+        self.assertEqual(len(kept),2)
+
     def test_postponed_replacement_preserves_audit_and_raw_data(self):
         old={**event(7438019),'status':{'type':'postponed'},'roundInfo':{'round':31}}
         new={**event(7769667,day=DAY+86400*54),'roundInfo':{'round':31}}

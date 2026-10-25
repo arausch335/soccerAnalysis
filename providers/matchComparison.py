@@ -8,9 +8,13 @@ def fixture_summary(event,provider):
              'date':datetime.fromtimestamp(event['startTimestamp'],timezone.utc).date().isoformat(),
              'home_team':event['homeTeam']['name'],'away_team':event['awayTeam']['name'],
              'home_score':final_score(event,'home'),'away_score':final_score(event,'away')}
-    for key,label in (('normaltime','regulation'),('overtime','extra_time'),('penalties','penalties')):
+    for key,label in (('normaltime','regulation'),('overtime','extra_time_period'),('penalties','penalties')):
         scores=[(event.get(side+'Score') or {}).get(key) for side in ('home','away')]
         if all(value is not None for value in scores):summary[label]=scores
+    if 'extra_time_period' in summary:
+        summary['extra_time']=[summary['home_score'],summary['away_score']]
+        if 'regulation' in summary and all(v is not None for v in summary['extra_time']):
+            summary['extra_time_period']=[a-b for a,b in zip(summary['extra_time'],summary['regulation'])]
     return summary
 
 

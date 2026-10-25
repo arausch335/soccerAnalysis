@@ -149,6 +149,24 @@ requests, statistics or event streams complete. The reconciliation summary and
 remaining conflicts are in `dataset/concordance/reconciliation/`; one previous
 copy of changed exports is retained in `data/_system/identity/previous_exports/`.
 
+Superseded postponed, cancelled or abandoned records are removed from project
+fixture and match-ID exports when the played replacement is established. A
+known replay replaces the original attempt, including an original incorrectly
+labelled finished. Cup legs and distinct completed games remain separate; a
+shared opponent alone does not establish a replay. The same policy runs during
+worker exports and when Main reconciles received legacy CSVs. Removed attempts
+are referenced only in `fixture_concordance/attempts.csv` for provenance.
+
+Match scorelines include all goals through extra time and exclude shootout
+kicks. Published final totals take precedence over extra-time period fields,
+which are inconsistent in some historical Sofascore records. WhoScored's
+cumulative AET value is normalized before comparison. Main can
+repair old period-only scorelines from saved baseline schedules or compact
+verified score evidence in `_system/identity/fixture_score_evidence.json`.
+Identity conflicts are cleared only when a corrected baseline and an actual
+saved provider fixture agree on teams, date and score. Corrections are recorded
+in `dataset/concordance/reconciliation/score_repairs.csv`.
+
 The manifest distinguishes schedule-request completion, complete four-source
 ID coverage, and independent provider fixture validation. A completed request
 does not prove that a provider has every historical match. Exit code 2 signals

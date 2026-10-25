@@ -589,7 +589,7 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
     for competition, start, feeds in snapshots:
         cleaned = {}
         for provider, events in feeds.items():
-            cleaned[provider], audit = reconcile(events, provider, competition.name, start)
+            cleaned[provider], audit = reconcile(events, provider, competition.name, start, bridges=index(root))
             attempts.extend(audit)
             counts[competition.name,season_label(start),provider] = summarize(events,cleaned[provider],competition.name)
         canonical.append((competition,start,cleaned))
