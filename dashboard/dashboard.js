@@ -133,7 +133,7 @@ async function decideReview(id,action){if(reviewBusy)return;reviewBusy=true;rend
 $('review-kind').addEventListener('change',renderReviews);
 
 function collectionError(value){return String(value||'').replace(/\b(whoscored|fotmob|sofascore):(?:\s*\1:)+/gi,'$1:').replace(/\b(whoscored|fotmob|sofascore):/gi,(_,p)=>(providers[p.toLowerCase()]||p)+':');}
-function fixtureLink(provider,id){if(!/^\d+$/.test(String(id||'')))return '';return ({sofascore:'https://www.sofascore.com/event/',whoscored:'https://www.whoscored.com/matches/',fotmob:'https://www.fotmob.com/matches/'}[provider]||'')+id+(provider==='whoscored'?'/live':'');}
+function fixtureLink(provider,id){if(!/^\d+$/.test(String(id||'')))return '';return ({sofascore:'https://www.sofascore.com/event/',whoscored:'https://www.whoscored.com/matches/',fotmob:'https://www.fotmob.com/match/'}[provider]||'')+id+(provider==='whoscored'?'/live':'');}
 function collectionEvidence(r){
  const comparisons=r.provider_comparisons||{},mismatches=r.identity_mismatches||{};
  const wanted=new Set([...Object.keys(comparisons),...Object.keys(mismatches),...(r.resources||[]).map(k=>k.startsWith('whoscored')?'whoscored':k.startsWith('fotmob')?'fotmob':null).filter(Boolean)]);

@@ -579,8 +579,11 @@ def concord(snapshots, root, *, include_upcoming=True):
             row['sofascore_' + side + '_team'] = team['name']
             for p in PROVIDERS[1:]:
                 row[p + '_' + side + '_team'] = matches[p][side + 'Team']['name'] if p in matches else ''
-            key = (competition.name, start, str(team['id']), tuple(resolved.get(p + '_id', '') for p in SOURCES))
-            team_rows[key] = dict(competition=competition.name,season=season_label(start),team_name=team['name'], **{p + '_id': resolved.get(p + '_id', '') for p in SOURCES}, identity_status=resolved['identity_status'])
+            from providers.teamProfiles import canonical_record
+            reference=canonical_record(dict(competition=competition.name,season=season_label(start),team_name=team['name'],
+                **{p+'_id':resolved.get(p+'_id','') for p in SOURCES},identity_status=resolved['identity_status']),reference=True)
+            key = (competition.name, start, reference['sofascore_id'], tuple(reference.get(p + '_id', '') for p in SOURCES))
+            team_rows[key] = reference
         rows.append(row)
     return rows, list(team_rows.values()), match_rows, aliases, issues
 

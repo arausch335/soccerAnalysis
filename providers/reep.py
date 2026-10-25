@@ -113,6 +113,9 @@ class Index:
             result['identity_status'] = 'linked'
             for provider in PROVIDERS:
                 candidates = self.canonical.get((kind, reep, provider), set())
+                if kind=='team':
+                    from .teamProfiles import canonical_team_id
+                    candidates={canonical_team_id(provider,n) for n in candidates}
                 if not result.get(provider + '_id') and len(candidates) == 1:
                     result[provider + '_id'] = next(iter(candidates))
             if any(result.get(p + '_id') and self.ids(kind, p, result[p + '_id']) != {reep}

@@ -173,6 +173,15 @@ while source fixtures retain their original provider IDs and names. New club
 references prefer the first listed profile; old IDs remain valid aliases.
 This does not create a global name alias for similarly named clubs.
 
+Canonical club references use the first ID for each provider throughout exports:
+Cesena `2742 / 584022 / 19415`, CSKA Sofia `3275 / 10144 / 1275`, and Farul
+Constanța (including Viitorul) `3294 / 210132 / 9425`, in
+Sofascore/FotMob/WhoScored order. Generic team IDs/names, reference tables and
+packaged analysis CSVs use these choices. Provider-prefixed historical fixture
+fields and raw responses retain the original IDs so their provenance is intact.
+`concordance/reconciliation/match_urls.csv` lists all pending match comparisons;
+their proposed provider URLs are not confirmations of those identities.
+
 The manifest distinguishes schedule-request completion, complete four-source
 ID coverage, and independent provider fixture validation. A completed request
 does not prove that a provider has every historical match. Exit code 2 signals

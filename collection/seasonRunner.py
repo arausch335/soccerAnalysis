@@ -736,6 +736,10 @@ class SeasonRunner:
         return summary
 
     def _export(self,events,*,compile_events=True):
+        from .files import atomic_csv as write_csv
+        from providers.teamProfiles import canonical_frame
+        def atomic_csv(frame,path):
+            write_csv(canonical_frame(frame,self.baseline_provider),path)
         started=time.monotonic();clear_json_cache()
         config=json.loads((self.directory/'config.json').read_text(encoding='utf-8'))
         competition=competition_by_name(config['competition'])

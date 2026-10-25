@@ -144,8 +144,10 @@ def _fixture_team_names(path):
             raise ValueError(f'{path} is missing fixture team columns')
         for record in reader:
             for side in ('home', 'away'):
-                identifier = _identifier(record[side + '_team_id'])
+                provider_key='fotmob_'+side+'_team_id'
+                identifier = _identifier(record.get(provider_key) if provider_key in record else record[side + '_team_id'])
                 name = str(record[side + '_team']).strip()
+                if provider_key in record and not identifier:continue
                 if not identifier or not name:
                     raise ValueError(f'{path} contains a blank {side} team ID or name')
                 names.setdefault(identifier, Counter())[name] += 1
@@ -162,7 +164,10 @@ def _team_crosswalk(path=TEAM_CROSSWALK):
 
 def _team_reference(source_teams, fixtures_path, *, crosswalk_path=TEAM_CROSSWALK):
     """Make a FotMob-keyed reference, retaining unknown provider IDs as NA."""
+    from providers.teamProfiles import canonical_frame,canonical_team_id,canonical_team_name
+    source_teams=canonical_frame(source_teams,reference=True)
     names = _fixture_team_names(fixtures_path) if fixtures_path.exists() else {}
+    names={canonical_team_id('fotmob',native):canonical_team_name('fotmob',native,name) for native,name in names.items()}
     crosswalk = _team_crosswalk(crosswalk_path)
     source = {}
     for row in source_teams.to_dict('records'):
@@ -186,13 +191,16 @@ def _team_reference(source_teams, fixtures_path, *, crosswalk_path=TEAM_CROSSWAL
                      (max(candidate_names, key=lambda name: (len(name), candidate_names[name],
                                                              name.casefold()))
                       if candidate_names else ''))
+        team_name=canonical_team_name('fotmob',fotmob,team_name)
         published = crosswalk.get(fotmob, {})
         record = {'team_name': team_name, 'fotmob_id': fotmob}
         for column in ('sofascore_id', 'whoscored_id'):
             values = set(entry.get(column, set()))
             verified = _identifier(published.get(column))
+            if verified:verified=canonical_team_id(column.removesuffix('_id'),verified)
             if verified: values.add(verified)
             reviewed = _identifier(VERIFIED_TEAM_ID_OVERRIDES.get(fotmob, {}).get(column))
+            if reviewed:reviewed=canonical_team_id(column.removesuffix('_id'),reviewed)
             if reviewed: values.add(reviewed)
             if len(values) > 1:
                 problems.append(f'{team_name} ({fotmob}) has conflicting {column}: '
@@ -496,18 +504,30 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
     output = Path(output_root);
     pending = {}
     if build_player_ids:
+        from providers.teamProfiles import canonical_frame
         players = _finalize_id_rows(player_rows, PLAYER_ID_COLUMNS,
                                     ['competition', 'season', 'team_name', 'player_name'])
+        players=canonical_frame(players)
         _validate_player_identities(players)
         pending['player IDs'] = (players, output / 'player_ids.csv')
     if build_team_ids:
+        from providers.teamProfiles import canonical_team_id,canonical_record
+        for row in team_rows.values():
+            row.update(canonical_record(row,reference=True))
+            for column,values in row.get('_ids',{}).items():
+                provider=column.removesuffix('_id')
+                if provider in ('sofascore','fotmob','whoscored'):
+                    row['_ids'][column]=[canonical_team_id(provider,value) for value in values if value is not None]
+        _backfill_unambiguous_ids(team_rows)
         source_teams = _finalize_id_rows(team_rows, SOURCE_TEAM_ID_COLUMNS,
                                          ['competition', 'season', 'team_name'])
         teams = _team_reference(source_teams, output / 'fixtures.csv')
         pending['team IDs'] = (teams, output / 'team_ids.csv')
     if build_match_ids:
+        from providers.teamProfiles import canonical_frame
         matches = _finalize_id_rows(match_rows, MATCH_ID_COLUMNS,
                                     ['competition', 'season', 'date', 'home_team_name', 'away_team_name'])
+        matches=canonical_frame(matches)
         pending['match IDs'] = (matches, output / 'match_ids.csv')
     output.mkdir(parents=True, exist_ok=True);
     written = {}
@@ -550,6 +570,8 @@ def export_concordance(frames, data_root, output, *, source_teams=None):
             clean = {k:'' if pd.isna(v) else str(v) for k,v in record.items()}
             resolved = bridges.resolve(kind, clean)
             if kind == 'team':
+                from providers.teamProfiles import canonical_record
+                resolved=canonical_record(resolved,reference=True)
                 key = (resolved['reep_id'],) if resolved['reep_id'] and resolved['identity_status']=='linked' else tuple(resolved[p+'_id'] for p in ('sofascore','fotmob','whoscored'))
                 if key in seen:
                     continue
@@ -567,7 +589,7 @@ def export_concordance(frames, data_root, output, *, source_teams=None):
     return written
 
 
-def _atomic_copy(source, destination, season=None):
+def _atomic_copy(source, destination, season=None, *, baseline=None):
     destination = Path(destination);
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(destination.name + '.' + uuid4().hex + '.tmp')
@@ -590,6 +612,10 @@ def _atomic_copy(source, destination, season=None):
                 for row in reader:
                     if len(row) != len(header): raise ValueError(f'Malformed row in {Path(source).name}')
                     row[index] = season;
+                    if baseline is not None:
+                        from providers.teamProfiles import canonical_record
+                        normalized=canonical_record(dict(zip(header,row)),baseline)
+                        row=[normalized.get(key,'') for key in header]
                     writer.writerow(row)
                 outgoing.flush();
                 os.fsync(outgoing.fileno())
@@ -602,7 +628,7 @@ def _score(event, side):
     from providers.scores import final_score
     return final_score(event,side)
 
-def fixtures_from_events(events, competition, season, *, include_qualifying=False):
+def fixtures_from_events(events, competition, season, *, include_qualifying=False, baseline='sofascore'):
     """Convert schedule events using the same schema as packaged fixtures.
 
     The usual season export omits qualifying matches. A fixtures-only backfill
@@ -634,13 +660,15 @@ def fixtures_from_events(events, competition, season, *, include_qualifying=Fals
             'winner_code': event.get('winnerCode'), 'venue': venue.get('name'),
             'city': venue.get('city', {}).get('name'),
         })
-    return pd.DataFrame(rows, columns=FIXTURE_COLUMNS)
+    from providers.teamProfiles import canonical_frame
+    return canonical_frame(pd.DataFrame(rows, columns=FIXTURE_COLUMNS),baseline)
 
 
 def _fixtures(source, config):
     events = json.loads((source / 'schedule.json').read_text(encoding='utf-8'))['events']
     return fixtures_from_events(events, config['competition'], config['season'],
-                                include_qualifying=config['competition'].endswith(' Qualifiers'))
+                                include_qualifying=config['competition'].endswith(' Qualifiers'),
+                                baseline=config.get('id_namespace',config.get('baseline_provider','sofascore')))
 
 
 def package_collection(source, output_root, *, replace=False, tables=None):
@@ -678,7 +706,8 @@ def package_collection(source, output_root, *, replace=False, tables=None):
             if name == 'fixtures':
                 atomic_csv(_fixtures(source, config), target / filename)
             else:
-                _atomic_copy(source / source_name, target / filename, season)
+                _atomic_copy(source / source_name, target / filename, season,
+                             baseline=config.get('id_namespace',config.get('baseline_provider','sofascore')))
         if replace:
             backup = destination.with_name(destination.name + '.' + uuid4().hex + '.backup')
             if destination.exists(): os.replace(destination, backup)

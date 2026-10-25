@@ -16,7 +16,7 @@ import pandas as pd
 
 from collection.files import atomic_csv
 from providers.reep import PROVIDERS, index, snapshot
-from providers.teamProfiles import reviewed_team
+from providers.teamProfiles import reviewed_team,canonical_record
 from storage.pandasStore import atomic_json
 
 SOURCES = (*PROVIDERS, 'reep')
@@ -133,6 +133,7 @@ def _reconcile(root,dataset,*,dry_run):
             for side in ('home','away'):
                 new,issues=resolve_rows(new,bridges,'team',suffix='_'+side+'_team_id',status=side+'_team_identity_status')
                 review.extend(issues)
+            new=[canonical_record(row) for row in new]
             fixture_rows=new
             report['tables']['fixtures']={'before':coverage(rows,'_match_id'),'after':coverage(new,'_match_id')}
             if new!=rows:pending[path]=(columns,new)
@@ -149,6 +150,8 @@ def _reconcile(root,dataset,*,dry_run):
             else:
                 retained=[r for r in rows if r['sofascore_id'] not in removed_ids] if kind=='match' else rows
                 new,issues=resolve_rows(retained,bridges,kind);review.extend(issues)
+            new=[canonical_record(row,reference=kind=='team') for row in new]
+            if kind=='team':new=list({tuple(row.get(c,'') for c in columns):row for row in new}.values())
             report['tables'][folder+'/'+kind]={'before':coverage(rows),'after':coverage(new)}
             if new!=rows:pending[path]=(columns,new)
     # Keep the legacy native-only match list consistent with the concordance.
@@ -157,6 +160,13 @@ def _reconcile(root,dataset,*,dry_run):
         columns,rows=read_table(path)
         retained=[r for r in rows if r.get('sofascore_id') not in removed_ids]
         if retained!=rows:pending[path]=(columns,retained)
+    for kind in ('team','player','match'):
+        path=dataset/(kind+'_ids.csv')
+        if not path.exists():continue
+        columns,rows=pending[path] if path in pending else read_table(path)
+        new=[canonical_record(row,reference=kind=='team') for row in rows]
+        if kind=='team':new=list({tuple(row.get(c,'') for c in columns):row for row in new}.values())
+        if new!=rows:pending[path]=(columns,new)
     if fixture_rows is not None:
         by_id={r['sofascore_match_id']:r for r in fixture_rows}
         path=dataset/'fixture_concordance/issues.csv'
@@ -227,6 +237,19 @@ def _reconcile(root,dataset,*,dry_run):
     destination=dataset/'concordance/reconciliation'
     atomic_csv(pd.DataFrame(review,columns=['kind','sofascore_id','reason','provider','candidate_id']).drop_duplicates(),destination/'review.csv')
     atomic_json(destination/'summary.json',report)
+    if fixture_rows is not None:
+        links=[]
+        for row in fixture_rows:
+            if row.get('match_identity_status')!='conflict':continue
+            resolved=bridges.resolve('match',{p+'_id':row.get(p+'_match_id','') for p in PROVIDERS})
+            item={k:row.get(k,'') for k in ('date','home_team','away_team','home_score','away_score')}
+            item['sofascore_match_id']=row['sofascore_match_id']
+            for provider,prefix,suffix in [('sofascore','https://www.sofascore.com/event/',''),
+                ('fotmob','https://www.fotmob.com/match/',''),('whoscored','https://www.whoscored.com/matches/','/live')]:
+                native=row.get(provider+'_match_id') or resolved.get(provider+'_id','')
+                item[provider+'_url']=prefix+native+suffix if str(native).isdigit() else ''
+            links.append(item)
+        atomic_csv(pd.DataFrame(links,columns=['sofascore_match_id','date','home_team','away_team','home_score','away_score','sofascore_url','fotmob_url','whoscored_url']),destination/'match_urls.csv')
     if score_repairs:
         atomic_csv(pd.DataFrame(score_repairs),destination/'score_repairs.csv')
     return report

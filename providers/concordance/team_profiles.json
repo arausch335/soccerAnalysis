@@ -5,6 +5,30 @@
       "reason": "User-confirmed historical FotMob club profiles, 2026-10-25",
       "sofascore": ["7703"],
       "fotmob": ["321780", "2222"]
+    },
+    {
+      "name": "Cesena",
+      "names": ["Cesena", "AC Cesena", "Cesena FC"],
+      "reason": "User-authorized canonical choice, 2026-10-25; prefer current profiles",
+      "sofascore": ["2742"],
+      "fotmob": ["584022", "9880"],
+      "whoscored": ["19415", "265"]
+    },
+    {
+      "name": "CSKA Sofia",
+      "names": ["CSKA Sofia"],
+      "reason": "User-authorized canonical choice, 2026-10-25; prefer most recently observed profiles",
+      "sofascore": ["3275"],
+      "fotmob": ["10144", "10127"],
+      "whoscored": ["1275", "697"]
+    },
+    {
+      "name": "Farul Constanța",
+      "names": ["Farul Constanța", "FCV Farul Constanța", "FC Viitorul Constanța", "Farul Constanta", "FCV Farul Constanta", "FC Viitorul Constanta"],
+      "reason": "User-authorized shared project identity for Farul/Viitorul, 2026-10-25",
+      "sofascore": ["3294", "37426"],
+      "fotmob": ["210132"],
+      "whoscored": ["9425"]
     }
   ]
 }

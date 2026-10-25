@@ -52,6 +52,18 @@ class IdentityRefreshTests(unittest.TestCase):
         rows,review=resolve_rows([original],reep.Index(self.value),'match')
         self.assertEqual(rows,[original]);self.assertEqual(review[0]['reason'],'existing_identity_conflict')
 
+    def test_match_urls_do_not_confirm_proposed_ids(self):
+        fixture=dict(sofascore_match_id='1',fotmob_match_id='',whoscored_match_id='',reep_match_id='',
+                     home_team='Home',away_team='Away',match_identity_status='conflict')
+        self.write('fixtures.csv',[fixture])
+        reconcile_exports(self.root,self.output)
+        _,rows=read_table(self.output/'fixtures.csv')
+        self.assertEqual(rows[0]['whoscored_match_id'],'')
+        self.assertEqual(rows[0]['match_identity_status'],'conflict')
+        _,links=read_table(self.output/'concordance/reconciliation/match_urls.csv')
+        self.assertEqual(links[0]['whoscored_url'],'https://www.whoscored.com/matches/100/live')
+        self.assertEqual(links[0]['fotmob_url'],'https://www.fotmob.com/match/10')
+
     def test_a_provider_match_cannot_be_filled_for_two_baseline_matches(self):
         value=bridge(*self.value['rows'],('match','sofascore','3','rm1'))
         other=self.row();other['sofascore_id']='3'

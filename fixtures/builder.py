@@ -255,7 +255,7 @@ def build(*, provider=PROVIDER, client=None, data_root=DATA_ROOT, output_csv=OUT
                     provider=provider,current_start=current_start,data_root=data_root,
                     include_upcoming=include_upcoming,refresh_current=refresh_current)
                 frame=fixtures_from_events(events,competition.name,label,
-                    include_qualifying=competition.name in EUROPEAN_COMPETITIONS)
+                    include_qualifying=competition.name in EUROPEAN_COMPETITIONS,baseline=provider)
                 if frame.empty:
                     raise ValueError(f'{competition.name} {label}: no fixture rows')
                 frames.append(frame)
