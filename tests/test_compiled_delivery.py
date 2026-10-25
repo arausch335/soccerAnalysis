@@ -60,6 +60,22 @@ class CompiledDeliveryTests(unittest.TestCase):
         self.assertTrue((self.output / 'fixtures.csv').exists())
         self.assertFalse(audit.exists())
 
+    def test_main_reconciles_received_fixture_ids_with_its_current_index(self):
+        from providers import reep
+        from fixtures.identityRefresh import read_table
+        rows=[['match','sofascore','1','rm1'],['match','whoscored','100','rm1']]
+        reep.install(self.main,{'format':reep.FORMAT,'version':reep._digest(rows),'rows':rows})
+        (self.source/'fixtures.csv').write_text(
+            'sofascore_match_id,fotmob_match_id,whoscored_match_id,reep_match_id,home_team,away_team,match_identity_status,whoscored_fixture_check\n'
+            '1,,,,Home,Away,unmapped,missing\n')
+        atomic_json(self.source/'fixture_concordance/manifest.json',{'schedule_coverage_complete':False})
+        result=deliver(self.root,self.source,report=lambda *a,**k:None)
+        self.assertEqual(result['state'],'installed_on_main')
+        _,received=read_table(self.output/'fixtures.csv')
+        self.assertEqual(received[0]['whoscored_match_id'],'100')
+        self.assertEqual(received[0]['whoscored_fixture_check'],'bridge_only')
+        self.assertFalse(json.loads((self.output/'fixture_concordance/manifest.json').read_text())['schedule_coverage_complete'])
+
     def test_offline_bundle_remains_queued_and_retries_after_restart(self):
         atomic_json(system_path(self.root, 'reporting.json'), {**self.options, 'url': 'http://127.0.0.1:1'})
         result = deliver(self.root, self.source, report=lambda *a, **k: None)

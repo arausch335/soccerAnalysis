@@ -5,13 +5,13 @@ Workers receive this index automatically through direct reporting.
 """
 import config
 from providers.reep import refresh
-from dataset_builder import build_id_tables
+from fixtures.identityRefresh import reconcile_exports
 
 
 def main():
     value = refresh(config.DATA_ROOT, config.DATASET_ROOT, config.PROJECT_ROOT / 'ensemble_data')
     print(f"Reep {value['release']}: retained {len(value['rows'])} typed bridges.")
-    build_id_tables(config.DATA_ROOT, config.DATASET_ROOT)
+    print(reconcile_exports(config.DATA_ROOT, config.DATASET_ROOT))
 
 
 if __name__ == '__main__':

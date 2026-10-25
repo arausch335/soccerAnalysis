@@ -375,8 +375,6 @@ def _ids(bridges, kind, native):
 
 
 def _compatible(event, other, provider, root, bridges, learned=None, reverse=None):
-    if event['startTimestamp'] // 86400 != other['startTimestamp'] // 86400:
-        return False
     if abs(event['startTimestamp'] - other['startTimestamp']) > 6 * 3600:
         return False
     if bridges.same('match', 'sofascore', event['id'], provider, other['id']) is False:
@@ -404,8 +402,7 @@ def _opponent_compatible(event, other, provider, root, bridges, learned, reverse
     Callers constrain candidates to the same competition/season and require a
     unique match. A scoreline alone never establishes two unknown team links.
     """
-    if (event['startTimestamp'] // 86400 != other['startTimestamp'] // 86400
-            or abs(event['startTimestamp'] - other['startTimestamp']) > 6 * 3600
+    if (abs(event['startTimestamp'] - other['startTimestamp']) > 6 * 3600
             or bridges.same('match', 'sofascore', event['id'], provider, other['id']) is False
             or any(e.get('status', {}).get('type') != 'finished' for e in (event, other))):
         return False
@@ -437,6 +434,10 @@ def concord(snapshots, root, *, include_upcoming=True):
     observations, issues, aliases = [], [], []
     methods = {}
     days_by_season = {}
+    def near(by_day,event):
+        day=event['startTimestamp']//86400
+        return [other for adjacent in (day-1,day,day+1) for other in by_day[adjacent]
+                if abs(event['startTimestamp']-other['startTimestamp'])<=6*3600]
     for competition, start, schedules_by_provider in snapshots:
         by_day = {p: defaultdict(list) for p in PROVIDERS[1:]}
         for p in by_day:
@@ -446,7 +447,7 @@ def concord(snapshots, root, *, include_upcoming=True):
         for event in schedules_by_provider['sofascore']:
             matches = {}
             for p in PROVIDERS[1:]:
-                candidates = by_day[p][event['startTimestamp'] // 86400]
+                candidates = near(by_day[p],event)
                 found = [e for e in candidates if _compatible(event, e, p, root, bridges, learned, reverse)]
                 method = 'teams_date_score'
                 if not found:
@@ -487,7 +488,7 @@ def concord(snapshots, root, *, include_upcoming=True):
         for p in PROVIDERS[1:]:
             if p in matches:
                 continue
-            found = [e for e in by_day[p][event['startTimestamp'] // 86400]
+            found = [e for e in near(by_day[p],event)
                      if _compatible(event, e, p, root, bridges, learned, reverse)]
             if len(found) == 1:
                 other = matches[p] = found[0]

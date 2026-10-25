@@ -121,6 +121,34 @@ Reep refresh is optional; otherwise the saved index is used. Newly discovered
 fixture/team IDs are included in future `tools.refresh_reep` runs. The existing
 importer verifies bulk checksums and follows published ID redirects.
 
+On Main, refresh the reference index and rejoin the received CSV exports without
+scraping providers or rereading raw match data:
+
+```sh
+python -m tools.reconcile_match_ids --refresh-reep
+# Reuse the installed index, or preview changes without writing exports:
+python -m tools.reconcile_match_ids
+python -m tools.reconcile_match_ids --dry-run
+```
+
+`python -m tools.refresh_reep` also reconciles existing exports. Main applies its
+current index automatically after accepting each new compiled fixture delivery.
+Workers receive the refreshed compact index through normal reporting. Public
+bulk downloads remain temporary; only relevant typed bridges are retained.
+
+This fills unique published match/team/player bridges and follows published
+canonical redirects. Existing native IDs and unresolved review conflicts are
+preserved. One provider match cannot be newly assigned to multiple baseline
+fixtures. Provider schedule matching also allows kickoff differences of up to
+six hours across UTC midnight, with the same team, orientation, score and
+ambiguity checks as other matches; a date or score alone is insufficient.
+
+New provider IDs recovered from Reep are labelled `bridge_only` until that
+provider's fixture is independently checked. They do not make failed schedule
+requests, statistics or event streams complete. The reconciliation summary and
+remaining conflicts are in `dataset/concordance/reconciliation/`; one previous
+copy of changed exports is retained in `data/_system/identity/previous_exports/`.
+
 The manifest distinguishes schedule-request completion, complete four-source
 ID coverage, and independent provider fixture validation. A completed request
 does not prove that a provider has every historical match. Exit code 2 signals

@@ -75,6 +75,14 @@ class Index:
     def ids(self, kind, provider, native):
         return self.native.get((kind, provider, str(native)), set())
 
+    def canonical_id(self, value):
+        """Follow published redirects retained for relevant canonical entities."""
+        redirects=self.metadata.get('redirects',{});seen=set()
+        while value in redirects:
+            if value in seen:raise ValueError('Cyclic Reep redirect')
+            seen.add(value);value=redirects[value]
+        return value
+
     def same(self, kind, left_provider, left, right_provider, right):
         a = self.ids(kind, left_provider, left)
         b = self.ids(kind, right_provider, right)
@@ -220,8 +228,10 @@ def import_release(bridges, redirects, wanted, *, release, source, checksums):
         if kind == 'team' or (kind, provider, native) in wanted:
             selected.add((kind, reep))
     kept = sorted(set(row for row in rows() if (row[0], row[3]) in selected))
+    canonical_ids={row[3] for row in kept}
     return {'format': FORMAT, 'version': _digest(kept), 'release': release,
-            'source': source, 'license': 'CC0-1.0', 'checksums': checksums, 'rows': kept}
+            'source': source, 'license': 'CC0-1.0', 'checksums': checksums, 'rows': kept,
+            'redirects':{old:canonical(old) for old in redirect if canonical(old) in canonical_ids}}
 
 
 def refresh(root, dataset, ensemble=None):

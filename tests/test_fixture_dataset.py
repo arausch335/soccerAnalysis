@@ -154,6 +154,16 @@ class FixtureDatasetTests(unittest.TestCase):
         self.assertEqual(rows[0]['home_team'], 'Old name')
         self.assertTrue(any(a['method'] == 'learned_team_ids_and_fixture' for a in aliases))
 
+    def test_matching_allows_a_small_kickoff_offset_across_utc_midnight(self):
+        late=event(day=DAY//86400*86400+23*3600)
+        peer=event(200,10,20,day=late['startTimestamp']+2*3600)
+        rows,*_=concord([(self.competition,2010,{'sofascore':[late],'fotmob':[peer]})],self.root)
+        self.assertEqual(rows[0]['fotmob_match_id'],'200')
+        self.assertEqual(rows[0]['fotmob_fixture_check'],'validated')
+        peer['startTimestamp']+=24*3600
+        rows,*_=concord([(self.competition,2010,{'sofascore':[late],'fotmob':[peer]})],self.root)
+        self.assertNotEqual(rows[0]['fotmob_fixture_check'],'validated')
+
     def test_ambiguous_fixture_and_team_collisions_are_never_guessed(self):
         root = self.base / 'no_reep'
         feeds = [(self.competition, 2010, {'sofascore': [event()],

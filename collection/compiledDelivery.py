@@ -124,6 +124,8 @@ class CompiledReceiver(Archive):
             installed = {f['path'] for f in manifest['files']}
             for name in FIXTURE_DATASET_PATHS - FIXTURE_REQUIRED_PATHS - installed:
                 (self.output / name).unlink(missing_ok=True)
+            from fixtures.identityRefresh import reconcile_exports
+            reconcile_exports(self.root,self.output,already_locked=True)
             atomic_json(receipt_path(self.root), {'id': mid, 'worker': worker, 'received_at': now(), 'route': 'worker_to_main'})
             self.incorporated(mid, manifest)
             self.collected()
