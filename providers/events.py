@@ -25,6 +25,6 @@ def whoscored_fixture(row):
     return {'id':int(row['id']),'startTimestamp':timestamp(row['startTimeUtc']),
         'homeTeam':{'id':row['homeTeamId'],'name':row['homeTeamName']},
         'awayTeam':{'id':row['awayTeamId'],'name':row['awayTeamName']},
-        'homeScore':whoscored_scores({'fulltime':row.get('homeScore'),'extratime':row.get('homeExtratimeScore')}),
-        'awayScore':whoscored_scores({'fulltime':row.get('awayScore'),'extratime':row.get('awayExtratimeScore')}),
+        'homeScore':whoscored_scores({'fulltime':row.get('homeScore'),'extratime':row.get('homeExtratimeScore'),'penalty':row.get('homePenaltyScore')}),
+        'awayScore':whoscored_scores({'fulltime':row.get('awayScore'),'extratime':row.get('awayExtratimeScore'),'penalty':row.get('awayPenaltyScore')}),
         'status':{'type':'finished' if row.get('status')==6 else 'notstarted'}}

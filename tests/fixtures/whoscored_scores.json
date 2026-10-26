@@ -1,0 +1,273 @@
+{
+  "retrieved_at": "2026-10-25",
+  "matches": [
+    {
+      "match": "PSV Eindhoven vs Juventus",
+      "source_url": "https://www.whoscored.com/matches/1888121/live",
+      "scores": {
+        "home": {
+          "halftime": 0,
+          "fulltime": 2,
+          "running": 3,
+          "extratime": 3
+        },
+        "away": {
+          "halftime": 0,
+          "fulltime": 1,
+          "running": 1
+        }
+      },
+      "expected": [
+        3,
+        1
+      ]
+    },
+    {
+      "match": "Bodø/Glimt vs FC Twente",
+      "source_url": "https://www.whoscored.com/matches/1888136/live",
+      "scores": {
+        "home": {
+          "halftime": 0,
+          "fulltime": 3,
+          "running": 5,
+          "extratime": 5
+        },
+        "away": {
+          "halftime": 1,
+          "fulltime": 2,
+          "running": 2
+        }
+      },
+      "expected": [
+        5,
+        2
+      ]
+    },
+    {
+      "match": "AFC Ajax vs Royale Union Saint-Gilloise",
+      "source_url": "https://www.whoscored.com/matches/1888138/live",
+      "scores": {
+        "home": {
+          "halftime": 0,
+          "fulltime": 0,
+          "running": 1,
+          "extratime": 1
+        },
+        "away": {
+          "halftime": 2,
+          "fulltime": 2,
+          "running": 2
+        }
+      },
+      "expected": [
+        1,
+        2
+      ]
+    },
+    {
+      "match": "Liverpool FC vs Paris Saint-Germain",
+      "source_url": "https://www.whoscored.com/matches/1891177/live",
+      "scores": {
+        "home": {
+          "halftime": 0,
+          "fulltime": 0,
+          "running": 0,
+          "extratime": 0,
+          "penalty": 1
+        },
+        "away": {
+          "halftime": 1,
+          "fulltime": 1,
+          "running": 1,
+          "extratime": 1,
+          "penalty": 4
+        }
+      },
+      "expected": [
+        0,
+        1
+      ]
+    },
+    {
+      "match": "Atlético Madrid vs Real Madrid",
+      "source_url": "https://www.whoscored.com/matches/1891173/live",
+      "scores": {
+        "home": {
+          "halftime": 1,
+          "fulltime": 1,
+          "running": 1,
+          "extratime": 1,
+          "penalty": 2
+        },
+        "away": {
+          "halftime": 0,
+          "fulltime": 0,
+          "running": 0,
+          "extratime": 0,
+          "penalty": 4
+        }
+      },
+      "expected": [
+        1,
+        0
+      ]
+    },
+    {
+      "match": "Rangers vs Fenerbahçe",
+      "source_url": "https://www.whoscored.com/matches/1891199/live",
+      "scores": {
+        "home": {
+          "halftime": 0,
+          "fulltime": 0,
+          "running": 0,
+          "extratime": 0,
+          "penalty": 3
+        },
+        "away": {
+          "halftime": 1,
+          "fulltime": 2,
+          "running": 2,
+          "extratime": 2,
+          "penalty": 2
+        }
+      },
+      "expected": [
+        0,
+        2
+      ]
+    },
+    {
+      "match": "Lazio vs Bodø/Glimt",
+      "source_url": "https://www.whoscored.com/matches/1894989/live",
+      "scores": {
+        "home": {
+          "halftime": 1,
+          "fulltime": 2,
+          "running": 3,
+          "extratime": 3,
+          "penalty": 2
+        },
+        "away": {
+          "halftime": 0,
+          "fulltime": 0,
+          "running": 1,
+          "extratime": 1,
+          "penalty": 3
+        }
+      },
+      "expected": [
+        3,
+        1
+      ]
+    },
+    {
+      "match": "Manchester United vs Olympique Lyonnais",
+      "source_url": "https://www.whoscored.com/matches/1894997/live",
+      "scores": {
+        "home": {
+          "halftime": 2,
+          "fulltime": 2,
+          "running": 5,
+          "extratime": 5
+        },
+        "away": {
+          "halftime": 0,
+          "fulltime": 2,
+          "running": 4,
+          "extratime": 4
+        }
+      },
+      "expected": [
+        5,
+        4
+      ]
+    },
+    {
+      "match": "Inter vs FC Barcelona",
+      "source_url": "https://www.whoscored.com/matches/1898210/live",
+      "scores": {
+        "home": {
+          "halftime": 2,
+          "fulltime": 3,
+          "running": 4,
+          "extratime": 4
+        },
+        "away": {
+          "halftime": 0,
+          "fulltime": 3,
+          "running": 3
+        }
+      },
+      "expected": [
+        4,
+        3
+      ]
+    },
+    {
+      "match": "Juventus vs Galatasaray",
+      "source_url": "https://www.whoscored.com/matches/1967246/live",
+      "scores": {
+        "home": {
+          "halftime": 1,
+          "fulltime": 3,
+          "running": 3
+        },
+        "away": {
+          "halftime": 0,
+          "fulltime": 0,
+          "running": 2,
+          "extratime": 2
+        }
+      },
+      "expected": [
+        3,
+        2
+      ]
+    },
+    {
+      "match": "Sporting CP vs Bodø/Glimt",
+      "source_url": "https://www.whoscored.com/matches/1972190/live",
+      "scores": {
+        "home": {
+          "halftime": 1,
+          "fulltime": 3,
+          "running": 5,
+          "extratime": 5
+        },
+        "away": {
+          "halftime": 0,
+          "fulltime": 0,
+          "running": 0
+        }
+      },
+      "expected": [
+        5,
+        0
+      ]
+    },
+    {
+      "match": "Paris Saint-Germain vs Arsenal",
+      "source_url": "https://www.whoscored.com/matches/1979569/live",
+      "scores": {
+        "home": {
+          "halftime": 0,
+          "fulltime": 1,
+          "running": 1,
+          "extratime": 1,
+          "penalty": 4
+        },
+        "away": {
+          "halftime": 1,
+          "fulltime": 1,
+          "running": 1,
+          "extratime": 1,
+          "penalty": 3
+        }
+      },
+      "expected": [
+        1,
+        1
+      ]
+    }
+  ]
+}

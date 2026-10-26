@@ -152,5 +152,29 @@ class IdentityRefreshTests(unittest.TestCase):
         self.assertEqual(repaired[0]['fotmob_match_id'],'10');self.assertEqual(repaired[0]['match_identity_status'],'unmapped')
         self.assertEqual(len(audit),1)
 
+    def test_saved_provider_scores_revalidate_old_flags_but_not_real_disagreements(self):
+        from copy import deepcopy
+        from datetime import datetime,timezone
+        from fixtures.scoreRepair import repair_exported_scores
+        from tests.test_fixture_dataset import event,DAY
+        value=bridge(*self.value['rows'],('team','sofascore','1','rt1'),('team','fotmob','10','rt1'),
+                     ('team','fotmob','20','rt2'))
+        bridges=reep.Index(value)
+        row=dict(sofascore_match_id='1',sofascore_home_team_id='1',sofascore_away_team_id='2',home_team='Home',away_team='Away',
+                 competition='Premier League',season='2010-2011',date='2010-09-01',status='finished',home_score='2',away_score='1',
+                 kickoff_utc=datetime.fromtimestamp(DAY,timezone.utc).isoformat(),match_identity_status='conflict',
+                 fotmob_match_id='',whoscored_match_id='',fotmob_fixture_check='reep_fixture_failed_validation',whoscored_fixture_check='missing')
+        peer=event(10,10,20)
+        for changed in ({},{'startTimestamp':DAY+86400},{'homeScore':{'current':3}},
+                        {'homeTeam':{'id':99,'name':'Wrong'}}):
+            with self.subTest(changed=changed):
+                candidate={**deepcopy(peer),**changed}
+                atomic_json(self.root/'_system/identity/fixture_score_evidence.json',{
+                    'format':'soccer-fixture-score-evidence-v1','events':[],'provider_events':{'fotmob':[candidate]}})
+                repaired,audit=repair_exported_scores([row],self.root,bridges)
+                self.assertEqual(repaired[0]['fotmob_match_id'],'10' if not changed else '')
+                self.assertEqual(repaired[0]['match_identity_status'],'unmapped' if not changed else 'conflict')
+                self.assertFalse(audit)
+
 
 if __name__=='__main__':unittest.main()

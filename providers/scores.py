@@ -22,9 +22,19 @@ def final_score(event,side):
 def whoscored_scores(values):
     normal=values.get('fulltime')
     extra=values.get('extratime',values.get('extraTime'))
-    score={'current':extra if extra is not None else normal}
+    # Match-centre running is the on-field total, including extra time but
+    # excluding shootouts. Extra-time fields can be absent for one team.
+    total=values.get('running')
+    if total is not None and normal is not None and total<normal:
+        raise ValueError('WhoScored running score is below its regulation score')
+    if total is None:
+        totals=[v for v in (normal,extra) if v is not None]
+        # These are cumulative scores: a later period cannot erase goals.
+        total=max(totals) if totals else None
+    score={'current':total,'display':total}
     if normal is not None:score['normaltime']=normal
-    if extra is not None and normal is not None:score['overtime']=extra-normal
+    if total is not None and normal is not None and (extra is not None or values.get('running') is not None):
+        score['overtime']=total-normal
     penalties=values.get('penalties',values.get('penalty'))
     if penalties is not None:score['penalties']=penalties
     return score

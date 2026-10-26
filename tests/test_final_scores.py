@@ -3,7 +3,7 @@ from copy import deepcopy
 from pathlib import Path
 import tempfile
 import unittest
-from providers.scores import final_score
+from providers.scores import final_score,whoscored_scores
 from providers.events import whoscored_fixture
 from providers import SofaScoreLoader,WhoScoredLoader
 from providers.identity import IdentityError
@@ -14,6 +14,37 @@ from fixtures.builder import FixtureCompetition
 
 
 class FinalScoreTests(unittest.TestCase):
+    def test_twelve_reviewed_match_scores_agree_without_aggregate_or_shootout_goals(self):
+        import json
+        fixtures=json.loads((Path(__file__).parent/'fixtures/whoscored_scores.json').read_text())['matches']
+        self.assertEqual(len(fixtures),12)
+        for fixture in fixtures:
+            with self.subTest(match=fixture['match']):
+                source={s+'Score':whoscored_scores(fixture['scores'][s]) for s in ('home','away')}
+                self.assertEqual([final_score(source,s) for s in ('home','away')],fixture['expected'])
+
+    def test_whoscored_running_total_wins_over_inconsistent_extra_time(self):
+        source=event()
+        source['homeScore']=whoscored_scores({'fulltime':2,'extratime':1,'running':3})
+        source['awayScore']=whoscored_scores({'fulltime':1,'running':1})
+        self.assertEqual((final_score(source,'home'),final_score(source,'away')),(3,1))
+        self.assertEqual(source['homeScore']['overtime'],1)
+        source['homeScore']=whoscored_scores({'fulltime':0,'running':1,'penalty':4})
+        self.assertEqual(final_score(source,'home'),1)
+        with self.assertRaisesRegex(ValueError,'below its regulation'):
+            whoscored_scores({'fulltime':2,'running':1})
+
+    def test_whoscored_missing_or_zero_extra_time_cannot_erase_regulation_goals(self):
+        for extra in (None,0):
+            source=event();source['homeScore']=whoscored_scores({'fulltime':3,'extratime':extra})
+            self.assertEqual(final_score(source,'home'),3)
+        row={'id':1,'startTimeUtc':'2024-08-17T11:30:00Z','homeTeamId':1,'homeTeamName':'Home',
+             'awayTeamId':2,'awayTeamName':'Away','homeScore':0,'awayScore':1,
+             'homeExtratimeScore':0,'awayExtratimeScore':1,'homePenaltyScore':1,'awayPenaltyScore':4,'status':6}
+        fixture=whoscored_fixture(row)
+        self.assertEqual((final_score(fixture,'home'),final_score(fixture,'away')),(0,1))
+        self.assertEqual(fixture['awayScore']['penalties'],4)
+
     def test_extra_time_period_is_added_to_regulation_and_penalties_stay_separate(self):
         source=event()
         source['homeScore']={'current':7,'display':2,'normaltime':1,'overtime':1,'penalties':5}

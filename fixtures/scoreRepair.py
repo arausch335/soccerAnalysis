@@ -9,7 +9,7 @@ from providers.teamProfiles import reviewed_team
 
 
 def repair_exported_scores(rows,root,bridges):
-    root=Path(root);events={};repairs=[]
+    root=Path(root);events={};repairs=[];provider_events={}
     # These are small saved schedules/identity evidence, never full raw matches.
     for path in root.glob('*/*/schedule.json'):
         if path.parent.parent.name=='_system':continue
@@ -23,16 +23,23 @@ def repair_exported_scores(rows,root,bridges):
         saved=json.loads(evidence.read_text(encoding='utf-8'))
         if saved.get('format')!='soccer-fixture-score-evidence-v1':raise ValueError('Invalid fixture score evidence')
         for event in saved.get('events',[]):events[str(event['id'])]=event
+        provider_events={p:{str(e['id']):e for e in records}
+                         for p,records in saved.get('provider_events',{}).items() if p in ('fotmob','whoscored')}
+    evidence_matches={native for provider,records in provider_events.items() for peer in records.values()
+                      for rid in bridges.ids('match',provider,peer['id'])
+                      for native in bridges.canonical.get(('match',rid,'sofascore'),set())}
     output=[];cache={};claims=defaultdict(set)
     for row in rows:
         for provider in ('fotmob','whoscored'):
             native=row.get(provider+'_match_id')
             if native:claims[provider,native].add(row.get('sofascore_match_id'))
     for original in rows:
-        row=dict(original);event=events.get(row.get('sofascore_match_id'));reviewed_profile=False
-        if event is None and row.get('kickoff_utc') and any(reviewed_team('sofascore',row.get('sofascore_'+s+'_team_id')) for s in ('home','away')):
+        row=dict(original);event=events.get(row.get('sofascore_match_id'));reviewed_profile=False;saved_provider=False
+        reviewed_team_row=any(reviewed_team('sofascore',row.get('sofascore_'+s+'_team_id')) for s in ('home','away'))
+        saved_provider_row=row.get('match_identity_status')=='conflict' and row.get('sofascore_match_id') in evidence_matches
+        if event is None and row.get('kickoff_utc') and (reviewed_team_row or saved_provider_row):
             if row.get('home_score') not in ('',None) and row.get('away_score') not in ('',None):
-                reviewed_profile=True
+                reviewed_profile=reviewed_team_row;saved_provider=saved_provider_row
                 event=dict(id=int(row['sofascore_match_id']),startTimestamp=int(datetime.fromisoformat(row['kickoff_utc']).timestamp()),
                            status={'type':row.get('status')},
                            **{s+'Team':{'id':row['sofascore_'+s+'_team_id'],'name':row[s+'_team']} for s in ('home','away')},
@@ -64,6 +71,7 @@ def repair_exported_scores(rows,root,bridges):
                 paths=[folder/provider/slug/(row['season']+'.json'),folder/'cross_provider'/provider/slug/(row['season']+'.json')]
                 cache[key]={str(e['id']):e for path in paths if path.exists()
                             for e in json.loads(path.read_text(encoding='utf-8')).get('events',[])}
+                cache[key].update(provider_events.get(provider,{}))
             candidate=cache[key].get(native)
             from .dataset import _compatible
             if not native and reviewed_profile:
@@ -74,7 +82,8 @@ def repair_exported_scores(rows,root,bridges):
             if _compatible(event,candidate,provider,root,bridges):
                 row[provider+'_match_id']=native;row[provider+'_fixture_check']='validated'
                 claims[provider,native].add(row['sofascore_match_id'])
-                row[provider+'_match_method']='reviewed_team_profiles_and_fixture' if reviewed_profile else 'saved_period_scores_and_fixture';revalidated=True
+                row[provider+'_match_method']=('saved_provider_scores_and_fixture' if saved_provider else
+                    'reviewed_team_profiles_and_fixture' if reviewed_profile else 'saved_period_scores_and_fixture');revalidated=True
         checks=[row.get(p+'_fixture_check','missing') for p in ('fotmob','whoscored')]
         if revalidated and all(c in ('validated','bridge_only','missing','') for c in checks):
             row['match_identity_status']='unmapped'

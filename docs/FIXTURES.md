@@ -269,3 +269,12 @@ Schedule HTTP 404s get one extension fallback; a missing page in the extension
 remains a coverage failure and is reported promptly. Update Python **and reload
 Soccer Collector in Chrome's extensions page** after pulling this change.
 Saved connection credentials and completed provider season schedules are retained.
+
+Scores used for identity matching count regulation plus extra-time goals, with
+shootout kicks kept separate. WhoScored match-centre `running` is the preferred
+on-field total; `extratime` is cumulative and can be absent for one team. Aggregate
+scores and the aggregate winner do not replace a match score. Saved, compact
+provider score evidence can revalidate an older rejected fixture against its
+exported baseline, but the date, both teams, final score, published match bridge
+and one-to-one provider ID checks must still pass. No arbitrary subtraction is
+used to turn a genuine disagreement into a match.
