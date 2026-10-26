@@ -1,0 +1,608 @@
+{
+  "format": "soccer-team-history-v1",
+  "scope": "men",
+  "researched_at": "2026-10-26",
+  "teams": {
+    "sibir-old": {
+      "name": "Sibir Novosibirsk (historical)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "46838",
+      "whoscored_id": "4055"
+    },
+    "sibir-2019": {
+      "name": "FC Sibir (founded as FC Novosibirsk)",
+      "gender": "male",
+      "sofascore_id": "321284",
+      "fotmob_id": "1070334",
+      "whoscored_id": "28607"
+    },
+    "padova-old": {
+      "name": "Calcio Padova (pre-2014)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": "1497"
+    },
+    "padova-2014": {
+      "name": "Calcio Padova (2014 restart)",
+      "gender": "male",
+      "sofascore_id": "2741",
+      "fotmob_id": "583944",
+      "whoscored_id": "19397"
+    },
+    "siena-old": {
+      "name": "AC Siena (pre-2014)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "8551",
+      "whoscored_id": "773"
+    },
+    "siena-2014": {
+      "name": "Robur Siena (2014 restart)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": ""
+    },
+    "siena-2020": {
+      "name": "ACN Siena 1904 (2020 restart)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": ""
+    },
+    "siena-2023": {
+      "name": "Siena FC (2023 restart)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": ""
+    },
+    "vicenza-old": {
+      "name": "Vicenza Calcio (pre-2018)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "9877",
+      "whoscored_id": "273"
+    },
+    "bassano-old": {
+      "name": "Bassano Virtus (pre-2018)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": ""
+    },
+    "vicenza-2018": {
+      "name": "L.R. Vicenza",
+      "gender": "male",
+      "sofascore_id": "2722",
+      "fotmob_id": "145007",
+      "whoscored_id": "5550"
+    },
+    "lokomotiv-sofia-old": {
+      "name": "Lokomotiv Sofia (pre-2015)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": ""
+    },
+    "lokomotiv-sofia-2015": {
+      "name": "Lokomotiv Sofia 1929",
+      "gender": "male",
+      "sofascore_id": "3277",
+      "fotmob_id": "10128",
+      "whoscored_id": ""
+    },
+    "gandzasar-old-syunik": {
+      "name": "Gandzasar-Kapan / Syunik",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "6569",
+      "whoscored_id": "3634"
+    },
+    "gandzasar-new": {
+      "name": "Gandzasar (separate club)",
+      "gender": "male",
+      "sofascore_id": "36059",
+      "fotmob_id": "1388663",
+      "whoscored_id": "30359"
+    },
+    "ca-bastia-old": {
+      "name": "CA Bastia",
+      "gender": "male",
+      "sofascore_id": "59257",
+      "fotmob_id": "",
+      "whoscored_id": "9545"
+    },
+    "borgo-old": {
+      "name": "Borgo FC (pre-2017)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": ""
+    },
+    "bastia-borgo-2017": {
+      "name": "FC Bastia-Borgo / FC Borgo",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": "9545"
+    },
+    "kosice-old": {
+      "name": "MFK / VSS Košice (historical)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": "688"
+    },
+    "vysne-opatske": {
+      "name": "Vyšné Opátske",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": "16603"
+    },
+    "barca-kosice": {
+      "name": "FK Košice-Barca",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": ""
+    },
+    "kosice-2018": {
+      "name": "FC Košice (2018)",
+      "gender": "male",
+      "sofascore_id": "168476",
+      "fotmob_id": "969268",
+      "whoscored_id": "28108"
+    },
+    "llagostera-futur": {
+      "name": "Llagostera / Costa Brava / Badalona Futur",
+      "gender": "male",
+      "sofascore_id": "54127",
+      "fotmob_id": "189641",
+      "whoscored_id": "8287"
+    },
+    "cf-badalona": {
+      "name": "CF Badalona",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "2241",
+      "whoscored_id": "2778"
+    },
+    "asa-old": {
+      "name": "ASA / FCM Târgu Mureș (historical)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "188198",
+      "whoscored_id": "8054"
+    },
+    "asa-2021": {
+      "name": "AFC ASA Târgu Mureș (2021)",
+      "gender": "male",
+      "sofascore_id": "24804",
+      "fotmob_id": "1787829",
+      "whoscored_id": "32297"
+    },
+    "unirea-ungheni": {
+      "name": "CS Unirea Ungheni 2018",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": ""
+    },
+    "dunav-old": {
+      "name": "Dunav Ruse (pre-2011)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": ""
+    },
+    "dunav-2011": {
+      "name": "Dunav 2010 / Dunav Ruse (2011 era)",
+      "gender": "male",
+      "sofascore_id": "3286",
+      "fotmob_id": "46474",
+      "whoscored_id": "3945"
+    },
+    "dunav-2020": {
+      "name": "Dunav Ruse (2020 restart)",
+      "gender": "male",
+      "sofascore_id": "",
+      "fotmob_id": "",
+      "whoscored_id": ""
+    }
+  },
+  "relationships": [
+    {
+      "id": "sibir-restart-2019-1",
+      "event_id": "sibir-restart-2019",
+      "relationship": "succeeded_by",
+      "from": "sibir-old",
+      "to": "sibir-2019",
+      "effective_year": 2019,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://en.wikipedia.org/wiki/FC_Sibir_Novosibirsk_(2019)",
+        "https://nsk.rbc.ru/nsk/27/06/2024/667d33339a794701f39fb363"
+      ],
+      "notes": "A successor relationship is not permission to remap 2010 fixtures to a club founded in 2019."
+    },
+    {
+      "id": "sibir-name-2024-2",
+      "event_id": "sibir-name-2024",
+      "relationship": "renamed_to",
+      "from": "sibir-2019",
+      "to": "sibir-2019",
+      "effective_year": 2024,
+      "effective_date": "2024-06-27",
+      "status": "researched",
+      "sources": [
+        "https://en.wikipedia.org/wiki/FC_Sibir_Novosibirsk_(2019)",
+        "https://nsk.rbc.ru/nsk/27/06/2024/667d33339a794701f39fb363"
+      ],
+      "notes": "",
+      "from_name": "FC Novosibirsk",
+      "to_name": "FC Sibir"
+    },
+    {
+      "id": "padova-restart-2014-3",
+      "event_id": "padova-restart-2014",
+      "relationship": "succeeded_by",
+      "from": "padova-old",
+      "to": "padova-2014",
+      "effective_year": 2014,
+      "effective_date": "2014-07-24",
+      "status": "researched",
+      "sources": [
+        "https://www.padovacalcio.it/societa/storia-del-calcio-padova/"
+      ],
+      "notes": "Historical FotMob 6510 remains unverified; it is deliberately not asserted here."
+    },
+    {
+      "id": "padova-name-2015-4",
+      "event_id": "padova-name-2015",
+      "relationship": "renamed_to",
+      "from": "padova-2014",
+      "to": "padova-2014",
+      "effective_year": 2015,
+      "effective_date": "2015-07-06",
+      "status": "researched",
+      "sources": [
+        "https://www.padovacalcio.it/societa/storia-del-calcio-padova/"
+      ],
+      "notes": "",
+      "from_name": "Biancoscudati Padova",
+      "to_name": "Calcio Padova"
+    },
+    {
+      "id": "siena-restart-2014-5",
+      "event_id": "siena-restart-2014",
+      "relationship": "succeeded_by",
+      "from": "siena-old",
+      "to": "siena-2014",
+      "effective_year": 2014,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://atlantedelcalcio.it/squadre/siena/",
+        "https://en.wikipedia.org/wiki/Siena_FC"
+      ],
+      "notes": "Provider profiles reused across eras require a dated fixture check; unspecified IDs remain blank."
+    },
+    {
+      "id": "siena-restart-2020-6",
+      "event_id": "siena-restart-2020",
+      "relationship": "succeeded_by",
+      "from": "siena-2014",
+      "to": "siena-2020",
+      "effective_year": 2020,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://atlantedelcalcio.it/squadre/siena/",
+        "https://en.wikipedia.org/wiki/Siena_FC"
+      ],
+      "notes": "Provider profiles reused across eras require a dated fixture check; unspecified IDs remain blank."
+    },
+    {
+      "id": "siena-restart-2023-7",
+      "event_id": "siena-restart-2023",
+      "relationship": "succeeded_by",
+      "from": "siena-2020",
+      "to": "siena-2023",
+      "effective_year": 2023,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://atlantedelcalcio.it/squadre/siena/",
+        "https://en.wikipedia.org/wiki/Siena_FC"
+      ],
+      "notes": "Provider profiles reused across eras require a dated fixture check; unspecified IDs remain blank."
+    },
+    {
+      "id": "vicenza-restructure-2018-8",
+      "event_id": "vicenza-restructure-2018",
+      "relationship": "merged_into",
+      "from": "vicenza-old",
+      "to": "vicenza-2018",
+      "effective_year": 2018,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://www.lrvicenza.net/storia-lrvicenza-2018-2020/",
+        "https://atlantedelcalcio.it/squadre/bassano-virtus/"
+      ],
+      "notes": "Vicenza sporting business acquired; Bassano operation moved. Preserve pre-2018 matches between the predecessors. Vicenza Women is excluded."
+    },
+    {
+      "id": "vicenza-restructure-2018-9",
+      "event_id": "vicenza-restructure-2018",
+      "relationship": "merged_into",
+      "from": "bassano-old",
+      "to": "vicenza-2018",
+      "effective_year": 2018,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://www.lrvicenza.net/storia-lrvicenza-2018-2020/",
+        "https://atlantedelcalcio.it/squadre/bassano-virtus/"
+      ],
+      "notes": "Vicenza sporting business acquired; Bassano operation moved. Preserve pre-2018 matches between the predecessors. Vicenza Women is excluded."
+    },
+    {
+      "id": "lokomotiv-sofia-restart-2015-10",
+      "event_id": "lokomotiv-sofia-restart-2015",
+      "relationship": "succeeded_by",
+      "from": "lokomotiv-sofia-old",
+      "to": "lokomotiv-sofia-2015",
+      "effective_year": 2015,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://fclokomotivsofia.bg/istoriya/",
+        "https://en.wikipedia.org/wiki/FC_Lokomotiv_Sofia"
+      ],
+      "notes": "Current provider profiles also appear on historical 2011 fixtures. Do not infer profile validity dates from this edge alone."
+    },
+    {
+      "id": "syunik-name-2022-11",
+      "event_id": "syunik-name-2022",
+      "relationship": "renamed_to",
+      "from": "gandzasar-old-syunik",
+      "to": "gandzasar-old-syunik",
+      "effective_year": 2022,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://rsssf.org/tablesa/arme2022.html",
+        "https://www.armtimes.com/hy/article/242019",
+        "https://www.ffa.am/storage/uploads/Ardzanagrutyun%2013-12.05.23.pdf"
+      ],
+      "notes": "",
+      "from_name": "Gandzasar-Kapan",
+      "to_name": "Syunik"
+    },
+    {
+      "id": "gandzasar-distinct-12",
+      "event_id": "gandzasar-distinct",
+      "relationship": "distinct_from",
+      "from": "gandzasar-old-syunik",
+      "to": "gandzasar-new",
+      "effective_year": "",
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://rsssf.org/tablesa/arme2022.html",
+        "https://www.armtimes.com/hy/article/242019",
+        "https://www.ffa.am/storage/uploads/Ardzanagrutyun%2013-12.05.23.pdf"
+      ],
+      "notes": "The clubs played each other in 2022/23. Historical Sofascore fixture IDs need a dated mapping; no identity equivalence is asserted."
+    },
+    {
+      "id": "bastia-borgo-merger-2017-13",
+      "event_id": "bastia-borgo-merger-2017",
+      "relationship": "merged_into",
+      "from": "ca-bastia-old",
+      "to": "bastia-borgo-2017",
+      "effective_year": 2017,
+      "effective_date": "2017-07-03",
+      "status": "researched",
+      "sources": [
+        "https://www.fff.fr/218-parcours-coupe-fc-bastia-borgo.html",
+        "https://www.fc-borgo.com/en-savoir-plus/historique-du-club-147456"
+      ],
+      "notes": "WhoScored 9545 spans eras; shared provider ID is not proof that the two predecessor clubs were the same team."
+    },
+    {
+      "id": "bastia-borgo-merger-2017-14",
+      "event_id": "bastia-borgo-merger-2017",
+      "relationship": "merged_into",
+      "from": "borgo-old",
+      "to": "bastia-borgo-2017",
+      "effective_year": 2017,
+      "effective_date": "2017-07-03",
+      "status": "researched",
+      "sources": [
+        "https://www.fff.fr/218-parcours-coupe-fc-bastia-borgo.html",
+        "https://www.fc-borgo.com/en-savoir-plus/historique-du-club-147456"
+      ],
+      "notes": "WhoScored 9545 spans eras; shared provider ID is not proof that the two predecessor clubs were the same team."
+    },
+    {
+      "id": "borgo-name-2022-15",
+      "event_id": "borgo-name-2022",
+      "relationship": "renamed_to",
+      "from": "bastia-borgo-2017",
+      "to": "bastia-borgo-2017",
+      "effective_year": 2022,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://www.fff.fr/218-parcours-coupe-fc-bastia-borgo.html",
+        "https://www.fc-borgo.com/en-savoir-plus/historique-du-club-147456"
+      ],
+      "notes": "",
+      "from_name": "FC Bastia-Borgo",
+      "to_name": "FC Borgo"
+    },
+    {
+      "id": "kosice-formation-2018-16",
+      "event_id": "kosice-formation-2018",
+      "relationship": "merged_into",
+      "from": "vysne-opatske",
+      "to": "kosice-2018",
+      "effective_year": 2018,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://www.fckosice.sk/klub",
+        "https://www.sofascore.com/football/team/fc-kosice/168476"
+      ],
+      "notes": "Formation from regional clubs. FotMob 557395 and Sofascore 1239848 remain unverified and are not asserted."
+    },
+    {
+      "id": "kosice-formation-2018-17",
+      "event_id": "kosice-formation-2018",
+      "relationship": "merged_into",
+      "from": "barca-kosice",
+      "to": "kosice-2018",
+      "effective_year": 2018,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://www.fckosice.sk/klub",
+        "https://www.sofascore.com/football/team/fc-kosice/168476"
+      ],
+      "notes": "Formation from regional clubs. FotMob 557395 and Sofascore 1239848 remain unverified and are not asserted."
+    },
+    {
+      "id": "kosice-distinct-18",
+      "event_id": "kosice-distinct",
+      "relationship": "distinct_from",
+      "from": "kosice-old",
+      "to": "kosice-2018",
+      "effective_year": "",
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://www.fckosice.sk/klub",
+        "https://www.sofascore.com/football/team/fc-kosice/168476"
+      ],
+      "notes": "The historical MFK/VSS club is not interchangeable with the FC Košice entity founded in 2018."
+    },
+    {
+      "id": "llagostera-name-2021-19",
+      "event_id": "llagostera-name-2021",
+      "relationship": "renamed_to",
+      "from": "llagostera-futur",
+      "to": "llagostera-futur",
+      "effective_year": 2021,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://www.3cat.cat/esport3/lincert-futur-del-badalona-futur/noticia/3241174/",
+        "https://www.bdncom.cat/futbol/no-hi-haura-fusio-al-cf-badalona"
+      ],
+      "notes": "",
+      "from_name": "UE Llagostera",
+      "to_name": "UE Costa Brava"
+    },
+    {
+      "id": "llagostera-name-2022-20",
+      "event_id": "llagostera-name-2022",
+      "relationship": "renamed_to",
+      "from": "llagostera-futur",
+      "to": "llagostera-futur",
+      "effective_year": 2022,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://www.3cat.cat/esport3/lincert-futur-del-badalona-futur/noticia/3241174/",
+        "https://www.bdncom.cat/futbol/no-hi-haura-fusio-al-cf-badalona"
+      ],
+      "notes": "",
+      "from_name": "UE Costa Brava",
+      "to_name": "CF Badalona Futur"
+    },
+    {
+      "id": "badalona-distinct-21",
+      "event_id": "badalona-distinct",
+      "relationship": "distinct_from",
+      "from": "cf-badalona",
+      "to": "llagostera-futur",
+      "effective_year": 2023,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://www.3cat.cat/esport3/lincert-futur-del-badalona-futur/noticia/3241174/",
+        "https://www.bdncom.cat/futbol/no-hi-haura-fusio-al-cf-badalona"
+      ],
+      "notes": "Proposed merger did not complete. Keep both first teams separate."
+    },
+    {
+      "id": "asa-distinct-22",
+      "event_id": "asa-distinct",
+      "relationship": "distinct_from",
+      "from": "asa-old",
+      "to": "asa-2021",
+      "effective_year": 2021,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://asatargumures.com/istorie/",
+        "https://liga2.prosport.ro/echipe/afc-asa-targu-mures/page/17"
+      ],
+      "notes": "Do not replace the 2015 European fixture profiles with the new ASA project. A broader historical grouping is a separate project choice."
+    },
+    {
+      "id": "ungheni-rights-2025-23",
+      "event_id": "ungheni-rights-2025",
+      "relationship": "transferred_rights_to",
+      "from": "unirea-ungheni",
+      "to": "asa-2021",
+      "effective_year": 2025,
+      "effective_date": "2025-07-18",
+      "status": "researched",
+      "sources": [
+        "https://asatargumures.com/istorie/",
+        "https://liga2.prosport.ro/echipe/afc-asa-targu-mures/page/17"
+      ],
+      "notes": "Transfer of sporting activity and Liga II participation rights; historical Ungheni matches remain with Ungheni."
+    },
+    {
+      "id": "dunav-restart-2011-24",
+      "event_id": "dunav-restart-2011",
+      "relationship": "succeeded_by",
+      "from": "dunav-old",
+      "to": "dunav-2011",
+      "effective_year": 2011,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://fcdunav.bg/istoria/",
+        "https://en.wikipedia.org/wiki/FC_Dunav_Ruse",
+        "https://utroruse.com/amp/773600/"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "dunav-restart-2020-25",
+      "event_id": "dunav-restart-2020",
+      "relationship": "succeeded_by",
+      "from": "dunav-2011",
+      "to": "dunav-2020",
+      "effective_year": 2020,
+      "effective_date": "",
+      "status": "researched",
+      "sources": [
+        "https://fcdunav.bg/istoria/",
+        "https://en.wikipedia.org/wiki/FC_Dunav_Ruse",
+        "https://utroruse.com/amp/773600/"
+      ],
+      "notes": "The provider IDs listed for the 2011 era are observed on Main's 2017 fixtures; later profile reuse requires dated evidence."
+    }
+  ]
+}

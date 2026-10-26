@@ -67,7 +67,7 @@ class _PartialSchedule(ProviderError):
         self.status_code = getattr(cause, 'status_code', None)
 
 
-def _validate(events):
+def _validate(events,provider=''):
     seen = set()
     for event in events:
         if (type(event.get('id')) is not int or type(event.get('startTimestamp')) is not int
@@ -78,6 +78,9 @@ def _validate(events):
             team = event.get(side + 'Team') or {}
             if team.get('id') is None or not str(team.get('name') or '').strip():
                 raise ValueError('Schedule fixture is missing a team ID/name')
+            from providers.teamScope import in_mens_scope
+            if not in_mens_scope(provider,team['id'],team):
+                raise ValueError('Women\'s team returned in a men\'s fixture schedule')
     return events
 
 
@@ -86,7 +89,7 @@ def _checkpoint(root, provider, competition, start):
 
 
 def _validate_sofa(events, competition, season_id=None):
-    _validate(events)
+    _validate(events,'sofascore')
     for event in events:
         cid = ((event.get('tournament') or {}).get('uniqueTournament') or {}).get('id')
         sid = (event.get('season') or {}).get('id')
@@ -102,7 +105,7 @@ def _load(path, provider, competition, start):
             or value.get('format') not in (FORMAT, 'soccer-fixture-schedule-v1')):
         raise ValueError('Schedule checkpoint identity mismatch: ' + str(path))
     return (_validate_sofa(value['events'], competition) if provider == 'sofascore'
-            else _validate(value['events']))
+            else _validate(value['events'],provider))
 
 
 def _complete_checkpoint(path):
@@ -323,7 +326,7 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                         origin = 'provider_schedule'
                     finally:
                         client.refresh_cache = False
-            _validate(events)
+            _validate(events,provider)
             if not events:
                 raise ValueError('No fixtures returned')
             if complete and competition.name in EUROPEAN_COMPETITIONS:
@@ -355,7 +358,7 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                 origin = 'saved_provider_cache'
             if isinstance(exc, _PartialSchedule):
                 retained = {e['id']: e for e in events}
-                retained.update({e['id']: e for e in _validate(exc.events)})
+                retained.update({e['id']: e for e in _validate(exc.events,provider)})
                 events = list(retained.values())
                 origin = 'partial_provider_schedule'
             if provider == 'sofascore' and not events:
@@ -644,6 +647,8 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
         all_provider_fixtures_validated=all(frame[p + '_fixture_check'].eq('validated').all() for p in PROVIDERS[1:]),
         issues=len(issues), fixture_checks={p: frame[p + '_fixture_check'].value_counts().to_dict() for p in PROVIDERS[1:]})
     atomic_json(folder / 'manifest.json', manifest)
+    from providers.teamHistory import export_history
+    export_history(root,output.parent)
     return manifest
 
 

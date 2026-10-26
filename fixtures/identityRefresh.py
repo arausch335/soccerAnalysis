@@ -151,7 +151,9 @@ def _reconcile(root,dataset,*,dry_run):
                 retained=[r for r in rows if r['sofascore_id'] not in removed_ids] if kind=='match' else rows
                 new,issues=resolve_rows(retained,bridges,kind);review.extend(issues)
             new=[canonical_record(row,reference=kind=='team') for row in new]
-            if kind=='team':new=list({tuple(row.get(c,'') for c in columns):row for row in new}.values())
+            if kind=='team':
+                from providers.teamScope import keep_reference
+                new=list({tuple(row.get(c,'') for c in columns):row for row in new if keep_reference(row)}.values())
             report['tables'][folder+'/'+kind]={'before':coverage(rows),'after':coverage(new)}
             if new!=rows:pending[path]=(columns,new)
     # Keep the legacy native-only match list consistent with the concordance.
@@ -165,7 +167,9 @@ def _reconcile(root,dataset,*,dry_run):
         if not path.exists():continue
         columns,rows=pending[path] if path in pending else read_table(path)
         new=[canonical_record(row,reference=kind=='team') for row in rows]
-        if kind=='team':new=list({tuple(row.get(c,'') for c in columns):row for row in new}.values())
+        if kind=='team':
+            from providers.teamScope import keep_reference
+            new=list({tuple(row.get(c,'') for c in columns):row for row in new if keep_reference(row)}.values())
         if new!=rows:pending[path]=(columns,new)
     if fixture_rows is not None:
         by_id={r['sofascore_match_id']:r for r in fixture_rows}
@@ -221,6 +225,10 @@ def _reconcile(root,dataset,*,dry_run):
     report['superseded_fixtures_removed']=len(removed_ids)
     report['scorelines_repaired']=len(score_repairs)
     if dry_run:return report
+    from providers.teamHistory import export_history
+    _,history_detail=export_history(root,dataset)
+    for path,value in manifests.items():
+        if path.parent.name=='concordance':value['team_history']=history_detail
     backup=root/'_system/identity/previous_exports'
     for path,(columns,rows) in pending.items():
         target=backup/path.relative_to(dataset);target.parent.mkdir(parents=True,exist_ok=True)

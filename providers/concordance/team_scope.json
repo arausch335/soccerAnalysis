@@ -1,0 +1,13 @@
+{
+  "scope": "men",
+  "excluded_profiles": [
+    {
+      "provider": "fotmob",
+      "id": "1798961",
+      "name": "Vicenza (W)",
+      "reason": "Women's team incorrectly grouped with the men's Vicenza profiles",
+      "source_url": "https://www.fotmob.com/teams/1798961/overview",
+      "reviewed_at": "2026-10-26"
+    }
+  ]
+}

@@ -47,6 +47,8 @@ def canonical_record(row,baseline='sofascore',*,reference=False):
             canonical=canonical_team_id(provider,native)
             if canonical!=_native(native):row[id_key]=int(canonical) if isinstance(native,(int,float)) else canonical
     if reference:
+        from .teamScope import clean_reference
+        row=clean_reference(row)
         for p in ('sofascore','fotmob','whoscored'):
             native=row.get(p+'_id')
             if _native(native):
@@ -62,10 +64,14 @@ def canonical_frame(frame,baseline='sofascore',*,reference=False):
     fields={'team_id','opponent_id','home_team_id','away_team_id','team_name','team','opponent','home_team','away_team','home_team_name','away_team_name'}
     if reference:fields.update({'sofascore_id','fotmob_id','whoscored_id'})
     tokens={native for _,native in _BY_ID}|set(_BY_NAME)
-    if not any(tokens.intersection(_native(value).casefold() for value in frame[c].dropna().unique()) for c in fields.intersection(frame.columns)):
+    if not reference and not any(tokens.intersection(_native(value).casefold() for value in frame[c].dropna().unique()) for c in fields.intersection(frame.columns)):
         return frame
     import pandas as pd
-    return pd.DataFrame([canonical_record(row,baseline,reference=reference) for row in frame.to_dict('records')],columns=frame.columns)
+    rows=[canonical_record(row,baseline,reference=reference) for row in frame.to_dict('records')]
+    if reference:
+        from .teamScope import keep_reference
+        rows=[row for row in rows if keep_reference(row)]
+    return pd.DataFrame(rows,columns=frame.columns)
 
 
 def same_reviewed_team(left_provider,left,right_provider,right):

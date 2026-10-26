@@ -11,6 +11,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+import re
 import tempfile
 
 from storage.pandasStore import atomic_json
@@ -69,6 +70,9 @@ class Index:
         self.native = defaultdict(set)
         self.canonical = defaultdict(set)
         for kind, provider, native, reep in (value or {}).get('rows', []):
+            if kind=='team':
+                from .teamScope import in_mens_scope
+                if not in_mens_scope(provider,native):continue
             self.native[kind, provider, str(native)].add(reep)
             self.canonical[kind, reep, provider].add(str(native))
 
@@ -96,6 +100,10 @@ class Index:
     def resolve(self, kind, row):
         """Fill only unique bridges; expose conflicts without overwriting IDs."""
         result = dict(row)
+        if kind=='team':
+            from .teamScope import clean_reference
+            cleaned=clean_reference(row)
+            if cleaned!=result:return cleaned
         mapped = set()
         ambiguous = False
         for provider in PROVIDERS:
@@ -231,6 +239,9 @@ def import_release(bridges, redirects, wanted, *, release, source, checksums):
             for row in csv.DictReader(stream):
                 kind = row['entity_type']
                 if row['namespace'] in NAMESPACES.get((kind, row['provider']), set()):
+                    if kind=='team':
+                        from .teamScope import in_mens_scope
+                        if not in_mens_scope(row['provider'],row['external_id'],row):continue
                     yield kind, row['provider'], row['external_id'], canonical(row['reep_id'])
 
     selected = set()
@@ -244,25 +255,48 @@ def import_release(bridges, redirects, wanted, *, release, source, checksums):
             'redirects':{old:canonical(old) for old in redirect if canonical(old) in canonical_ids}}
 
 
+def release_sources(client):
+    """Support legacy pointers and the checksum-pinned public release v4."""
+    pointer = client.get(LATEST, impersonate='chrome', timeout=60)
+    pointer.raise_for_status();pointer=pointer.json()
+    release = pointer.get('release_tag',pointer.get('stamp',''))
+    if not release:raise ValueError('Missing Reep release stamp')
+    if not re.fullmatch('[A-Za-z0-9][A-Za-z0-9._-]*',release):
+        raise ValueError('Invalid Reep release')
+    base = 'https://data.reep.football/releases/' + release + '/'
+    if 'release_tag' in pointer:
+        response = client.get(base + 'checksums.txt', impersonate='chrome', timeout=60)
+        response.raise_for_status()
+        checksums = {line.split()[1]: line.split()[0] for line in response.text.splitlines() if line.strip()}
+        return release,base,checksums,{name:base+'csv/'+name+'.csv.gz' for name in ('redirects','bridges')}
+    descriptor=pointer['release']
+    if descriptor['key']!='releases/'+release+'/release.json':raise ValueError('Invalid Reep manifest path')
+    response=client.get(base+'release.json',impersonate='chrome',timeout=60);response.raise_for_status()
+    if hashlib.sha256(response.content).hexdigest()!=descriptor['sha256']:raise ValueError('Reep manifest checksum mismatch')
+    manifest=response.json()
+    if manifest.get('stamp')!=release:raise ValueError('Reep manifest stamp mismatch')
+    checksums={};urls={}
+    for name in ('redirects','bridges'):
+        item=manifest['files'][name+'.csv.gz'];key=item['key']
+        pattern=r'releases/'+re.escape(release)+r'/(?:[A-Za-z0-9._-]+/)*'+name+r'\.csv\.gz'
+        if not re.fullmatch(pattern,key) or '..' in key.split('/'):
+            raise ValueError('Invalid Reep bulk file path')
+        if not re.fullmatch('[0-9a-f]{64}',item['sha256']):raise ValueError('Invalid Reep file checksum')
+        checksums['csv/'+name+'.csv.gz']=item['sha256'];urls[name]='https://data.reep.football/'+key
+    return release,base,checksums,urls
+
+
 def refresh(root, dataset, ensemble=None):
     """Download verified public bulk files, then discard them after compaction."""
     from curl_cffi import requests
-    pointer = requests.get(LATEST, impersonate='chrome', timeout=60)
-    pointer.raise_for_status()
-    release = pointer.json()['release_tag']
-    if not all(c.isalnum() or c in '.-_' for c in release):
-        raise ValueError('Invalid Reep release')
-    base = 'https://data.reep.football/releases/' + release + '/'
-    response = requests.get(base + 'checksums.txt', impersonate='chrome', timeout=60)
-    response.raise_for_status()
-    checksums = {line.split()[1]: line.split()[0] for line in response.text.splitlines() if line.strip()}
+    release,base,checksums,urls=release_sources(requests)
     wanted = wanted_ids(root, dataset, ensemble)
     with tempfile.TemporaryDirectory(prefix='soccer-reep-') as directory:
         paths = {}
         for name in ('redirects', 'bridges'):
             print('Downloading Reep ' + name + ' (temporary bulk file)...', flush=True)
             paths[name] = Path(directory) / (name + '.csv.gz')
-            with closing(requests.get(base + 'csv/' + name + '.csv.gz', impersonate='chrome',
+            with closing(requests.get(urls[name], impersonate='chrome',
                                       timeout=600, stream=True)) as response:
                 response.raise_for_status()
                 with paths[name].open('wb') as stream:

@@ -568,6 +568,9 @@ def export_concordance(frames, data_root, output, *, source_teams=None):
         seen = set()
         for record in frame.to_dict('records'):
             clean = {k:'' if pd.isna(v) else str(v) for k,v in record.items()}
+            if kind=='team':
+                from providers.teamScope import keep_reference
+                if not keep_reference(clean):continue
             resolved = bridges.resolve(kind, clean)
             if kind == 'team':
                 from providers.teamProfiles import canonical_record
@@ -585,6 +588,11 @@ def export_concordance(frames, data_root, output, *, source_teams=None):
             'reep_linked':int(exported.reep_id.ne('').sum()),
             'conflicts':int(exported.identity_status.eq('conflict').sum()),
             'missing_ids':{p:int(exported[p+'_id'].eq('').sum()) for p in ('sofascore','fotmob','whoscored')}}
+    if 'team' in frames:
+        from providers.teamHistory import export_history
+        path,detail=export_history(data_root,output)
+        written['team history concordance']=path
+        manifest['team_history']=detail
     atomic_json(concordance / 'manifest.json', manifest)
     return written
 

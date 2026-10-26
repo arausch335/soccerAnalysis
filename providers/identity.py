@@ -123,6 +123,8 @@ def teams_match(left, right, provider, review_root=None, baseline='sofascore'):
     """Prefer reviewed/native ID evidence; retain aliases for uncovered clubs."""
     from .reep import index
     left_id, right_id = left.get('id'), right.get('id')
+    from .teamScope import in_mens_scope
+    if not in_mens_scope(baseline,left_id,left) or not in_mens_scope(provider,right_id,right):return False
     if left_id is not None and right_id is not None and provider:
         from .teamProfiles import same_reviewed_team
         if same_reviewed_team(baseline,left_id,provider,right_id):return True
