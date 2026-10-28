@@ -52,3 +52,15 @@ workers:
         seasons: [ '2022/23' ]
         collection_types: [ combined ]
         spatial_capture: fast
+  dario:
+    role: worker
+    dashboard: false
+    label: Dario
+    color: '#d17a22'
+    enabled: true
+    assignments:
+      - id: cleanup-2023-2024
+        competitions: [Premier League, Bundesliga, La Liga, Champions League, Europa League, Champions League Qualifiers, Europa League Qualifiers, Serie A, Ligue 1]
+        seasons: ['2023/24']
+        collection_types: [combined]
+        spatial_capture: fast

@@ -15,6 +15,8 @@ class WorkerPlanTests(unittest.TestCase):
         self.document['workers']['main']['assignments']=deepcopy(self.document['workers']['msi']['assignments'])
         self.document['workers']['main']['assignments'][0]['seasons']=['2023/24']
         self.document['workers']['msi']['assignments']=[]
+        # Synthetic Main assignments must not overlap the real Dario plan.
+        self.document['workers']['dario']['assignments']=[]
 
     def load(self,document):
         with tempfile.TemporaryDirectory() as folder:

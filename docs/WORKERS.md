@@ -63,6 +63,12 @@ commits, push snapshots, rebase local work or transfer raw datasets through Git.
 | Main (`main`) | Monitor | No scraping | Opens automatically |
 | MSI (`msi`) | Worker | Seven competitions, 2021/22, combined, fast spatial | Off |
 | Headless (`headless`) | Worker | Seven competitions, 2022/23, combined, fast spatial | Off |
+| Dario (`dario`) | Worker | Nine competitions, remaining 2023/24 combined Fast work | Off |
+
+New computers should follow [NEW_WORKER_SETUP.md](NEW_WORKER_SETUP.md).
+Dario's scope and preservation rules are in [DARIO.md](DARIO.md). Main determines
+its unresolved matches from existing inventories and review decisions; a new
+assignment does not reopen frozen Done seasons or discard prior collectors' data.
 
 ## 1. Install Tailscale
 
