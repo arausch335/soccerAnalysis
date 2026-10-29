@@ -40,6 +40,7 @@ def inspect_queues(root,ensemble):
             counts=dict(db.execute('SELECT state,count(*) FROM uploads GROUP BY state'))
         if counts.get('pending',0):problems.append('Uploads are still incomplete')
         if counts.get('received',0):problems.append('Received uploads have not been incorporated')
+        if counts.get('quarantined',0):problems.append('Uploads set aside for review have not been incorporated')
     staged=list(Path(ensemble).rglob('transfer-manifest.json')) if Path(ensemble).exists() else []
     if staged:problems.append('Portable imports remain staged')
     # An unfinished portable copy may only have the marker, not its final manifest.

@@ -840,3 +840,29 @@ create identity proposals, so these appear as lineup discrepancies rather than
 an unexplained identity count. Existing summary-only failures show a request
 to update/retry the worker until a detailed report arrives. A retry targets the
 remaining match; it does not require confirming its data unavailable.
+
+
+## Uploads set aside for review
+
+MSI isolates uploads with invalid source data (for example, mismatched WhoScored
+teams or malformed checkpoint JSON) and continues with later uploads and dataset
+builds. Main's dashboard shows a separate “set aside for review” count. The
+rejected manifest, exact raw objects, import receipts and error history stay on
+MSI; no duplicate raw-data copy is needed. A later full-season upload does not
+silently retire a quarantined package. Disk shortages, busy seasons, cancellation
+and filesystem failures stay on the normal resumable path.
+
+On MSI, list the packages, inspect one, then explicitly retry after addressing
+its recorded problem:
+
+```sh
+python -m tools.review_imports
+python -m tools.review_imports --show UPLOAD_ID
+python -m tools.review_imports --retry UPLOAD_ID
+```
+
+Use `--data-root PATH` for a custom raw-data directory. `--show` prints each
+original relative path and its preserved object location. Retrying retains the
+failure history; if validation still fails, the upload is set aside again.
+Quarantined packages remain excluded from the incorporated count and block the
+full-integration audit, while valid data can continue to import and publish.

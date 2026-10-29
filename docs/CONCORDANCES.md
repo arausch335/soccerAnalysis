@@ -70,7 +70,9 @@ when the archive or portable-import directory is elsewhere. The audit:
 
 1. Reads MSI's archive ledger without changing it. Both incomplete uploads and
    received-but-not-incorporated packages block readiness.
-2. Detects staged portable imports, including unfinished copies.
+2. Detects staged portable imports, including unfinished copies. Uploads set
+   aside for review also block full integration; inspect them with
+   `python -m tools.review_imports` on MSI.
 3. Revalidates actual local holdings without trusting inventory-cache hits.
 4. Compares reported resources/capabilities with validated MSI holdings. Empty
    queues alone cannot establish completeness.

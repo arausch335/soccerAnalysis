@@ -173,6 +173,104 @@ class TransferTests(unittest.TestCase):
         self.assertFalse((archive.objects/digest(self.raw)).exists());self.assertTrue(self.raw.exists())
         self.assertEqual(archive.commit('headless',mid)['state'],'imported')
 
+    def test_invalid_upload_is_preserved_while_next_upload_and_build_finish(self):
+        from tests.test_ensemble import populate
+        from collection.workerIdentity import ensure_identity
+        self.raw.write_text('{invalid JSON')
+        bad=self.queue();self.outbox.send_one(self.peer)
+        goodroot=self.base/'good';populate(goodroot,limit=1)
+        goodout=Outbox(goodroot,'headless')
+        good=goodout.enqueue(season_files(goodroot,self.season),kind='raw',season=self.season,completed=True)
+        goodout.send_one(self.peer)
+        hub=self.base/'msi';atomic_json(hub/'.soccer-scraper.json',{'format':1});ensure_identity(hub,'msi')
+        agent=StorageAgent(hub,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.base/'dataset',log=quiet)
+        agent.server=self.server
+        self.assertTrue(agent.maintenance_once())
+        archive=self.server.archive
+        self.assertEqual(archive.status()['quarantined'],1)
+        self.assertEqual(archive.status()['received'],0)
+        self.assertEqual(archive.upload('headless',bad)[1],'quarantined')
+        self.assertEqual(archive.upload('headless',good)[1],'imported')
+        self.assertIn(1,PandasStore(hub/self.season/'match_checkpoints/1').from_csv().matches)
+        self.assertIsNotNone(archive.publication());self.assertEqual(archive.build_jobs(),[])
+        self.assertEqual(agent.maintenance_status['state'],'review_needed')
+        self.assertTrue((archive.objects/digest(self.raw)).exists());self.assertTrue(self.raw.exists())
+        self.assertEqual(archive.quarantined()[0]['id'],bad)
+        # Restarting keeps the quarantine and prevents automatic repeated retries.
+        restored=Archive(hub)
+        self.assertEqual(restored.quarantined()[0]['id'],bad)
+        with patch('collection.backgroundImports.import_parts',side_effect=AssertionError('Repeated quarantined upload')):
+            self.assertFalse(agent.maintenance_once())
+        from tools.audit_integration import inspect_queues
+        counts,problems=inspect_queues(hub,self.base/'ensemble')
+        self.assertEqual(counts['quarantined'],1)
+        self.assertTrue(any('set aside' in p for p in problems))
+
+    def test_lost_upload_acknowledgement_does_not_requeue_a_quarantined_package(self):
+        mid=self.queue();request=self.peer.request
+        def lose_ack(path,*args,**kwargs):
+            value=request(path,*args,**kwargs)
+            if path.endswith('/commit'):
+                self.server.archive.quarantine(mid,ValueError('home team differs'))
+                raise OSError('Acknowledgement lost')
+            return value
+        with patch.object(self.peer,'request',side_effect=lose_ack):
+            with self.assertRaises(OSError):self.outbox.send_one(self.peer)
+        self.assertEqual(self.outbox.queued(),1)
+        self.assertTrue(self.outbox.send_one(self.peer));self.assertEqual(self.outbox.queued(),0)
+        self.assertEqual(self.server.archive.upload('headless',mid)[1],'quarantined')
+        self.assertEqual(self.server.archive.completed(),[])
+
+    def test_explicit_retry_keeps_failure_history_and_imports_after_review(self):
+        from tests.test_ensemble import populate
+        from collection.workerIdentity import ensure_identity
+        populate(self.root,limit=1)
+        mid=self.outbox.enqueue(season_files(self.root,self.season,'1'),kind='raw',season=self.season)
+        self.outbox.send_one(self.peer)
+        hub=self.base/'msi';atomic_json(hub/'.soccer-scraper.json',{'format':1});ensure_identity(hub,'msi')
+        agent=StorageAgent(hub,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.base/'dataset',log=quiet)
+        agent.server=self.server
+        with patch('collection.backgroundImports.import_parts',side_effect=ValueError('home team differs')):
+            agent.maintenance_once()
+        from tools.review_imports import main as review
+        import io
+        with patch('sys.stdout',new_callable=io.StringIO) as output:
+            self.assertEqual(review(['--data-root',str(hub),'--show',mid]),0)
+            files=json.loads(output.getvalue())[0]['files']
+            self.assertTrue(all(Path(f['preserved_at']).exists() for f in files))
+        with patch('sys.stdout',new_callable=io.StringIO):review(['--data-root',str(hub),'--retry',mid])
+        self.assertEqual(self.server.archive.quarantined(),[])
+        self.assertTrue(agent.maintenance_once())
+        self.assertEqual(self.server.archive.upload('headless',mid)[1],'imported')
+        with self.server.archive.connect() as db:
+            row=db.execute('SELECT error,retried_at FROM upload_failures WHERE upload_id=?',(mid,)).fetchone()
+        self.assertIn('home team differs',row[0]);self.assertIsNotNone(row[1])
+
+    def test_existing_archive_is_upgraded_without_losing_receipts_or_bytes(self):
+        mid=self.queue();self.outbox.send_one(self.peer)
+        with self.server.archive.connect() as db:
+            db.execute('DROP TABLE upload_failures');db.commit()
+        restored=Archive(self.base/'msi')
+        self.assertEqual(restored.completed()[0][0],mid)
+        self.assertTrue(restored.quarantine(mid,ValueError('legacy input mismatch')))
+        self.assertEqual(restored.quarantined()[0]['id'],mid)
+        self.assertTrue((restored.objects/digest(self.raw)).exists())
+
+    def test_low_space_and_busy_inputs_are_not_quarantined(self):
+        from collection.maintenance import LowSpace,DeferredWork
+        self.queue();self.outbox.send_one(self.peer)
+        agent=StorageAgent(self.base/'msi','msi',{'hub':'msi','consumers':['main']},dataset_root=self.base/'dataset',log=quiet)
+        agent.server=self.server
+        for error in (LowSpace('reserve'),OSError('disk unavailable'),DeferredWork('busy')):
+            with self.subTest(error=type(error).__name__), \
+                 patch('collection.backgroundImports.import_parts',side_effect=error):
+                if isinstance(error,DeferredWork) and not isinstance(error,LowSpace):
+                    self.assertFalse(agent.maintenance_once())
+                else:
+                    with self.assertRaises(type(error)):agent.maintenance_once()
+            self.assertEqual(self.server.archive.status()['quarantined'],0)
+            self.assertEqual(self.server.archive.status()['received'],1)
+
     def test_raw_capture_excludes_retired_generations_and_secrets(self):
         from tests.test_ensemble import populate
         populate(self.root,limit=1)

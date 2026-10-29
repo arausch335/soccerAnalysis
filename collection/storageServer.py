@@ -22,6 +22,7 @@ class Archive:
         self.database=self.directory/'archive.sqlite'
         with self.connect() as db:
             db.executescript('CREATE TABLE IF NOT EXISTS uploads(id TEXT PRIMARY KEY,owner TEXT,manifest TEXT,state TEXT,received_at TEXT); '
+                             'CREATE TABLE IF NOT EXISTS upload_failures(id INTEGER PRIMARY KEY AUTOINCREMENT,upload_id TEXT,at TEXT,error TEXT,retried_at TEXT); '
                              'CREATE TABLE IF NOT EXISTS publication(slot INTEGER PRIMARY KEY,manifest TEXT); '
                              'CREATE TABLE IF NOT EXISTS builds(season TEXT PRIMARY KEY,state TEXT,revision INTEGER NOT NULL DEFAULT 0);')
             db.execute('BEGIN IMMEDIATE')
@@ -53,7 +54,7 @@ class Archive:
 
     def offset(self,worker,mid,sha):
         item,state=self.descriptor(worker,mid,sha);target=self.objects/sha
-        if state in ('received','imported'):return {'complete':True,'offset':item['size']}
+        if state in ('received','imported','quarantined'):return {'complete':True,'offset':item['size']}
         if item['size']==0 and not target.exists():
             target.touch()
             if digest(target)!=sha:target.unlink();raise ValueError('Empty object checksum differs')
@@ -82,18 +83,50 @@ class Archive:
     def commit(self,worker,mid):
         with self.lock:
             manifest,state=self.upload(worker,mid)
-            if state not in ('received','imported'):
+            if state not in ('received','imported','quarantined'):
                 for item in manifest['files']:
                     if not self.offset(worker,mid,item['sha256'])['complete']:raise ValueError('Upload is incomplete')
                 with self.connect() as db:
                     db.execute("UPDATE uploads SET state='received',received_at=? WHERE id=?",(now(),mid));db.commit()
                 state='received'
-            return {'id':mid,'state':state}
+            # Older producers understand received/imported acknowledgements. A
+            # quarantined upload is still durably received; replay must not
+            # requeue it or force producers to resend preserved raw bytes.
+            return {'id':mid,'state':'received' if state=='quarantined' else state,
+                    **({'integration_state':'quarantined'} if state=='quarantined' else {})}
 
     def completed(self):
         with self.connect() as db:rows=db.execute("SELECT id,manifest FROM uploads WHERE state='received' ORDER BY rowid").fetchall()
         # Received means the upload is complete, even while its season is unfinished.
         return [(mid,json.loads(body)) for mid,body in rows]
+
+    def quarantine(self,mid,error):
+        """Set one invalid upload aside, retaining its manifest and all objects."""
+        check_hash(mid)
+        with self.lock,self.connect() as db:
+            changed=db.execute("UPDATE uploads SET state='quarantined' WHERE id=? AND state='received'",(mid,)).rowcount
+            if changed:
+                db.execute('INSERT INTO upload_failures(upload_id,at,error) VALUES(?,?,?)',
+                           (mid,now(),(type(error).__name__+': '+str(error))[:4096]))
+            db.commit()
+        return bool(changed)
+
+    def quarantined(self):
+        with self.connect() as db:
+            rows=db.execute("SELECT u.id,u.owner,u.manifest,f.at,f.error FROM uploads u "
+                            "LEFT JOIN upload_failures f ON f.id=(SELECT max(id) FROM upload_failures WHERE upload_id=u.id) "
+                            "WHERE u.state='quarantined' ORDER BY u.rowid").fetchall()
+        return [{'id':mid,'worker':owner,'season':json.loads(body).get('season',''),
+                 'quarantined_at':at,'error':error} for mid,owner,body,at,error in rows]
+
+    def retry(self,mid):
+        """Explicitly retry a reviewed upload without deleting its failure history."""
+        check_hash(mid)
+        with self.lock,self.connect() as db:
+            changed=db.execute("UPDATE uploads SET state='received' WHERE id=? AND state='quarantined'",(mid,)).rowcount
+            if not changed:raise ValueError('Upload is not set aside for review')
+            db.execute('UPDATE upload_failures SET retried_at=? WHERE upload_id=? AND retried_at IS NULL',(now(),mid))
+            db.commit()
 
     def incorporated(self,mid,manifest):
         with self.lock,self.connect() as db:
@@ -101,7 +134,7 @@ class Archive:
             if manifest.get('completed'):
                 # A full-season snapshot supersedes earlier packages. A single
                 # match must never acknowledge another match that was deferred.
-                rows=db.execute('SELECT id,manifest FROM uploads WHERE owner=? AND rowid<=(SELECT rowid FROM uploads WHERE id=?)',
+                rows=db.execute("SELECT id,manifest FROM uploads WHERE owner=? AND state!='quarantined' AND rowid<=(SELECT rowid FROM uploads WHERE id=?)",
                                 (manifest['worker'],mid)).fetchall()
                 for key,body in rows:
                     if json.loads(body).get('season')==manifest['season']:db.execute("UPDATE uploads SET state='imported' WHERE id=?",(key,))
@@ -166,7 +199,8 @@ class Archive:
             counts=dict(db.execute('SELECT state,count(*) FROM uploads GROUP BY state'))
             last=db.execute('SELECT max(received_at) FROM uploads').fetchone()[0]
         publication=self.publication()
-        return {'received':counts.get('received',0),'incorporated':counts.get('imported',0),'last_received':last,
+        return {'received':counts.get('received',0),'incorporated':counts.get('imported',0),
+                'quarantined':counts.get('quarantined',0),'last_received':last,
                 'dataset_id':identifier(publication) if publication else None}
 
 

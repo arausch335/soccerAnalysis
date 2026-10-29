@@ -312,6 +312,13 @@ class StorageAgent:
             except LowSpace:raise
             except (DeferredWork,Timeout,InventoryInterrupted):
                 continue
+            except (ValueError,KeyError,TypeError,csv.Error) as exc:
+                # Invalid source data is isolated by upload. Capacity, locks,
+                # cancellation and filesystem failures remain resumable errors.
+                archive.quarantine(mid,exc)
+                changed=True
+                self.log(f'[Storage] Set aside upload {mid} ({manifest["season"]}) for review: {type(exc).__name__}: {exc}')
+                continue
         for season,build_revision in archive.build_jobs():
             check()
             self.maintenance_status={'state':'building_dataset','season':season}
@@ -352,7 +359,9 @@ class StorageAgent:
                 if changed:self.maintenance_changed.set()
                 raise
         archive.collected()
-        self.maintenance_status={'state':'current'}
+        held=archive.status()['quarantined']
+        self.maintenance_status=({'state':'review_needed','message':f'{held} upload(s) set aside for review; other imports continue'}
+                                 if held else {'state':'current'})
         return changed
 
     def log_report(self,message,**kwargs):self.log(message)
