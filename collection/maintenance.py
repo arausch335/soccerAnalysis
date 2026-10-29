@@ -28,7 +28,8 @@ def available(path, *, reserve=RESERVE):
 def require_space(path, size, *, reserve=RESERVE):
     free=available(path,reserve=reserve)
     if size>free:
-        raise LowSpace(f'Background work waiting for disk space: needs {size:,} bytes; {free:,} available after reserve')
+        raise LowSpace(f'Background work waiting for disk space: needs {size:,} bytes; '
+                       f'{free:,} available after reserve at {Path(path).resolve()}')
 
 
 def lock_paths(root, season):

@@ -34,8 +34,11 @@ def import_parts(root, files, *, owner, batch, origins=None, check=lambda:None, 
             check();path=Path(path)
             descriptions[relative]={'path':relative,'size':path.stat().st_size,'sha256':digest(path)}
         remaining={key for key,row in descriptions.items() if completed.get(key)!=row['sha256']}
+        # Only collection metadata accompanies every checkpoint. Large flat CSVs
+        # are independent import members, not overhead recopied with each batch.
         common={key for key in files if key=='.soccer-scraper.json' or
-                ('match_checkpoints' not in Path(key).parts and 'raw' not in Path(key).parts and len(Path(key).parts)<=4)}
+                (Path(key).suffix=='.json' and 'match_checkpoints' not in Path(key).parts
+                 and 'raw' not in Path(key).parts and len(Path(key).parts)<=4)}
         checkpoints=[]
         for key in sorted(files):
             if not key.endswith('/CURRENT.json'):continue
@@ -78,14 +81,25 @@ def import_parts(root, files, *, owner, batch, origins=None, check=lambda:None, 
         for members in checkpoints:commit(members)
         # Orphan/standalone provider raw files still belong in the archive.
         while remaining:
-            check();budget=min(MAX_BATCH,available(root)//4)-1024**2
-            group=set();size=sum(descriptions[key]['size'] for key in common)
-            for key in sorted(remaining):
+            check()
+            size=sum(descriptions[key]['size'] for key in common)
+            pending=sorted(remaining-common)
+            if not pending:
+                commit(set())
+                continue
+            # MAX_BATCH is a preferred batch size, not a per-file size limit.
+            # Admit an oversized first file if the real staging reserve fits.
+            first=descriptions[pending[0]]['size']
+            available_bytes=available(root)
+            budget=min(max(MAX_BATCH,size+first),(available_bytes-1024**2)//4)
+            if size+first>budget:
+                require_space(root,4*(size+first)+1024**2)
+                budget=size+first  # The volume gained space between checks.
+            group=set()
+            for key in pending:
                 amount=descriptions[key]['size']
                 if size+amount<=budget:group.add(key);size+=amount
-                elif not group:raise LowSpace('Background import waiting for enough space for its next verified file')
                 else:break
-            if not group:raise LowSpace('Background import staging budget exhausted')
             commit(group)
     return True
 
