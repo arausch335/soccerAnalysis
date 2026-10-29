@@ -36,7 +36,8 @@ class DashboardTests(unittest.TestCase):
         from copy import deepcopy
         document['workers']['main']['assignments']=deepcopy(document['workers']['msi']['assignments'])
         document['workers']['main']['assignments'][0]['seasons']=['2023/24']
-        document['workers']['msi']['assignments']=[]
+        for worker,settings in document['workers'].items():
+            if worker!='main':settings['assignments']=[]
         self.plan.write_text(yaml.safe_dump(document))
 
     def inventory(self,worker,rows):

@@ -327,6 +327,14 @@ class StorageAgent:
                     if (self.output/season).exists():shutil.copytree(self.output/season,output/season)
                     if (self.output/'fixtures.csv').is_file():shutil.copyfile(self.output/'fixtures.csv',output/'fixtures.csv')
                     if build_dataset(source,output,names=[collection_name(source/season)]):raise ValueError('Season dataset build failed')
+                    # New statistics must not leave an older ID bundle labelled
+                    # ready for R. Publish the invalidation with the new tables.
+                    old_bundle=self.output/'concordance/bundle.json'
+                    if old_bundle.is_file():
+                        target=output/'concordance/bundle.json';target.parent.mkdir(parents=True,exist_ok=True)
+                        shutil.copyfile(old_bundle,target)
+                        from concordance.build import invalidate_bundle
+                        invalidate_bundle(output,'New statistics exported; re-audit integration and rebuild concordances')
                     check()
                     updates=dataset_files(output);files=dataset_files(self.output);files.update(updates)
                     manifest={'format':FORMAT,'kind':'dataset','worker':self.worker,'files':[

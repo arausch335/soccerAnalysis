@@ -5,6 +5,10 @@ This builds a Sofascore-led dataset with FotMob, WhoScored and Reep match/team
 IDs, scores, season/competition context and matching evidence. See
 [fixture dataset instructions](docs/FIXTURES.md) for scope, resume and refresh.
 
+Before importing into R, [verify MSI integration and rebuild the full/scraped
+concordances](docs/CONCORDANCES.md). The shared ID uses Reep when available and
+stable `am`/`at`/`ap` project IDs otherwise.
+
 Collection uses one workflow: **combined**. Each provider starts with its API;
 access or response failures switch that provider to **Soccer Collector**, the
 Chrome extension. Sofascore, FotMob and WhoScored share one selected tab and one

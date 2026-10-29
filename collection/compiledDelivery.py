@@ -120,6 +120,8 @@ class CompiledReceiver(Archive):
                     link_or_copy(receiver.objects / check_hash(sha), target)
             from .storageAgent import install_dataset
             install_dataset(Objects(), manifest, self.output, self.directory / 'downloads')
+            from concordance.build import invalidate_bundle
+            invalidate_bundle(self.output,'New fixture history received; rebuild the full concordance snapshot')
             # A legacy seven-file snapshot must not inherit a newer audit.
             installed = {f['path'] for f in manifest['files']}
             for name in FIXTURE_DATASET_PATHS - FIXTURE_REQUIRED_PATHS - installed:

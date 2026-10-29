@@ -1,0 +1,189 @@
+import json
+from pathlib import Path
+import sqlite3
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import pandas as pd
+
+from concordance.registry import Registry
+from concordance.build import rebuild,validate_bundle,TABLES,invalidate_bundle
+from collection.storageTransfer import safe_path
+from collection.workerIdentity import ensure_identity
+from storage.pandasStore import atomic_json
+from tools.audit_integration import audit,now,EXPECTED
+
+
+class RegistryTests(unittest.TestCase):
+    def test_stable_namespaces_and_later_reep_upgrade(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'ids.json';registry=Registry(path)
+            first=registry.assign('player',{'fotmob_id':'12'})
+            self.assertTrue(first['entity_id'].startswith('ap'));self.assertEqual(first['reep_id'],'')
+            registry.save();registry=Registry(path)
+            enriched=registry.assign('player',{'fotmob_id':'12','sofascore_id':'34'})
+            self.assertEqual(first['entity_id'],enriched['entity_id'])
+            linked=registry.assign('player',{'sofascore_id':'34'},'rp-published')
+            self.assertEqual(linked['entity_id'],'rp-published')
+            self.assertIn({'from_id':first['entity_id'],'to_id':'rp-published'},registry.redirects())
+            self.assertNotEqual(registry.assign('match',{'fotmob_id':'12'})['entity_id'],first['entity_id'])
+
+    def test_conflict_cannot_link_an_unapproved_peer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry=Registry(Path(tmp)/'ids.json')
+            a=registry.assign('team',{'sofascore_id':'1','fotmob_id':'2'},conflict=True)
+            b=registry.assign('team',{'fotmob_id':'2'})
+            self.assertNotEqual(a['entity_id'],b['entity_id'])
+            with self.assertRaises(ValueError):registry.assign('match',{})
+
+
+class IntegrationTests(unittest.TestCase):
+    def test_queue_empty_does_not_imply_all_data_integrated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/'data';ensure_identity(root,'msi')
+            dbpath=root/'_system/storage/hub/archive.sqlite';dbpath.parent.mkdir(parents=True)
+            with sqlite3.connect(dbpath) as db:db.execute('CREATE TABLE uploads(state TEXT)')
+            expected=Path(tmp)/'expected.json'
+            atomic_json(expected,{'format':EXPECTED,'generated_at':now().isoformat(),'workers':[
+                {'worker':'headless','last_seen':now().isoformat(),'records':{'match':{
+                    'capabilities':['provider:sofascore'],'resources':{'player_stats':'complete'}}}}]})
+            missing=audit(root,Path(tmp)/'ensemble',expected,scan=lambda r:{})
+            self.assertEqual(missing['state'],'not_ready');self.assertEqual(len(missing['missing']),1)
+            ready=audit(root,Path(tmp)/'ensemble',expected,scan=lambda r:{'match':{
+                'capabilities':['provider:sofascore'],'resources':{'player_stats':'complete'}}})
+            self.assertEqual(ready['state'],'ready')
+            with sqlite3.connect(dbpath) as db:db.execute("INSERT INTO uploads VALUES('received')")
+            blocked=audit(root,Path(tmp)/'ensemble',expected,scan=lambda r:{'match':{
+                'capabilities':['provider:sofascore'],'resources':{'player_stats':'complete'}}})
+            self.assertEqual(blocked['state'],'not_ready')
+
+
+class BundleTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.base=Path(self.temp.name);self.root=self.base/'data';self.data=self.base/'dataset'
+        self.data.mkdir();self.root.mkdir()
+        fixtures=[dict(match_id=str(mid),sofascore_match_id=str(mid),date='2024-08-10',
+            competition='Premier League',season='2024-2025',home_team_id='1',away_team_id='2',
+            home_team='Home',away_team='Away',sofascore_home_team_id='1',sofascore_away_team_id='2') for mid in (10,11)]
+        pd.DataFrame(fixtures).to_csv(self.data/'fixtures.csv',index=False)
+        self.raw={'match':[],'team':[],'player':[
+            {'player_name':'Known','competition':'Premier League','season':'2024-2025','team_name':'Home',
+             '_native':{'sofascore_id':['100'],'fotmob_id':['200']}}],
+            'observed':{('sofascore','10')},'sources':['test/2024-2025']}
+
+    def test_six_tables_include_only_observed_matches_in_scraped(self):
+        with patch('concordance.build.observations',return_value=self.raw):
+            manifest=rebuild(self.root,self.data,allow_unconfirmed=True,report=lambda *a,**k:None)
+        folder=self.data/'concordance';check=validate_bundle(folder)
+        self.assertFalse(manifest['ready_for_R']);self.assertTrue(check['id_requirements_met'])
+        self.assertEqual(check['rows']['full/fixtures.csv'],2)
+        self.assertEqual(check['rows']['scraped/matches.csv'],1)
+        self.assertEqual(check['rows']['scraped/teams.csv'],2)
+        self.assertEqual(check['rows']['scraped/players.csv'],1)
+        for name in TABLES:self.assertEqual(safe_path('concordance/'+name,'dataset'),'concordance/'+name)
+        players=pd.read_csv(folder/'scraped/players.csv',dtype=str,keep_default_na=False)
+        self.assertTrue(players.iloc[0].entity_id.startswith('ap'))
+        self.assertEqual(players.iloc[0].reep_id,'')
+        with self.assertRaisesRegex(ValueError,'required'):rebuild(self.root,self.data)
+
+    def test_checksums_reject_mixed_or_edited_bundle(self):
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        path=self.data/'concordance/scraped/players.csv';path.write_text(path.read_text()+'\n')
+        with self.assertRaisesRegex(ValueError,'checksum'):validate_bundle(self.data/'concordance')
+
+    def test_failed_build_preserves_previous_bundle_and_registry(self):
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        path=self.data/'concordance/bundle.json';prior=path.read_bytes()
+        reg=self.data/'concordance/.preview-state/_system/identity/alex_ids.json';saved=reg.read_bytes()
+        with patch('concordance.build.observations',side_effect=ValueError('bad raw archive')):
+            with self.assertRaises(ValueError):rebuild(self.root,self.data,allow_unconfirmed=True)
+        self.assertEqual(path.read_bytes(),prior);self.assertEqual(reg.read_bytes(),saved)
+
+    def test_real_checkpoint_sources_recover_unpublished_fixtures_and_player_ids(self):
+        from tests.test_ensemble import populate
+        populate(self.root,limit=1)
+        # The raw checkpoint exists, but the season CSV export was deferred.
+        manifest=rebuild(self.root,self.data,allow_unconfirmed=True,report=lambda *a,**k:None)
+        folder=self.data/'concordance'
+        matches=pd.read_csv(folder/'scraped/matches.csv',dtype=str,keep_default_na=False)
+        players=pd.read_csv(folder/'scraped/players.csv',dtype=str,keep_default_na=False)
+        full=pd.read_csv(folder/'full/fixtures.csv',dtype=str,keep_default_na=False)
+        self.assertIn('1',set(matches.sofascore_id))
+        self.assertIn('1',set(full.sofascore_id))
+        self.assertTrue(len(players)>0)
+        self.assertTrue(players.entity_id.ne('').all())
+
+    def test_new_data_invalidates_an_old_ready_snapshot(self):
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        path=self.data/'concordance/bundle.json';manifest=json.loads(path.read_text())
+        manifest['ready_for_R']=True;atomic_json(path,manifest)
+        self.assertTrue(invalidate_bundle(self.data,'new statistics arrived'))
+        self.assertFalse(validate_bundle(self.data/'concordance')['ready_for_R'])
+
+    def test_project_ids_survive_registry_restore_from_compiled_bundle(self):
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        folder=self.data/'concordance';first=pd.read_csv(folder/'scraped/players.csv',dtype=str).entity_id.tolist()
+        (folder/'.preview-state/_system/identity/alex_ids.json').unlink()
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        self.assertEqual(first,pd.read_csv(folder/'scraped/players.csv',dtype=str).entity_id.tolist())
+
+    def test_bundle_outputs_do_not_become_the_next_builds_source_seasons(self):
+        from concordance.sources import source_signature
+        before=source_signature(self.root,self.data)
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        self.assertEqual(before,source_signature(self.root,self.data))
+
+    def test_historical_native_profile_remains_in_full_team_aliases(self):
+        path=self.data/'fixtures.csv';frame=pd.read_csv(path,dtype=str)
+        frame['home_team_id']='3294';frame['sofascore_home_team_id']='37426';frame['home_team']='Farul Constanța'
+        frame.to_csv(path,index=False)
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        teams=pd.read_csv(self.data/'concordance/full/teams.csv',dtype=str,keep_default_na=False)
+        row=teams[teams.sofascore_id.eq('3294')].iloc[0]
+        self.assertIn('37426',json.loads(row.provider_aliases)['sofascore_id'])
+        self.assertTrue(validate_bundle(self.data/'concordance')['id_requirements_met'])
+
+    def test_provider_only_player_and_checkpoint_link_form_one_reference(self):
+        self.raw['player'].append({'player_name':'Other provider name',
+                                   '_native':{'fotmob_id':['200']}})
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        players=pd.read_csv(self.data/'concordance/scraped/players.csv',dtype=str,keep_default_na=False)
+        self.assertEqual(len(players),1)
+        self.assertEqual((players.iloc[0].sofascore_id,players.iloc[0].fotmob_id),('100','200'))
+
+    def test_researched_history_does_not_create_provider_equivalence(self):
+        history=pd.DataFrame([{'relationship_id':'history-1','from_sofascore_id':'99',
+                               'from_fotmob_id':'199','to_sofascore_id':'98'}])
+        with patch('concordance.build.observations',return_value=self.raw), \
+             patch('concordance.build.history_frame',return_value=history):
+            rebuild(self.root,self.data,allow_unconfirmed=True)
+        folder=self.data/'concordance'
+        registry=json.loads((folder/'alex_registry.json').read_text())
+        self.assertNotIn('team|fotmob|199',registry['aliases'])
+        rows=pd.read_csv(folder/'full/entities.csv',dtype=str,keep_default_na=False)
+        self.assertEqual(rows.iloc[0].from_safe_for_cross_provider_joins,'False')
+
+    def test_raw_lineups_are_indexed_even_without_a_checkpoint_or_flat_export(self):
+        from tests.test_ensemble import populate
+        from concordance.sources import observations
+        populate(self.root,limit=1)
+        for marker in self.root.glob('*/*/match_checkpoints/*/CURRENT.json'):marker.unlink()
+        for marker in self.root.glob('*/*/dataset/CURRENT.json'):marker.unlink()
+        result=observations(self.root,self.data,report=lambda *a,**k:None)
+        self.assertIn(('sofascore','1'),result['observed'])
+        self.assertTrue(any(row['_native'].get('sofascore_id') for row in result['player']))
+
+
+class RawFotmobIdentityTests(unittest.TestCase):
+    def test_unknown_team_zero_uses_explicit_lineup_and_conflicting_team_fails(self):
+        from concordance.sources import fotmob_references
+        payload={'general':{'matchId':1,'finished':True},'header':{'teams':[{'id':10},{'id':20}]},
+            'content':{'lineup':{'homeTeam':{'id':10,'name':'Home','starters':[{'id':100,'name':'Player'}],'subs':[]},
+                                'awayTeam':{'id':20,'name':'Away','starters':[],'subs':[]}},
+                       'playerStats':{'100':{'id':100,'teamId':0,'stats':[{'stats':{
+                           'minutes':{'key':'minutes_played','stat':{'value':90}}}}]}}}}
+        self.assertEqual(fotmob_references(payload,'1')['home']['players'][0]['id'],100)
+        payload['content']['playerStats']['100']['teamId']=20
+        with self.assertRaisesRegex(ValueError,'another team'):fotmob_references(payload,'1')

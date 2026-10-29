@@ -134,7 +134,10 @@ class TerminateWorkersTests(unittest.TestCase):
         hook=self.base/'hook';hook.mkdir()
         (hook/'sitecustomize.py').write_text('import sys,types\nclass Broken(types.ModuleType):\n def __getattr__(self,name):raise ValueError("broken normal startup settings")\nsys.modules["config"]=Broken("config")\n')
         script=Path(__file__).resolve().parents[1]/'main.py'
-        result=subprocess.run([sys.executable,str(script),'--terminate','--timeout','0'],
+        # Never terminate unrelated preview/build processes running from this
+        # checkout while the suite is executing.
+        result=subprocess.run([sys.executable,str(script),'--terminate','--timeout','0',
+                               '--data-root',str(self.base/'isolated-data')],
             cwd=self.base,env={**os.environ,'PYTHONPATH':str(hook)},capture_output=True,text=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertIn('no matching project Python processes remain',result.stdout)

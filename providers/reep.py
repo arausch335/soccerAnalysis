@@ -174,6 +174,15 @@ def wanted_ids(root, dataset, ensemble=None):
                     for provider in PROVIDERS:
                         if row.get(provider + '_id'):
                             wanted.add((kind, provider, row[provider + '_id']))
+    for relative,kind in [('full/fixtures.csv','match'),('full/teams.csv','team'),
+                          ('scraped/matches.csv','match'),('scraped/teams.csv','team'),
+                          ('scraped/players.csv','player')]:
+        path=dataset/'concordance'/relative
+        if path.is_file():
+            with path.open(encoding='utf-8',newline='') as stream:
+                for row in csv.DictReader(stream):
+                    for provider in PROVIDERS:
+                        if row.get(provider+'_id'):wanted.add((kind,provider,row[provider+'_id']))
     from collection.paths import discover_collections
     for source in discover_collections(root, 'config.json'):
         cfg = json.loads((source / 'config.json').read_text(encoding='utf-8'))

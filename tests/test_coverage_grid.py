@@ -42,7 +42,8 @@ class CoverageGridTests(unittest.TestCase):
         self.workers['msi']['runtime']={'schedules':{'a':{'competition':'Premier League','season':'2021-2022','kind':'combined','match_ids':['1','2','3']}}}
         grid=build_grid([self.row(1,'msi')],self.plan,lambda *args:None,self.workers)
         self.assertEqual(self.cell(grid)['total'],3)
-        self.assertEqual(grid['seasons'],['2021-2022','2022-2023'])
+        years=[2021,*[int(job.season[:4]) for job in self.plan.jobs]]
+        self.assertEqual(grid['seasons'],[f'{year}-{year+1}' for year in range(min(years),max(years)+1)])
 
     def test_undiscovered_assignment_keeps_planned_allocation_without_inventing_matches(self):
         grid=build_grid([],self.plan,lambda *args:None,self.workers)

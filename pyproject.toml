@@ -25,7 +25,7 @@ py-modules = ["main", "dataset_builder", "api_test", "review_data"]
 
 [tool.setuptools.packages.find]
 namespaces = true
-include = ["config", "analysis*", "collection*", "fixtures*", "models*", "providers*", "storage*", "tools*", "chrome_extension", "dashboard"]
+include = ["config", "analysis*", "collection*", "concordance*", "fixtures*", "models*", "providers*", "storage*", "tools*", "chrome_extension", "dashboard"]
 
 [tool.setuptools.package-data]
 "analysis.role_pipeline" = ["*.html"]

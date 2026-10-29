@@ -50,6 +50,9 @@ def safe_path(value,kind):
         if any(p in ('raw','match_checkpoints','snapshots') for p in path.parts):raise ValueError('Raw data cannot be sent to dataset consumers')
         if len(path.parts)==1 and path.name in ('fixtures.csv','player_ids.csv','team_ids.csv','match_ids.csv'):return value
         if len(path.parts)==2 and path.parts[0]=='concordance':return value
+        if len(path.parts)==3 and path.parts[0]=='concordance' and (
+                path.parts[1]=='full' and path.name in ('fixtures.csv','entities.csv','teams.csv') or
+                path.parts[1]=='scraped' and path.name in ('matches.csv','teams.csv','players.csv')):return value
         if value in FIXTURE_DATASET_PATHS:return value
     if len(path.parts)<3 or not re.fullmatch('[a-z0-9]+(?:-[a-z0-9]+)*',path.parts[0]):raise ValueError('Invalid competition path')
     if not re.fullmatch(r'\d{4}-\d{4}',path.parts[1]):raise ValueError('Invalid season path')
