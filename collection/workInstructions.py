@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from .ensembleProgress import job_key,merge_records
 from .workerRuntime import now
-from storage.pandasStore import atomic_json
+from storage.sharedFiles import read_json,write_json as atomic_json
 
 FORMAT='soccer-main-instructions-v1'
 
@@ -66,8 +66,7 @@ def install(root,value,*,worker=None,revision=None):
 
 def approved_by_main(progress,key,required):
     path=path_for(progress.root)
-    if not path.exists():return False
-    value=json.loads(path.read_text(encoding='utf-8'))
+    value=read_json(path,missing={})
     if (value.get('format')!=FORMAT or value.get('worker_id')!=progress.origin or
             value.get('plan_revision')!=getattr(progress,'plan_revision',None)):return False
     decision=value.get('approved',{}).get(key,{})
@@ -80,22 +79,20 @@ def approved_by_main(progress,key,required):
 def requested_again(root,worker,revision,history):
     """A local finished flag cannot veto a new recheck ordered by Main."""
     path=path_for(root)
-    if not path.exists():return set()
-    value=json.loads(path.read_text(encoding='utf-8'))
+    value=read_json(path,missing={})
     if value.get('worker_id')!=worker or value.get('plan_revision')!=revision:return set()
     return {job for job,command in value.get('jobs',{}).items() if command.get('recheck') and
             history.get(job,{}).get('instruction_revision')!=command.get('revision')}
 
 
 def reviewed_by_main(progress,competition,season,mid):
-    value=json.loads(path_for(progress.root).read_text(encoding='utf-8'))
+    value=read_json(path_for(progress.root),missing={})
     return bool(value.get('approved',{}).get(job_key('sofascore',competition,season,mid),{}).get('waived_resources'))
 
 
 def current_commands(root,worker,revision):
     path=path_for(root)
-    if not path.exists():return {}
-    value=json.loads(path.read_text(encoding='utf-8'))
+    value=read_json(path,missing={})
     if value.get('worker_id')!=worker or value.get('plan_revision')!=revision:return {}
     return value.get('jobs',{})
 

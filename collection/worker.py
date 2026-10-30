@@ -20,6 +20,7 @@ from .codeUpdates import CodeUpdates
 from .progress import observe_progress
 from .workerIdentity import read_worker_id, ensure_identity
 from .ensembleProgress import shared_progress, read_progress
+from storage.sharedFiles import SharedFileUnavailable
 from storage.pandasStore import atomic_json
 from .workerRuntime import Runtime, now
 from .reporting import load_local, ReportingServer, Reporter, capture_logs
@@ -145,7 +146,7 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
             from .identityReviewAgent import IdentityReviewAgent
             identity_agent=IdentityReviewAgent(root,extension_bridge,on_change=lambda:publish(inventory=False)).start()
             stack.callback(identity_agent.close)
-        initialized=False;progress=None;last_boundary=0;retry_extension_job=None
+        initialized=False;progress=None;last_boundary=0;retry_extension_job=None;last_file_error=None
         settings=config.CONFIG_FILE.read_bytes()
         state.save(state='starting',role='monitor' if monitor else 'worker',identity_review_enabled=options.identity_review,plan_revision=plan.revision,git=sync.status,process_id=os.getpid())
         inventory_watch=None
@@ -158,119 +159,135 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
             runner=_main
         try:
             while not stop.is_set():
-                if inventory_watch:state.save(inventory=inventory_watch.status)
-                if control:
-                    state.save(control=control.status)
-                    # Release an earlier run's durable claim even if this worker is now unassigned.
-                    try:
-                        control.release();state.save(control=control.status)
-                    except (OSError,ValueError,KeyError):pass
-                if storage:
-                    state.save(storage=storage.status)
-                # Code updates are applied between collection jobs.
-                changed=[]
-                if clock()-last_boundary>=plan.git['poll_seconds'] or state.value['state'] in ('starting','between_jobs') or sync.status.get('state')=='update_pending':
-                    changed=sync.boundary();last_boundary=clock()
-                    if progress is not None:progress.records=shared_progress(progress.path,local_worker=worker,trusted=control is not None)
-                if changed:
-                    state.save(state='restart_required',git=sync.status,current=None)
-                    return RESTART if plan.git['auto_restart'] else 3
-                current_plan=load_plan(options.plan)
-                if current_plan.revision!=plan.revision or config.CONFIG_FILE.read_bytes()!=settings:
-                    state.save(state='restart_required',current=None)
-                    return RESTART if current_plan.git['auto_restart'] else 3
-                from providers.identityReview import revision
-                identity_revision=revision(root)
-                from .workInstructions import requested_again,current_commands
-                recheck=requested_again(root,worker,plan.revision,state.value['jobs']) if control else set()
-                commands=current_commands(root,worker,plan.revision) if control else {}
-                for saved_job in plan.for_worker(worker):
-                    if commands.get(saved_job.id,{}).get('done'):
-                        completed=commands[saved_job.id]
-                        prior=state.value['jobs'].get(saved_job.id,{})
-                        if prior.get('state')!='done' or prior.get('configuration')!=completed['configuration']:
-                            from .storageAgent import season_for
-                            directory=root/season_for(saved_job)
-                            if (directory/'job.json').exists():
-                                atomic_json(directory/'completion.json',{'configuration':completed['configuration'],
-                                    'done':True,'closed':completed['closed'],'counts':completed['counts'],
-                                    'reviewed_unavailable':completed['waivers'],'coordinator':plan.coordinator,'at':now()})
-                                if storage:storage.finished(saved_job,0)
-                        state.value['jobs'][saved_job.id]={**state.value['jobs'].get(saved_job.id,{}),'state':'done','exit_code':0,'configuration':commands[saved_job.id]['configuration']}
-                pending=[job for job in ([] if monitor else plan.for_worker(worker))
-                         if not commands.get(job.id,{}).get('done') and (job.id in recheck or state.value['jobs'].get(job.id,{}).get('fingerprint')!=fingerprint(job,settings)
-                         or (identity_revision and state.value['jobs'].get(job.id,{}).get('exit_code',0) not in (0,130)
-                             and state.value['jobs'].get(job.id,{}).get('identity_revision','')!=identity_revision))]
-                if pending and not initialized:
-                    state.save(state='validating_inventory',git=sync.status)
-                    progress=stack.enter_context(session(root,ensemble,worker_id=worker,background=True))
-                    if progress is None:raise ValueError('Use a marked scraper data root')
-                    progress.trusted_only=control is not None
-                    progress.plan_revision=plan.revision
-                    initialized=True
-                    continue
-                if pending and extension_bridge is not None and not extension_bridge.ready:
-                    if state.value['state']!='waiting_for_extension':
-                        state.save(state='waiting_for_extension',current=None)
-                        print('Waiting for Soccer Collector to connect. Paste the printed code in Chrome; scraping and identity lookups will start after connection.',flush=True)
-                        publish(inventory=False)
-                    stop.wait(1);continue
-                if retry_extension_job:
-                    state.value['jobs'].pop(retry_extension_job,None);retry_extension_job=None
-                    continue
-                if not pending:
-                    assigned=plan.for_worker(worker)
-                    all_done=bool(assigned) and all(state.value['jobs'].get(j.id,{}).get('state')=='done' for j in assigned)
-                    state.save(state='monitoring' if monitor else 'done' if all_done else 'paused' if any(state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in assigned) else 'idle' if assigned else 'unassigned',current=None,git=sync.status)
-                    if reporting:state.save(reporting=reporting.status)
-                    if options.once:return max((state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in plan.for_worker(worker)),default=0)
-                    stop.wait(min(5,plan.git['poll_seconds']));continue
-                job=pending[0]
-                if control and not control.claim(job):
-                    state.save(state='waiting_for_instructions',control=control.status,current=None)
-                    publish(inventory=False)
-                    if options.once:return 2
-                    stop.wait(5);continue
-                if control:state.save(control=control.status)
-                if control and current_commands(root,worker,plan.revision).get(job.id,{}).get('done'):
-                    continue  # Main finished this season while its claim was being granted.
-                if control and progress is not None:progress.records=shared_progress(progress.path,local_worker=worker,trusted=control is not None)
-                state.begin_job(job.as_dict())
-                if reporting:reporting.log(f'[Season started] {job.competition} {job.as_dict()["season"]}')
-                publish()
-                def observe(value):
-                    state.value['git']=sync.status
-                    if storage:state.value['storage']=storage.status
-                    state.event(value)
-                    if storage and worker!=plan.storage['hub'] and worker not in plan.storage['consumers'] and value['event']=='match_saved' and not value.get('cached_match'):
-                        from .storageAgent import season_for
-                        storage.capture(season_for(job),value['match_id'])
+                try:
+                    if inventory_watch:state.save(inventory=inventory_watch.status)
+                    if control:
+                        state.save(control=control.status)
+                        # Release an earlier run's durable claim even if this worker is now unassigned.
+                        try:
+                            control.release();state.save(control=control.status)
+                        except (OSError,ValueError,KeyError):pass
+                    if storage:
                         state.save(storage=storage.status)
+                    # Code updates are applied between collection jobs.
+                    changed=[]
+                    if clock()-last_boundary>=plan.git['poll_seconds'] or state.value['state'] in ('starting','between_jobs') or sync.status.get('state')=='update_pending':
+                        changed=sync.boundary();last_boundary=clock()
+                        if progress is not None:progress.records=shared_progress(progress.path,local_worker=worker,trusted=control is not None)
+                    if changed:
+                        state.save(state='restart_required',git=sync.status,current=None)
+                        return RESTART if plan.git['auto_restart'] else 3
+                    current_plan=load_plan(options.plan)
+                    if current_plan.revision!=plan.revision or config.CONFIG_FILE.read_bytes()!=settings:
+                        state.save(state='restart_required',current=None)
+                        return RESTART if current_plan.git['auto_restart'] else 3
+                    from providers.identityReview import revision
+                    identity_revision=revision(root)
+                    from .workInstructions import requested_again,current_commands
+                    recheck=requested_again(root,worker,plan.revision,state.value['jobs']) if control else set()
+                    commands=current_commands(root,worker,plan.revision) if control else {}
+                    for saved_job in plan.for_worker(worker):
+                        if commands.get(saved_job.id,{}).get('done'):
+                            completed=commands[saved_job.id]
+                            prior=state.value['jobs'].get(saved_job.id,{})
+                            if prior.get('state')!='done' or prior.get('configuration')!=completed['configuration']:
+                                from .storageAgent import season_for
+                                directory=root/season_for(saved_job)
+                                if (directory/'job.json').exists():
+                                    atomic_json(directory/'completion.json',{'configuration':completed['configuration'],
+                                        'done':True,'closed':completed['closed'],'counts':completed['counts'],
+                                        'reviewed_unavailable':completed['waivers'],'coordinator':plan.coordinator,'at':now()})
+                                    if storage:storage.finished(saved_job,0)
+                            state.value['jobs'][saved_job.id]={**state.value['jobs'].get(saved_job.id,{}),'state':'done','exit_code':0,'configuration':commands[saved_job.id]['configuration']}
+                    pending=[job for job in ([] if monitor else plan.for_worker(worker))
+                             if not commands.get(job.id,{}).get('done') and (job.id in recheck or state.value['jobs'].get(job.id,{}).get('fingerprint')!=fingerprint(job,settings)
+                             or (identity_revision and state.value['jobs'].get(job.id,{}).get('exit_code',0) not in (0,130)
+                                 and state.value['jobs'].get(job.id,{}).get('identity_revision','')!=identity_revision))]
+                    if pending and not initialized:
+                        state.save(state='validating_inventory',git=sync.status)
+                        progress=stack.enter_context(session(root,ensemble,worker_id=worker,background=True))
+                        if progress is None:raise ValueError('Use a marked scraper data root')
+                        progress.trusted_only=control is not None
+                        progress.plan_revision=plan.revision
+                        initialized=True
+                        continue
+                    if pending and extension_bridge is not None and not extension_bridge.ready:
+                        if state.value['state']!='waiting_for_extension':
+                            state.save(state='waiting_for_extension',current=None)
+                            print('Waiting for Soccer Collector to connect. Paste the printed code in Chrome; scraping and identity lookups will start after connection.',flush=True)
+                            publish(inventory=False)
+                        stop.wait(1);continue
+                    if retry_extension_job:
+                        state.value['jobs'].pop(retry_extension_job,None);retry_extension_job=None
+                        continue
+                    if not pending:
+                        assigned=plan.for_worker(worker)
+                        all_done=bool(assigned) and all(state.value['jobs'].get(j.id,{}).get('state')=='done' for j in assigned)
+                        state.save(state='monitoring' if monitor else 'done' if all_done else 'paused' if any(state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in assigned) else 'idle' if assigned else 'unassigned',current=None,git=sync.status)
+                        if reporting:state.save(reporting=reporting.status)
+                        if options.once:return max((state.value['jobs'].get(j.id,{}).get('exit_code',0) for j in plan.for_worker(worker)),default=0)
+                        stop.wait(min(5,plan.git['poll_seconds']));continue
+                    job=pending[0]
+                    if control and not control.claim(job):
+                        state.save(state='waiting_for_instructions',control=control.status,current=None)
+                        publish(inventory=False)
+                        if options.once:return 2
+                        stop.wait(5);continue
+                    if control:state.save(control=control.status)
+                    if control and current_commands(root,worker,plan.revision).get(job.id,{}).get('done'):
+                        continue  # Main finished this season while its claim was being granted.
+                    if control and progress is not None:progress.records=shared_progress(progress.path,local_worker=worker,trusted=control is not None)
+                    state.begin_job(job.as_dict())
+                    if reporting:reporting.log(f'[Season started] {job.competition} {job.as_dict()["season"]}')
+                    publish()
+                    def observe(value):
+                        state.value['git']=sync.status
+                        if storage:state.value['storage']=storage.status
+                        state.event(value)
+                        if storage and worker!=plan.storage['hub'] and worker not in plan.storage['consumers'] and value['event']=='match_saved' and not value.get('cached_match'):
+                            from .storageAgent import season_for
+                            storage.capture(season_for(job),value['match_id'])
+                            state.save(storage=storage.status)
+                        if reporting:
+                            if progress is not None and value['event']=='match_started':progress.records=shared_progress(progress.path,local_worker=worker,trusted=control is not None)
+                            if value['event'] in ('schedule','match_saved','job_finished','provider_started'):publish(inventory=value['event'] in ('match_saved','job_finished'))
+                            return
+                    # Capture the revision before running: approvals received mid-job also get a later backfill.
+                    attempted_identity_revision=identity_revision
+                    from .workInstructions import remaining_scope
+                    fresh=current_commands(root,worker,plan.revision).get(job.id,{}) if control else {}
+                    with remaining_scope(job,fresh),observe_progress(observe):
+                        code=runner(job.args(root)+(['--no-build-dataset','--defer-exports'] if storage else []))
+                    if storage:storage.finished(job,code)
+                    if code and extension_bridge is not None and not extension_bridge.ready:
+                        retry_extension_job=job.id
                     if reporting:
-                        if progress is not None and value['event']=='match_started':progress.records=shared_progress(progress.path,local_worker=worker,trusted=control is not None)
-                        if value['event'] in ('schedule','match_saved','job_finished','provider_started'):publish(inventory=value['event'] in ('match_saved','job_finished'))
-                        return
-                # Capture the revision before running: approvals received mid-job also get a later backfill.
-                attempted_identity_revision=identity_revision
-                from .workInstructions import remaining_scope
-                fresh=current_commands(root,worker,plan.revision).get(job.id,{}) if control else {}
-                with remaining_scope(job,fresh),observe_progress(observe):
-                    code=runner(job.args(root)+(['--no-build-dataset','--defer-exports'] if storage else []))
-                if storage:storage.finished(job,code)
-                if code and extension_bridge is not None and not extension_bridge.ready:
-                    retry_extension_job=job.id
-                if reporting:
-                    milestone='completed' if code==0 else 'paused'
-                    reporting.log(f'[Season {milestone}] {job.competition} {job.as_dict()["season"]}', 'INFO' if code==0 else 'WARNING')
-                audit_id=max(int(state.value['jobs'].get(job.id,{}).get('review_audit_id',0)),int(fresh.get('audit_id',0)) if code==0 else 0)
-                state.value['jobs'][job.id]={'review_audit_id':audit_id,'fingerprint':fingerprint(job,settings),'exit_code':code,'identity_revision':attempted_identity_revision,
-                                             'state':'finished' if code==0 else 'paused',
-                                             'instruction_revision':control.status.get('instruction_revision') if control else None}
-                state.save(state='between_jobs',job_ended_at=now(),current=None,git=sync.status)
-                if reporting:publish()
-                if code==130:
-                    state.save(state='stopped')
-                    return 130
+                        milestone='completed' if code==0 else 'paused'
+                        reporting.log(f'[Season {milestone}] {job.competition} {job.as_dict()["season"]}', 'INFO' if code==0 else 'WARNING')
+                    audit_id=max(int(state.value['jobs'].get(job.id,{}).get('review_audit_id',0)),int(fresh.get('audit_id',0)) if code==0 else 0)
+                    state.value['jobs'][job.id]={'review_audit_id':audit_id,'fingerprint':fingerprint(job,settings),'exit_code':code,'identity_revision':attempted_identity_revision,
+                                                 'state':'finished' if code==0 else 'paused',
+                                                 'instruction_revision':control.status.get('instruction_revision') if control else None}
+                    state.save(state='between_jobs',job_ended_at=now(),current=None,git=sync.status)
+                    if reporting:publish()
+                    if code==130:
+                        state.save(state='stopped')
+                        return 130
+                except SharedFileUnavailable as exc:
+                    # Keep receiver/reporting/import services alive. Do not use
+                    # stale instructions or mark a partially attempted job done.
+                    state.value.update(state='waiting_for_files',current=None)
+                    try:
+                        state.save(state='waiting_for_files',current=None,git=sync.status)
+                        publish(inventory=False)
+                    except SharedFileUnavailable:
+                        pass  # A busy runtime snapshot must not end this loop.
+                    key=str(exc.filename)
+                    if key!=last_file_error:
+                        print(f'[Files] Waiting for shared local file {Path(key).name}; saved work retained; retrying in five seconds.',flush=True)
+                        last_file_error=key
+                    if options.once:return 2
+                    stop.wait(5)
         except KeyboardInterrupt:
             state.save(state='stopped',job_ended_at=state.value.get('job_ended_at') or now(),current=None,git=sync.status)
             publish()

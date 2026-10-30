@@ -7,7 +7,8 @@ from pathlib import Path
 import re
 from copy import deepcopy
 
-from storage.pandasStore import atomic_json, PandasStore
+from storage.pandasStore import PandasStore
+from storage.sharedFiles import read_json,write_json as atomic_json
 from .selection import season_label, competition_by_name
 from .workerIdentity import ensure_identity, read_worker_id, read_origins, save_origins
 
@@ -16,7 +17,7 @@ ACTIVE = ContextVar('ensemble_progress', default=None)
 
 
 def read_progress(path):
-    saved=json.loads(Path(path).read_text(encoding='utf-8'))
+    saved=read_json(path)
     if not isinstance(saved,dict) or saved.get('format')!=FORMAT or not isinstance(saved.get('records'),dict):
         raise ValueError(f'Unsupported ensemble provenance file: {path}')
     if any(not isinstance(row,dict) or any(not isinstance(row.get(field,[]),list)

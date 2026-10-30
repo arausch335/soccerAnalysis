@@ -7,6 +7,7 @@ from filelock import FileLock, Timeout
 from storage.layout import system_path
 from .ensembleProgress import PortableProgress,read_progress
 from .inventoryCache import InventoryInterrupted
+from storage.sharedFiles import SharedFileUnavailable,read_json
 
 
 class InventoryMonitor:
@@ -40,9 +41,8 @@ class InventoryMonitor:
             frozen={re.sub('[^a-z0-9]+','-',v['competition'].lower()).strip('-')+'/'+v['season'] for k,v in completed.items() if k in active}
             command_path=self.root/'_system/workers/main-instructions.json'
             if command_path.exists():
-                import json
                 from .storageAgent import season_for
-                saved=json.loads(command_path.read_text(encoding='utf-8'));commands=saved.get('jobs',{}) if saved.get('plan_revision')==plan.revision else {}
+                saved=read_json(command_path);commands=saved.get('jobs',{}) if saved.get('plan_revision')==plan.revision else {}
                 for job in plan.for_worker(self.worker):
                     if commands.get(job.id,{}).get('done'):frozen.add(season_for(job))
             seasons-=frozen
@@ -54,7 +54,7 @@ class InventoryMonitor:
                         try:
                             progress.scan(cancel=permit,seasons={season})
                             reused+=progress.scan_summary['reused'];validated+=progress.scan_summary['validated']
-                        except (DeferredWork,InventoryInterrupted):raise
+                        except (DeferredWork,InventoryInterrupted,SharedFileUnavailable):raise
                         except Exception as exc:
                             # Withdraw unverified holdings before releasing this
                             # season. Main must not keep authorizing stale skips.
@@ -63,7 +63,7 @@ class InventoryMonitor:
                             progress._schedule_updates={key:value for key,value in saved.get('schedules',{}).items() if key==season}
                             progress.save();progress._replace_seasons=None
                             errors.append(season+': '+str(exc))
-                except (Timeout,DeferredWork,InventoryInterrupted):waiting+=1
+                except (Timeout,DeferredWork,InventoryInterrupted,SharedFileUnavailable):waiting+=1
             after=read_progress(progress.worker_path) if progress.worker_path.exists() else {}
             current=after.get('records',{})
             changed=previous!=current or before.get('schedules',{})!=after.get('schedules',{})
@@ -81,6 +81,8 @@ class InventoryMonitor:
                 from providers.identityReview import seed_existing
                 seed_existing(self.root)
             return changed
+        except SharedFileUnavailable:
+            self.status={**self.status,'state':'waiting','message':'A shared local file is busy; saved holdings retained; retrying'}
         except InventoryInterrupted:pass
         except Exception as exc:
             message=str(exc)

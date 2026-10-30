@@ -866,3 +866,27 @@ original relative path and its preserved object location. Retrying retains the
 failure history; if validation still fails, the upload is set aside again.
 Quarantined packages remain excluded from the incorporated count and block the
 full-integration audit, while valid data can continue to import and publish.
+
+
+## Windows coordination files briefly inaccessible
+
+Instruction, origin and inventory reads retry Windows access/sharing conflicts
+for about two seconds, reopening the file each time. If access is still denied,
+the worker displays “Waiting for local files” and retries after five seconds.
+Its receiver, reporting and background imports stay running. It never substitutes
+an empty origin registry or stale approval for an unreadable file. Unfinished
+scraping resumes from saved checkpoints once the file is readable.
+
+An import whose shared metadata is busy remains pending, rather than being set
+aside as invalid data. Inventory checks defer busy reads without withdrawing
+previously verified holdings. Atomic writes preserve the previous complete file,
+and runtime publication retries even if its earlier write only partly succeeded.
+Persistent access failures stay visible and still require fixing the underlying
+Windows permissions or file lock; this does not change access permissions.
+
+If the previous worker already exited, update and restart it on MSI:
+
+```sh
+git pull --ff-only origin main
+python main.py --worker-id msi
+```

@@ -75,6 +75,46 @@ class WorkerTests(unittest.TestCase):
             def save(self):pass
         yield Progress()
 
+    def test_locked_instructions_wait_without_closing_services_and_resume_after_unlock(self):
+        from unittest.mock import MagicMock
+        from config.workerPlan import load_plan
+        from collection.workInstructions import install,FORMAT,path_for
+        from storage.pandasStore import atomic_json
+        self.document['storage']['enabled']=True;self.save();plan=load_plan(self.plan)
+        atomic_json(self.root/'.soccer-scraper.json',{'format':1})
+        install(self.root,{'format':FORMAT,'worker_id':'main','plan_revision':plan.revision,'jobs':{},'approved':{}})
+        reporter=MagicMock();reporter.start.return_value=reporter;reporter.status={'state':'connected'}
+        storage=MagicMock();storage.start.return_value=storage;storage.status={'state':'listening'}
+        inventory=MagicMock();inventory.start.return_value=inventory;inventory.status={'state':'current'}
+        control=MagicMock();control.status={'state':'granted'}
+        stop=threading.Event();calls=[];blocked=[True];waits=[]
+        original=Path.read_text;instruction_path=path_for(self.root).resolve()
+        error=PermissionError(13,'Instruction file locked');error.winerror=32
+        def read(path,*args,**kwargs):
+            if path.resolve()==instruction_path and blocked[0]:raise error
+            return original(path,*args,**kwargs)
+        def wait(seconds):
+            waits.append(seconds)
+            if blocked[0]:
+                self.assertEqual(calls,[]);control.claim.assert_not_called()
+                storage.close.assert_not_called();reporter.close.assert_not_called()
+                saved=json.loads((system_path(self.root,'worker_runtime')/'main.json').read_text())
+                self.assertEqual(saved['state'],'waiting_for_files');self.assertFalse(saved['jobs'])
+                blocked[0]=False
+            else:stop.set()
+            return stop.is_set()
+        args=[arg for arg in self.args if arg!='--once']
+        with patch('collection.worker.load_local',return_value={'mode':'client'}), \
+             patch('collection.worker.Reporter',return_value=reporter), \
+             patch('collection.jobControl.AssignmentClient',return_value=control), \
+             patch('collection.storageAgent.StorageAgent',return_value=storage), \
+             patch('collection.worker.InventoryMonitor',return_value=inventory), \
+             patch.object(Path,'read_text',read),patch('storage.sharedFiles.time.sleep'), \
+             patch.object(stop,'wait',side_effect=wait):
+            self.assertEqual(run(args,runner=lambda a:calls.append(a) or 0,session=self.session,sync_factory=NoSync,stop=stop),0)
+        self.assertEqual(len(calls),2);self.assertEqual(waits,[5,5])
+        storage.close.assert_called_once();reporter.close.assert_called_once()
+
     def test_supervised_worker_without_main_does_not_scrape(self):
         self.document['storage']['enabled']=True;self.save()
         with patch('collection.worker.load_local',return_value=None):

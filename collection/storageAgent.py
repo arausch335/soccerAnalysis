@@ -1,5 +1,6 @@
 """Worker lifecycle for background raw delivery and season dataset publication."""
 from storage.layout import full_path
+from storage.sharedFiles import SharedFileUnavailable
 from contextlib import closing
 import csv
 import json
@@ -246,6 +247,8 @@ class StorageAgent:
             except LowSpace as exc:
                 self.maintenance_status={'state':'waiting_disk_space','message':str(exc)}
                 self.stop.wait(30)
+            except SharedFileUnavailable:
+                self.maintenance_status={'state':'waiting','message':'A shared local file is busy; imports retained; retrying'}
             except (DeferredWork,Timeout,InventoryInterrupted):
                 self.maintenance_status={'state':'waiting','message':'Background work yielded; scraping has priority'}
             except Exception as exc:
@@ -265,6 +268,8 @@ class StorageAgent:
                 if self.portable_once():self.maintenance_changed.set()
             except LowSpace as exc:
                 self.portable_status={'state':'waiting_disk_space','message':str(exc)};delay=30
+            except SharedFileUnavailable:
+                self.portable_status={'state':'waiting','message':'A shared local file is busy; portable source retained; retrying'}
             except (DeferredWork,Timeout,InventoryInterrupted):
                 self.portable_status={'state':'waiting','message':'Portable import yielded; scraping has priority'}
             except Exception as exc:

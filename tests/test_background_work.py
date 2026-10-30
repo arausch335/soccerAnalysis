@@ -92,6 +92,18 @@ class BackgroundTests(unittest.TestCase):
             self.assertFalse(monitor.check());self.assertGreaterEqual(monitor.status['seasons_waiting'],1)
         self.assertTrue(monitor.check());self.assertGreater(monitor.status['records'],0)
 
+    def test_busy_origin_file_does_not_withdraw_verified_inventory(self):
+        from storage.sharedFiles import SharedFileUnavailable
+        populate(self.root,limit=1)
+        monitor=InventoryMonitor(self.root,self.ensemble,'msi',report=quiet)
+        self.assertTrue(monitor.check())
+        path=self.ensemble/'workers/msi.json';before=read_progress(path)
+        with patch.object(PortableProgress,'scan',side_effect=SharedFileUnavailable(13,'Busy',str(self.root/'_system/provenance.json'))):
+            self.assertFalse(monitor.check())
+        self.assertEqual(read_progress(path)['records'],before['records'])
+        self.assertGreater(monitor.status['seasons_waiting'],0)
+        self.assertEqual(monitor.status['state'],'current')
+
     def test_build_snapshot_survives_foreground_checkpoint_replacement(self):
         populate(self.root,limit=1)
         snapshot=self.base/'snapshot';snapshot_data(self.root,snapshot)

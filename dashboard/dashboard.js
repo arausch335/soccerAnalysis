@@ -3,7 +3,7 @@ const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=n=>Number(n||0).toLocaleString();
 const sum=o=>Object.values(o||{}).reduce((a,b)=>a+b,0);
-const labels={planned:'Planned',in_progress:'In progress',waiting_for_instructions:'Waiting for Main',waiting_for_extension:'Waiting for extension',monitoring:'Monitoring',scraping:'Scraping',validating_inventory:'Auditing saved files',idle:'Plan attempted',unassigned:'Unassigned',done:'Done',needs_review:'Needs review',finished:'Done',paused:'Paused',stopped:'Stopped',starting:'Starting',between_jobs:'Between jobs',restart_required:'Restart required'};
+const labels={planned:'Planned',in_progress:'In progress',waiting_for_instructions:'Waiting for Main',waiting_for_files:'Waiting for local files',waiting_for_extension:'Waiting for extension',monitoring:'Monitoring',scraping:'Scraping',validating_inventory:'Auditing saved files',idle:'Plan attempted',unassigned:'Unassigned',done:'Done',needs_review:'Needs review',finished:'Done',paused:'Paused',stopped:'Stopped',starting:'Starting',between_jobs:'Between jobs',restart_required:'Restart required'};
 const providers={fotmob:'FotMob',whoscored:'WhoScored',sofascore:'Sofascore',combined:'Combined',fotmob_players:'FotMob',whoscored_events:'WhoScored events'};
 let data=null,tab='coverage',selection=null,offset=0,detailTotal=0,refreshing=false,detailRequest=0,initialGrid=true;
 function worker(id){return data?.workers.find(w=>w.id===id)||{label:id==='_mixed'?'Mixed / unresolved':id,color:'#899580'};}

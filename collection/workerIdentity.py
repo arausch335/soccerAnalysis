@@ -1,11 +1,10 @@
 """User-named worker identity and data-carried collection origins."""
 from storage.layout import system_path
-import json
 from pathlib import Path
 import re
 import uuid
 
-from storage.pandasStore import atomic_json
+from storage.sharedFiles import read_json,write_json as atomic_json
 
 ORIGIN_FORMAT='soccer-analysis-origins-v1'
 
@@ -20,31 +19,30 @@ def read_worker_id(root):
     root=Path(root)
     identity=system_path(root,'identity.json')
     if identity.exists():
-        saved=json.loads(identity.read_text(encoding='utf-8'))
+        saved=read_json(identity)
         if not isinstance(saved,dict):raise ValueError('data/identity.json must be an object with worker_id')
         return valid_worker_id(saved.get('worker_id'))
     legacy=system_path(root,'.ensemble-computer.json')
-    if legacy.exists():return 'worker-'+str(json.loads(legacy.read_text(encoding='utf-8'))['id'])[:12]
+    if legacy.exists():return 'worker-'+str(read_json(legacy)['id'])[:12]
     return 'legacy-unidentified'
 
 
 def ensure_identity(root, worker_id=None):
     root=Path(root);path=system_path(root,'identity.json')
-    identity=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+    original=read_json(path,missing={});identity=original
     if not isinstance(identity,dict):raise ValueError('data/identity.json must be an object with worker_id')
     name=worker_id or identity.get('worker_id')
     if name is None:
         legacy=read_worker_id(root)
         name=legacy if legacy!='legacy-unidentified' else 'worker-'+uuid.uuid4().hex[:12]
     identity={'worker_id':valid_worker_id(name),'instance_id':identity.get('instance_id') or uuid.uuid4().hex}
-    if not path.exists() or json.loads(path.read_text(encoding='utf-8'))!=identity:atomic_json(path,identity)
+    if original!=identity:atomic_json(path,identity)
     return identity
 
 
 def read_origins(root):
     path=system_path(Path(root),'.ensemble-origins.json')
-    if not path.exists():return {}
-    saved=json.loads(path.read_text(encoding='utf-8'))
+    saved=read_json(path,missing={'format':ORIGIN_FORMAT,'records':{}})
     if not isinstance(saved,dict) or saved.get('format')!=ORIGIN_FORMAT or not isinstance(saved.get('records'),dict):
         raise ValueError('Invalid data-carried origin registry')
     if any(not isinstance(value,list) or any(not isinstance(item,str) for item in value)
