@@ -120,6 +120,7 @@ def assign_ids(root,fixtures,matches=(),teams=(),players=(),*,folder=None,save=T
                 atomic_csv(pd.DataFrame(issues,columns=ISSUE_COLUMNS),folder/'registry_conflicts.csv')
         return {'canonical_id_column':'entity_id','all_canonical_ids_present':True,
                 'generated_ids':{k:len(v) for k,v in generated.items()},'registry_version':version(registry.value),
-                'registry_conflicts':len(issues),'published_reep_ids_are_not_generated':True,
+                'registry_conflicts':len(issues),'alex_id_aliases_resolved':registry.alex_aliases_resolved(),
+                'published_reep_ids_are_not_generated':True,
                 'provider_id_alignment':{'checked_provider_keys':len(checked),
                     'inconsistent_keys':0,'excluded_ambiguous_observations':excluded}}

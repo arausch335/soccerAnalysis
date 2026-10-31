@@ -183,6 +183,24 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(set(full.home_entity_id),{'rt-shared'})
         self.assertTrue(validate_bundle(self.data/'concordance')['id_requirements_met'])
 
+    def test_full_fixture_export_normalizes_all_retired_alex_columns(self):
+        from concordance.sync import local_path
+        registry=Registry(local_path(self.root));old={};chosen={}
+        for kind,native,peer in [('match','10','110'),('match','11','111'),('team','1','101'),('team','2','102')]:
+            chosen[kind,native]=registry.assign(kind,{'sofascore_id':native})['alex_id']
+            old[kind,native]=registry.assign(kind,{'fotmob_id':peer})['alex_id']
+            registry.assign(kind,{'sofascore_id':native,'fotmob_id':peer})
+        registry.save()
+        fixtures=pd.read_csv(self.data/'fixtures.csv',dtype=str)
+        fixtures['alex_match_id']=fixtures.sofascore_match_id.map(lambda v:old['match',v])
+        fixtures['alex_home_team_id']=old['team','1'];fixtures['alex_away_team_id']=old['team','2']
+        fixtures.to_csv(self.data/'fixtures.csv',index=False)
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        full=pd.read_csv(self.data/'concordance/full/fixtures.csv',dtype=str)
+        self.assertEqual(full.alex_match_id.tolist(),[chosen['match','10'],chosen['match','11']])
+        self.assertEqual(set(full.alex_home_team_id),{chosen['team','1']})
+        self.assertEqual(set(full.alex_away_team_id),{chosen['team','2']})
+
     def test_project_ids_survive_registry_restore_from_compiled_bundle(self):
         with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
         folder=self.data/'concordance';first=pd.read_csv(folder/'scraped/players.csv',dtype=str).entity_id.tolist()

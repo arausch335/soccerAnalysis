@@ -50,6 +50,34 @@ class Registry:
             seen.add(value);value=self.value['redirects'][value]
         return value
 
+    def select_alex_id(self,kind,aliases,*,preferred=None,approved=False):
+        """Choose one equivalent project key; never join contradictory entities."""
+        if kind not in LETTERS:raise ValueError('Unknown identity kind')
+        roots={self.follow(value) for value in aliases}
+        if not roots or any(not value.startswith('a'+LETTERS[kind]) for value in roots):
+            raise ValueError('Alex ID selection requires one entity namespace')
+        published={self.canonical(value) for value in roots if value in self.value['published']}
+        if len(published)>1:raise IdentityConflict('Alex IDs have contradictory published identities')
+        baselines=set()
+        for value in roots:
+            baselines.update(self.baselines.get(value,set()))
+            if value in self.value['anchors']:
+                anchor=json.loads(self.value['anchors'][value])
+                if anchor[1]=='sofascore':baselines.add(anchor[2])
+        same_published=bool(published) and all(self.canonical(value) in published for value in roots)
+        if len(baselines)>1 and not (approved or same_published):
+            raise IdentityConflict('Alex IDs belong to distinct baseline entities')
+        preferred=self.follow(preferred) if preferred else None
+        winner=preferred if preferred in roots else min(roots)
+        for old in roots-{winner}:self.value['redirects'][old]=winner
+        if published:self.value['published'][winner]=next(iter(published))
+        self.baselines[winner]=baselines
+        return winner
+
+    def alex_aliases_resolved(self):
+        return sum(old.startswith(('am','at','ap')) and self.follow(old).startswith(('am','at','ap'))
+                   and old!=self.follow(old) for old in self.value['redirects'])
+
     def assign(self,kind,native,published='',*,conflict=False):
         if kind not in LETTERS:raise ValueError('Unknown identity kind')
         peers={p:str(native.get(p+'_id') or '') for p in PROVIDERS}
@@ -71,9 +99,7 @@ class Registry:
                 raise IdentityConflict('Peer ID would merge distinct baseline entities without an approved bridge')
             primary=self.value['aliases'].get(f'{kind}|{anchor[0]}|{anchor[1]}')
             alex=self.follow(primary) if primary else min(existing)
-            for old in existing-{alex}:
-                self.value['redirects'][old]=alex
-                if old in self.value['published']:self.value['published'][alex]=self.value['published'][old]
+            alex=self.select_alex_id(kind,existing,preferred=alex,approved=bool(published))
         else:
             seed=json.dumps([kind,*anchor],separators=(',',':'))
             alex='a'+LETTERS[kind]+hashlib.sha256(seed.encode()).hexdigest()[:24]
@@ -179,7 +205,9 @@ class Registry:
                 if old not in self.value['anchors'] and old not in self.value['redirects']:
                     self.value['redirects'][old]=target
                 elif self.follow(old)!=target:
-                    self.note(kind,provider,native,'registry_alias_disagreement',candidate_id=old,entity_id=self.canonical(target))
+                    try:self.select_alex_id(kind,(old,target),preferred=target)
+                    except IdentityConflict:
+                        self.note(kind,provider,native,'registry_alias_disagreement',candidate_id=old,entity_id=self.canonical(target))
         for old in set(incoming.value['redirects'])|set(incoming.value['published']):
             if not old.startswith(('am','at','ap')):continue
             target=translated.get(incoming.follow(old))

@@ -21,6 +21,69 @@ class SharedRegistryTests(unittest.TestCase):
     def install_bridges(self,rows):
         reep.install(self.root,{'format':reep.FORMAT,'version':reep._digest(rows),'rows':rows})
 
+    def test_main_alex_key_wins_over_existing_orphan_alias_for_all_entity_kinds(self):
+        for kind in ('match','team','player'):
+            with self.subTest(kind=kind):
+                main=Registry(self.base/(kind+'-main.json'))
+                preferred=main.assign(kind,{'sofascore_id':'1'})
+                old=main.assign(kind,{'fotmob_id':'2'})
+                main.value['aliases'].pop(kind+'|fotmob|2')
+                worker=Registry(self.base/(kind+'-worker.json'))
+                worker.assign(kind,{'fotmob_id':'2'})
+                worker.assign(kind,{'sofascore_id':'1','fotmob_id':'2'})
+                main.merge(worker.value)
+                self.assertEqual(main.lookup(kind,'fotmob','2'),preferred['entity_id'])
+                self.assertEqual(main.canonical(old['entity_id']),preferred['entity_id'])
+                self.assertFalse(any(i['reason']=='registry_alias_disagreement' for i in main.issues))
+                main.save();again=Registry(main.path);again.merge(worker.value)
+                self.assertEqual(again.canonical(old['entity_id']),preferred['entity_id'])
+                self.assertGreater(again.alex_aliases_resolved(),0)
+
+    def test_alex_fallback_choice_is_deterministic_and_cannot_merge_distinct_baselines(self):
+        registry=Registry(self.base/'ids.json')
+        a=registry.assign('player',{'fotmob_id':'1'})['alex_id']
+        b=registry.assign('player',{'whoscored_id':'2'})['alex_id']
+        self.assertEqual(registry.select_alex_id('player',[b,a]),min(a,b))
+        self.assertEqual(registry.follow(a),registry.follow(b))
+        one=registry.assign('team',{'sofascore_id':'1'})['alex_id']
+        two=registry.assign('team',{'sofascore_id':'2'})['alex_id']
+        before=json.dumps(registry.value,sort_keys=True)
+        with self.assertRaisesRegex(ValueError,'distinct baseline'):
+            registry.select_alex_id('team',[one,two])
+        self.assertEqual(before,json.dumps(registry.value,sort_keys=True))
+
+    def test_alex_choice_cannot_hide_conflicting_published_ids(self):
+        registry=Registry(self.base/'ids.json')
+        a=registry.assign('player',{'sofascore_id':'1'},'rp-one')['alex_id']
+        b=registry.assign('player',{'fotmob_id':'2'},'rp-two')['alex_id']
+        with self.assertRaisesRegex(ValueError,'contradictory published'):
+            registry.select_alex_id('player',[a,b])
+
+    def test_fixture_match_and_team_references_reuse_selected_main_ids(self):
+        main=Registry(local_path(self.root));worker=Registry(self.folder/'alex_registry.json')
+        expected={};old={}
+        for kind,sofa,fot in [('match','1','2'),('team','10','20'),('team','11','21')]:
+            expected[kind,sofa]=main.assign(kind,{'sofascore_id':sofa})['entity_id']
+            old[kind,sofa]=main.assign(kind,{'fotmob_id':fot})['entity_id']
+            main.value['aliases'].pop(f'{kind}|fotmob|{fot}')
+            worker.assign(kind,{'fotmob_id':fot})
+            worker.assign(kind,{'sofascore_id':sofa,'fotmob_id':fot})
+        main.save();worker.save()
+        fixtures=[{'sofascore_match_id':'1','fotmob_match_id':'2',
+            'sofascore_home_team_id':'10','fotmob_home_team_id':'20',
+            'sofascore_away_team_id':'11','fotmob_away_team_id':'21'}]
+        matches=[{'sofascore_id':'1','fotmob_id':'2'}]
+        teams=[{'sofascore_id':'10','fotmob_id':'20'},{'sofascore_id':'11','fotmob_id':'21'}]
+        detail=assign_ids(self.root,fixtures,matches,teams,folder=self.folder)
+        self.assertEqual(fixtures[0]['entity_id'],expected['match','1'])
+        self.assertEqual(fixtures[0]['entity_id'],matches[0]['entity_id'])
+        self.assertEqual(fixtures[0]['home_entity_id'],teams[0]['entity_id'])
+        self.assertEqual(fixtures[0]['away_entity_id'],teams[1]['entity_id'])
+        restored=Registry(local_path(self.root))
+        for key,value in old.items():self.assertEqual(restored.canonical(value),expected[key])
+        self.assertEqual(detail['alex_id_aliases_resolved'],3)
+        self.assertEqual(detail['registry_conflicts'],0)
+
     def test_main_snapshot_merges_existing_worker_and_redirects_old_project_id(self):
         main=self.base/'main';authority=Registry(local_path(main))
         expected=authority.assign('match',{'sofascore_id':'1','fotmob_id':'2'});authority.save()

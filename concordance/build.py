@@ -387,6 +387,8 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
             for row in rows:
                 for field in ('entity_id','home_entity_id','away_entity_id','from_entity_id','to_entity_id'):
                     if row.get(field):row[field]=registry.canonical(row[field])
+                for field in ('alex_match_id','alex_home_team_id','alex_away_team_id'):
+                    if row.get(field):row[field]=registry.follow(row[field])
                 for prefix in ('','from_','to_'):
                     if row.get(prefix+'alex_id'):
                         row[prefix+'alex_id']=registry.follow(row[prefix+'alex_id'])
@@ -409,7 +411,7 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
             from fixtures.sharedIds import ISSUE_COLUMNS
             atomic_csv(pd.DataFrame(registry.issues,columns=ISSUE_COLUMNS).drop_duplicates(),stage/'registry_conflicts.csv')
             from .sync import version as registry_version,installed_version
-            manifest={'registry_version':registry_version(registry.value),'main_registry_version':installed_version(root),'format':FORMAT,'built_at':datetime.now(timezone.utc).isoformat(),'integration_confirmed':confirmed,
+            manifest={'alex_id_aliases_resolved':registry.alex_aliases_resolved(),'registry_version':registry_version(registry.value),'main_registry_version':installed_version(root),'format':FORMAT,'built_at':datetime.now(timezone.utc).isoformat(),'integration_confirmed':confirmed,
                       'ready_for_R':confirmed,'id_requirements_met':True,'source_signature':before,'files':files,
                       'sources':raw['sources'],'scraped_definition':'Matches with saved player-stat rows or validated checkpoint performance values',
                       'unmatched_provider_ids_are_blank':True,'canonical_id_column':'entity_id',

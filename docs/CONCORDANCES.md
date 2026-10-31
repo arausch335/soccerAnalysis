@@ -261,3 +261,18 @@ without provider requests, run:
 ```sh
 python -m tools.reconcile_match_ids
 ```
+
+
+### Choosing between equivalent Alex IDs
+
+Equivalent Alex keys are resolved during registry merging rather than left as a
+pending `registry_alias_disagreement`. Main's existing canonical key is preferred.
+For a new connection, an existing key at the first available provider anchor is
+preferred (Sofascore, FotMob, then WhoScored). If that anchor has no existing key,
+the lexicographically smallest existing Alex key is used. This decision is persisted
+as a redirect, so replaying or reordering the same registry does not change it.
+`alex_id_aliases_resolved` in fixture and concordance manifests counts retired
+project aliases, and `id_redirects.csv` lets earlier exports resolve to the winner.
+Fixtures, their home/away team references, and player/team/match concordances use
+the selected key. Different Sofascore entities and contradictory published Reep
+IDs remain conflicts; selecting a project key cannot verify a provider mapping.
