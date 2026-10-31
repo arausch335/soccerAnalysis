@@ -20,6 +20,7 @@ from providers.teamProfiles import reviewed_team,canonical_record
 from storage.pandasStore import atomic_json
 from .sharedIds import assign_ids,FIXTURE_KEYS,REFERENCE_KEYS
 from . import requirements
+from .availability import FLAGS,annotate,stats_evidence,scrape_targets
 
 SOURCES = (*PROVIDERS, 'reep')
 
@@ -140,9 +141,12 @@ def _reconcile(root,dataset,*,dry_run):
                 new,issues=resolve_rows(new,bridges,'team',suffix='_'+side+'_team_id',status=side+'_team_identity_status')
                 review.extend(issues)
             new=[canonical_record(row) for row in new]
+            annotate(new,observed=stats_evidence(root,dataset),targets=scrape_targets())
+            for row in new:
+                for flag in FLAGS:row[flag]=str(row[flag])
             fixture_rows=new
             report['tables']['fixtures']={'before':coverage(rows,'_match_id'),'after':coverage(new,'_match_id')}
-            if new!=rows:pending[path]=(columns,new)
+            if new!=rows:pending[path]=(list(dict.fromkeys([*columns,*FLAGS])),new)
     for folder in ('concordance','fixture_concordance'):
         for kind in ('player','team','match'):
             path=dataset/folder/(kind+'_ids.csv')
@@ -217,7 +221,7 @@ def _reconcile(root,dataset,*,dry_run):
             folder=dataset/('fixture_concordance' if fixture_rows is not None else 'concordance'),save=not dry_run)
         if fixture_rows is not None:
             path=dataset/'fixtures.csv';columns=read_table(path)[0]
-            pending[path]=(list(dict.fromkeys([*columns,*FIXTURE_KEYS])),fixture_rows)
+            pending[path]=(list(dict.fromkeys([*columns,*FIXTURE_KEYS,*FLAGS])),fixture_rows)
             report['tables']['fixtures']['after']=coverage(fixture_rows,'_match_id')
         for (folder,kind),(columns,records) in reference_tables.items():
             pending[dataset/folder/(kind+'_ids.csv')]=(list(dict.fromkeys([*columns,*REFERENCE_KEYS])),records)

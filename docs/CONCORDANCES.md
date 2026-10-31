@@ -117,7 +117,6 @@ dataset/concordance/
     entities.csv
     teams.csv
   scraped/
-    matches.csv
     teams.csv
     players.csv
   bundle.json
@@ -146,12 +145,25 @@ Relationships whose endpoints lack every provider ID go to `quarantine.csv`;
 the original history catalog remains intact. No provider ID is invented to make
 such a relationship pass the R import requirement.
 
-`scraped/matches.csv` contains only matches with saved player-stat evidence.
+`full/fixtures.csv` is the only match table in the import bundle. It includes:
+
+- `has_player_stats`: saved player-stat rows or validated checkpoint performance values exist for the match. An ID bridge or WhoScored event stream alone is not proof.
+- `is_scheduled_for_scraping`: the match belongs to an enabled worker's explicit competition/season plan, has no saved player stats, and is not cancelled or abandoned. The rest of the historical fixture list is not automatically queued.
+
+Both fields are booleans and cannot both be true. Root `dataset/fixtures.csv`
+also carries these flags, refreshed from validated holding inventories when
+fixtures arrive. The offline rebuild checks saved statistics directly.
+Provider-only saved-stat matches missing from the baseline history are retained;
+when team metadata is unavailable, `fixture_metadata_complete` is false and
+missing team references remain blank. Known metadata and scores are preserved.
+The rebuilt bundle retires `scraped/matches.csv`; compiled delivery removes an
+older copy on Main too. In R, use `subset(ids$full$fixtures, has_player_stats)`
+for the collected matches.
 `scraped/teams.csv` contains teams observed in those matches. `scraped/players.csv`
 has one row per player identity, with competitions/seasons/clubs retained in JSON
 context columns. These contexts do not multiply player-level joins.
 
-Legacy reference files remain available for older consumers, but the six tables
+Legacy reference files remain available for older consumers, but the five tables
 above are the new import interface. `bundle.json` is separate from the legacy
 concordance manifest, so older reference refreshes cannot erase its metadata.
 Checksums and key validation reject partial or mixed publications.
@@ -184,7 +196,7 @@ registry, without scraping. Confirmed provider links reuse the existing baseline
 key; provider-only references reuse that key too. Contradictory observations stay
 in the files with `safe_for_cross_provider_joins: false`, and cannot bind disputed
 peers. The reconciliation summary records checked keys and excluded observations.
-The six-table builder and R reader reject inconsistent provider-to-canonical
+The five-table builder and R reader reject inconsistent provider-to-canonical
 joins across the full and scraped tables. This alignment does not certify MSI
 integration or make an older legacy catalog complete.
 
@@ -203,7 +215,7 @@ players <- ids$scraped$players
 ```
 
 The reader requires `readr`, `jsonlite` and `digest`. It checks the integration
-flag, six file checksums, unique shared keys and required provider anchors.
+flag, five file checksums, unique shared keys and required provider anchors.
 IDs remain character. Fixture dates/kickoffs and numeric score fields are typed.
 For cross-provider joins, filter `safe_for_cross_provider_joins`, exclude missing
 join IDs, and use an explicit many-to-one relationship. Use the directed team
@@ -230,7 +242,7 @@ keys are retained. A provider observation cannot merge distinct Sofascore
 baselines merely because it reuses another provider ID.
 
 These rules apply to root fixtures, fixture match/home/away references, legacy
-match/team/player concordances, and full/scraped six-table builds. A genuine
+match/team/player concordances, and full/scraped five-table builds. A genuine
 mapping disagreement withholds that provider join rather than failing all
 exports. The disputed native ID is kept in `registry_conflicts.csv`; source raw
 files and checkpoints are unchanged. The shared `entity_id` and at least one
@@ -247,7 +259,7 @@ as candidate evidence and withheld until verified rather than selected by vote.
 player conflict does not stop all other seasons from being published.
 
 Fixtures publish their review file at `fixture_concordance/registry_conflicts.csv`;
-legacy and six-table concordances use `concordance/registry_conflicts.csv`.
+legacy and five-table concordances use `concordance/registry_conflicts.csv`.
 Six-table manifests checksum that sidecar. If a received bundle disagrees with
 Main's canonical keys, it is marked not ready for R until rebuilt; MSI integration
 must still pass its audit. Shared-ID repair never certifies missing raw data.
@@ -298,3 +310,20 @@ Busy files, cancellation and capacity errors remain resumable rather than being
 classified as invalid source data. The authenticated consumer-only
 `GET /v1/diagnostics` endpoint exposes build states and preserved quarantine error
 metadata, never raw response bodies or archive objects.
+
+## Inspecting held deliveries and draining an idle producer
+
+MSI exposes identity-only quarantine diagnostics to authenticated compiled-data
+consumers at `/v1/diagnostics`. It reports team IDs/names, match IDs and dates
+from the held file and its checkpoint; raw events and player stats stay on MSI.
+Repeated deliveries may refer to the same offending file.
+
+On Headless, `python -m tools.storage_diagnostics` shows the actual local queue.
+`python -m tools.storage_diagnostics --send-queued` delivers only existing queued
+captures/uploads to MSI without starting scraping. It shares the producer lock
+with the normal worker. Future fixture runs also keep this delivery service
+running and include its state in the live fixture report. A currently running
+fixture process must finish or use the separate queue command after updating.
+
+Integration proof requires fresh inventories and scraping-runtime reports;
+a fixture heartbeat alone cannot make an old inventory or upload count current.

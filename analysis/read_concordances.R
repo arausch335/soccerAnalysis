@@ -1,4 +1,4 @@
-# Read the six versioned identity tables. IDs always remain character.
+# Read unified fixtures and the versioned team/player references. IDs remain character.
 read_concordances <- function(dataset_root, require_integration = TRUE) {
   for (package in c("readr", "jsonlite", "digest")) {
     if (!requireNamespace(package, quietly = TRUE)) stop("Install package: ", package)
@@ -6,7 +6,7 @@ read_concordances <- function(dataset_root, require_integration = TRUE) {
   folder <- if (file.exists(file.path(dataset_root, "bundle.json"))) dataset_root else
     file.path(dataset_root, "concordance")
   manifest <- jsonlite::fromJSON(file.path(folder, "bundle.json"), simplifyVector = FALSE)
-  if (!identical(manifest$format, "soccer-concordance-bundle-v2")) stop("Unknown concordance format")
+  if (!identical(manifest$format, "soccer-concordance-bundle-v3")) stop("Rebuild concordances for unified fixtures and availability flags")
   if (require_integration && !isTRUE(manifest$ready_for_R)) {
     stop("MSI integration is unconfirmed. Run the MSI audit and rebuild first.")
   }
@@ -16,7 +16,7 @@ read_concordances <- function(dataset_root, require_integration = TRUE) {
                    manifest$auxiliary_checksums[[relative]])) stop("Identity sidecar checksum mismatch")
   }
   paths <- c("full/fixtures.csv", "full/entities.csv", "full/teams.csv",
-             "scraped/matches.csv", "scraped/teams.csv", "scraped/players.csv")
+             "scraped/teams.csv", "scraped/players.csv")
   tables <- lapply(paths, function(relative) {
     path <- file.path(folder, relative)
     if (!identical(digest::digest(file = path, algo = "sha256", serialize = FALSE),
@@ -38,6 +38,13 @@ read_concordances <- function(dataset_root, require_integration = TRUE) {
         if (nrow(readr::problems(values))) stop("Invalid numeric field: ", column)
         data[[column]] <- values
       }
+      for (column in c("has_player_stats", "is_scheduled_for_scraping")) {
+        if (!column %in% names(data) || anyNA(data[[column]]) ||
+            any(!tolower(data[[column]]) %in% c("true", "false"))) stop("Missing or invalid fixture flag: ", column)
+        data[[column]] <- tolower(data[[column]]) == "true"
+      }
+      if (any(data$has_player_stats & data$is_scheduled_for_scraping)) stop("Scraped fixture marked pending")
+      if ("fixture_metadata_complete" %in% names(data)) data$fixture_metadata_complete <- tolower(data$fixture_metadata_complete) == "true"
       if ("date" %in% names(data)) data$date <- readr::parse_date(data$date)
       if ("kickoff_utc" %in% names(data)) data$kickoff_utc <- readr::parse_datetime(data$kickoff_utc, locale = readr::locale(tz = "UTC"))
     }
@@ -96,22 +103,27 @@ read_concordances <- function(dataset_root, require_integration = TRUE) {
       }
     }
   }
-  for (i in c(1L, 4L)) check_rows(tables[[i]], "match")
-  for (i in c(3L, 5L)) check_rows(tables[[i]], "team")
-  check_rows(tables[[6]], "player")
+  check_rows(tables[[1]], "match")
+  for (i in c(3L, 4L)) check_rows(tables[[i]], "team")
+  check_rows(tables[[5]], "player")
   for (prefix in c("from_", "to_")) check_rows(tables[[2]], "team", prefix)
   fixtures <- tables[[1]]; teams <- tables[[3]]
+  fixture_source <- if ("fixture_source" %in% names(fixtures)) fixtures$fixture_source else rep("", nrow(fixtures))
   for (side in c("home", "away")) {
-    if (anyNA(match(fixtures[[paste0(side, "_entity_id")]], teams$entity_id))) stop("Fixture references a missing full team")
-    references <- data.frame(entity_id = fixtures[[paste0(side, "_entity_id")]])
+    entity <- fixtures[[paste0(side, "_entity_id")]]
+    known <- !is.na(entity) & nzchar(entity)
+    incomplete <- !known & fixtures$has_player_stats & !fixtures$fixture_metadata_complete &
+      !is.na(fixture_source) & fixture_source == "stored_player_stats"
+    if (any(!known & !incomplete) || anyNA(match(entity[known], teams$entity_id))) stop("Fixture references a missing full team")
+    references <- data.frame(entity_id = entity)
     for (p in c("sofascore", "fotmob", "whoscored")) {
       native <- fixtures[[paste0(p, "_", side, "_team_id")]]
       references[[paste0(p, "_id")]] <- if (is.null(native)) rep(NA_character_, nrow(fixtures)) else native
     }
     references$safe_for_cross_provider_joins <- fixtures[[paste0(side, "_safe_for_cross_provider_joins")]]
-    check_rows(references, "team")
+    check_rows(references[known, , drop = FALSE], "team")
   }
   list(full = list(fixtures = tables[[1]], entities = tables[[2]], teams = tables[[3]]),
-       scraped = list(matches = tables[[4]], teams = tables[[5]], players = tables[[6]]),
+       scraped = list(teams = tables[[4]], players = tables[[5]]),
        manifest = manifest)
 }

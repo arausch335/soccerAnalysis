@@ -24,6 +24,8 @@ def export_expected(root,output,*,max_age_hours=24):
             if name=='msi':continue
             inventory=json.loads(body or '{}');state=json.loads(runtime or '{}')
             workers.append({'worker':name,'last_seen':seen,'records':inventory.get('records',{}),
+                            'inventory_updated_at':inventory.get('updated_at'),
+                            'runtime_updated_at':state.get('updated_at'),
                             'queued_uploads':state.get('storage',{}).get('queued',0)})
     result={'format':EXPECTED,'generated_at':now().isoformat(),'workers':workers,
             'max_age_hours':max_age_hours}
@@ -65,6 +67,10 @@ def audit(root,ensemble,expected_path,*,max_age_hours=24,scan=None):
         seen=worker.get('last_seen')
         if not seen or now()-datetime.fromisoformat(seen)>timedelta(hours=max_age_hours):
             problems.append('Stale worker report: '+worker['worker'])
+        for field,label in (('inventory_updated_at','inventory'),('runtime_updated_at','scraping runtime')):
+            stamp=worker.get(field)
+            if not stamp or now()-datetime.fromisoformat(stamp)>timedelta(hours=max_age_hours):
+                problems.append('Stale or missing worker '+label+': '+worker['worker'])
         if worker.get('queued_uploads'):problems.append('Worker still has queued uploads: '+worker['worker'])
         sources.append(worker['worker'])
         for key,row in worker.get('records',{}).items():

@@ -28,6 +28,21 @@ class FixtureReportingTests(unittest.TestCase):
             progress('provider_progress',stage='Group L',month='201712',current_fixtures=24)
             return dict(progress.value)
 
+    def test_fixture_session_runs_saved_raw_delivery_only_for_online_producers(self):
+        from collection.storageConfig import path_for as setup_path
+        from types import SimpleNamespace
+        atomic_json(setup_path(self.root),{'role':'producer'})
+        with patch('config.workerPlan.load_plan',return_value=SimpleNamespace(storage={'enabled':True})), \
+             patch('collection.storageAgent.StorageAgent') as factory:
+            factory.return_value.start.return_value=factory.return_value
+            factory.return_value.status={'state':'sending','queued':3}
+            with Progress(self.root,self.ensemble,1,network=True) as progress:
+                progress.publish();self.assertEqual(progress.value['raw_delivery']['queued'],3)
+            factory.return_value.start.assert_called_once();factory.return_value.close.assert_called_once()
+            factory.reset_mock()
+            with Progress(self.root,self.ensemble,1,network=False):pass
+            factory.assert_not_called()
+
     def events(self):
         with self.reporter.connect() as db:rows=db.execute('SELECT id,payload FROM queue ORDER BY id').fetchall()
         return [{**json.loads(payload),'instance_id':self.reporter.identity['instance_id'],

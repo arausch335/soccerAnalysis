@@ -69,12 +69,18 @@ def check_bundle(root,dataset):
     folder=Path(dataset)/'concordance'
     if not (folder/'bundle.json').is_file():return 'absent'
     from .build import table,invalidate_bundle
+    manifest=read_json(folder/'bundle.json')
+    from .build import FORMAT
+    if manifest.get('format')!=FORMAT:
+        from .build import invalidate_bundle
+        invalidate_bundle(dataset,'Rebuild the unified fixture table with player-stat availability flags')
+        return 'rebuild_required'
     registry=Registry(local_path(root))
     try:
         for relative,kind in (('full/fixtures.csv','match'),('full/teams.csv','team'),
-                              ('scraped/matches.csv','match'),('scraped/teams.csv','team'),('scraped/players.csv','player')):
+                              ('scraped/teams.csv','team'),('scraped/players.csv','player')):
             registry.validate_rows(kind,table(folder/relative))
     except ValueError:
-        invalidate_bundle(dataset,'Shared identity registry changed; rebuild the six-table snapshot before R import')
+        invalidate_bundle(dataset,'Shared identity registry changed; rebuild the unified-fixture snapshot before R import')
         return 'rebuild_required'
     return 'aligned'

@@ -111,6 +111,9 @@ def _install_dataset(peer,manifest,output,staging_root,*,exclude=()):
         # The receipt is updated only after every publication file is installed.
         # An interrupted installation is retried from the same verified manifest.
         for item in files:atomic_copy(stage/item['path'],output/item['path'])
+        bundle=stage/'concordance/bundle.json'
+        if bundle.is_file() and json.loads(bundle.read_text(encoding='utf-8')).get('format')=='soccer-concordance-bundle-v3':
+            (output/'concordance/scraped/matches.csv').unlink(missing_ok=True)
     return identifier(manifest)
 
 

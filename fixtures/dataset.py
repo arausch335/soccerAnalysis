@@ -34,6 +34,7 @@ from storage.pandasStore import atomic_json
 from .reconcile import reconcile, summarize, ATTEMPT_COLUMNS
 from .sharedIds import assign_ids,FIXTURE_KEYS,REFERENCE_KEYS
 from . import requirements
+from .availability import FLAGS,annotate,stats_evidence,scrape_targets
 from . import seasons as fixture_seasons
 from .builder import (COMPETITIONS, EUROPEAN_COMPETITIONS, _fotmob_event,
                       _slug, current_season_start, season_label)
@@ -55,7 +56,7 @@ ID_COLUMNS = tuple(f'{p}_{entity}_id' for entity in ('match', 'home_team', 'away
 NAME_COLUMNS = tuple(f'{p}_{side}_team' for p in PROVIDERS for side in ('home', 'away'))
 CHECK_COLUMNS = tuple(f'{p}_{field}' for p in PROVIDERS[1:]
                       for field in ('fixture_check', 'match_method'))
-COLUMNS = (*FIXTURE_COLUMNS, *ID_COLUMNS, *NAME_COLUMNS, *CHECK_COLUMNS,
+COLUMNS = (*FIXTURE_COLUMNS, *FLAGS, *ID_COLUMNS, *NAME_COLUMNS, *CHECK_COLUMNS,
            'competition_type','competition_country',
            'whoscored_stage_id','whoscored_stage','whoscored_round',
            'match_identity_status', 'home_team_identity_status', 'away_team_identity_status',*FIXTURE_KEYS)
@@ -692,6 +693,7 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
     rows, teams, matches, aliases, issues = concord(canonical, root, include_upcoming=include_upcoming)
     if progress:progress('exporting',baseline_fixtures=len(rows))
     identity_summary=assign_ids(root,rows,matches,teams,folder=Path(output).parent/'fixture_concordance')
+    annotate(rows,observed=stats_evidence(root,Path(output).parent),targets=scrape_targets())
     frame = pd.DataFrame(rows, columns=COLUMNS)
     for column in ('match_id', 'matchweek', 'home_team_id', 'away_team_id',
                    'home_score', 'away_score', 'winner_code'):

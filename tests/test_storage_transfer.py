@@ -94,6 +94,18 @@ class TransferTests(unittest.TestCase):
         with self.assertRaises(ValueError):install_dataset(self.reader,manifest,output,self.base/'downloads')
         self.assertEqual((output/self.season/'player_stats.csv').read_text(),csv.read_text())
 
+    def test_unified_bundle_delivery_retires_the_obsolete_match_table(self):
+        dataset=self.base/'publication';bundle=dataset/'concordance/bundle.json'
+        atomic_json(bundle,{'format':'soccer-concordance-bundle-v3'})
+        files={'concordance/bundle.json':bundle}
+        manifest={'format':FORMAT,'kind':'dataset','worker':'msi','files':[
+            {'path':p,'sha256':digest(f),'size':f.stat().st_size} for p,f in files.items()]}
+        self.server.archive.publish(manifest,files)
+        output=self.base/'consumer';old=output/'concordance/scraped/matches.csv'
+        old.parent.mkdir(parents=True);old.write_text('stale')
+        install_dataset(self.reader,manifest,output,self.base/'downloads')
+        self.assertFalse(old.exists())
+
     def test_real_season_build_reaches_main_with_concordance_without_raw(self):
         from collection.seasonRunner import SeasonRunner
         from collection.workerIdentity import ensure_identity

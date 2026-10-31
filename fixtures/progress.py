@@ -41,7 +41,7 @@ class Progress:
         from collection.workerIdentity import read_worker_id
         self.root=Path(root);self.ensemble=Path(ensemble);self.worker=read_worker_id(root)
         self.path=path_for(root,self.worker);self.network=network;self.enabled=enabled;self.heartbeat=heartbeat
-        self.lock=threading.RLock();self.last_saved=0;self.reporter=None;self.stack=ExitStack();self.stop=threading.Event();self.thread=None
+        self.lock=threading.RLock();self.last_saved=0;self.reporter=None;self.storage=None;self.stack=ExitStack();self.stop=threading.Event();self.thread=None
         self.value=dict(format=FORMAT,worker_id=self.worker,run_id=uuid4().hex,process_id=os.getpid(),
             state='starting',started_at=now(),updated_at=now(),heartbeat_at=now(),
             total_seasons=total,completed_seasons=0,total_schedules=total*3,checked_schedules=0,
@@ -76,11 +76,24 @@ class Progress:
                 while not self.stop.wait(self.heartbeat):self.publish()
             self.thread=threading.Thread(target=heartbeat,name='local-fixture-heartbeat',daemon=True)
             self.thread.start()
+        if self.network:
+            from collection.storageConfig import path_for as storage_path
+            import json
+            setup=storage_path(self.root)
+            if setup.is_file() and json.loads(setup.read_text(encoding='utf-8')).get('role')=='producer':
+                import config
+                from config.workerPlan import load_plan
+                from collection.storageAgent import StorageAgent
+                settings=load_plan().storage
+                if settings['enabled']:
+                    self.storage=StorageAgent(self.root,self.worker,settings,dataset_root=config.PROJECT_ROOT/'dataset').start()
+                    self.stack.callback(self.storage.close)
         return self
 
     def publish(self,**_):
         if not self.enabled:return
         with self.lock:
+            if self.storage:self.value['raw_delivery']=dict(self.storage.status)
             self.value['heartbeat_at']=now()
             write_json(self.path,self.value)
             self.last_saved=time.monotonic()

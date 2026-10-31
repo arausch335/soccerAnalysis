@@ -169,9 +169,47 @@ class Archive:
             builds=[dict(season=s,state=state,revision=revision,error=error,failed_at=at) for s,state,revision,error,at in db.execute(
                 "SELECT b.season,b.state,b.revision,f.error,f.at FROM builds b LEFT JOIN build_failures f ON f.id="
                 "(SELECT max(id) FROM build_failures WHERE season=b.season) ORDER BY b.season")]
+        quarantined=self.quarantined();details={}
+        for row in quarantined:
+            import re
+            found=re.search(r'([a-f0-9]{64})\.json',row.get('error') or '')
+            if not found:continue
+            key=(row['season'],found[1])
+            if key not in details and len(details)<20:
+                with self.connect() as db:record=db.execute('SELECT manifest FROM uploads WHERE id=?',(row['id'],)).fetchone()
+                try:details[key]=self.quarantine_identity(json.loads(record[0]),found[1]) if record else {}
+                except (OSError,ValueError,KeyError,TypeError):details[key]={'available':False}
+            if key in details:row['identity_comparison']=details[key]
         from .removedCollections import removed_seasons
         return dict(format='soccer-storage-diagnostics-v1',checked_at=now(),status=self.status(),
-                    builds=builds,quarantined_uploads=self.quarantined(),removed_raw_seasons=removed_seasons())
+                    builds=builds,quarantined_uploads=quarantined,removed_raw_seasons=removed_seasons())
+
+    def quarantine_identity(self,manifest,filename):
+        """Return identity fields only; event/stat payloads remain on MSI."""
+        import csv,io
+        entries=manifest['files']
+        raw=next((item for item in entries if item['path'].endswith('/raw/whoscored/'+filename+'.json')),None)
+        if raw is None:return {'available':False}
+        def read(item):
+            path=self.objects/check_hash(item['sha256'])
+            if path.stat().st_size>32*1024**2:raise ValueError('Identity diagnostic object too large')
+            return path.read_text(encoding='utf-8-sig')
+        payload=json.loads(read(raw))['payload'];centre=payload['matchCentreData'];mid=str(payload['match_id'])
+        result={'available':True,'whoscored_id':mid,'date':str(centre.get('startDate',''))[:10],
+            'teams':{side:{'id':centre.get(side,{}).get('teamId'),'name':centre.get(side,{}).get('name','')}
+                     for side in ('home','away')},'checkpoints':[]}
+        for item in entries:
+            if not item['path'].endswith('/matches.csv') or '/match_checkpoints/' not in item['path']:continue
+            for row in csv.DictReader(io.StringIO(read(item))):
+                metadata=json.loads(row['metadata'])
+                if str(metadata.get('provider_match_ids',{}).get('whoscored'))!=mid:continue
+                teamfile=next((entry for entry in entries if entry['path']==item['path'].removesuffix('matches.csv')+'teams.csv'),None)
+                names={r['id']:json.loads(r['name']) for r in csv.DictReader(io.StringIO(read(teamfile)))} if teamfile else {}
+                result['checkpoints'].append({'match_id':row['id'],'provider':metadata.get('id_namespace','sofascore'),
+                    'date':json.loads(row['kickoff'])[:10],
+                    'teams':{side:{'id':row[side+'_team_id'],'name':names.get(row[side+'_team_id'],'')}
+                             for side in ('home','away')}})
+        return result
 
     def builds(self):
         with self.connect() as db:return [r[0] for r in db.execute("SELECT season FROM builds WHERE state='pending'")]

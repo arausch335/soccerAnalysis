@@ -51,6 +51,11 @@ def checkpoint_rows(source,cfg,players,teams,matches,observed,player_observed):
                     'home_team_name':team_names.get(row['home_team_id'],''),
                     'away_team_name':team_names.get(row['away_team_id'],'')})
                 match['_ids'][provider+'_id'].append(mid)
+                kickoff=json.loads(row['kickoff'])
+                match['_fixture']={'competition':competition,'season':season,'date':kickoff[:10],'kickoff_utc':kickoff,
+                    'baseline_provider':provider,'home_team':team_names.get(row['home_team_id'],''),'away_team':team_names.get(row['away_team_id'],''),
+                    'home_score':row.get('home_score',''),'away_score':row.get('away_score',''),
+                    provider+'_home_team_id':row['home_team_id'],provider+'_away_team_id':row['away_team_id']}
                 for p,n in metadata.get('provider_match_ids',{}).items():
                     if p in PROVIDERS:match['_ids'][p+'_id'].append(n)
                 for side in ('home','away'):
@@ -107,7 +112,9 @@ def lineup_rows(source,cfg,players,teams,matches,observed,player_observed):
 def source_signature(root,dataset):
     """Detect input replacement/additions during an offline rebuild."""
     import hashlib
-    rows=[]
+    import config
+    plan=config.PROJECT_ROOT/'config/workers.yaml'
+    stat=plan.stat();rows=[(str(plan),stat.st_size,stat.st_mtime_ns)]
     for base,patterns in [(Path(root),['*/*/config.json','*/*/schedule.json','*/*/identities.csv',
                                      '*/*/player_match_stats.csv','*/*/match_checkpoints/*/CURRENT.json',
                                      '*/*/dataset/CURRENT.json','*/*/raw/*/*.json',
@@ -187,6 +194,9 @@ def observations(root,dataset,*,report=print):
             observed.add((provider,mid));player_observed.add((pp,pid))
             competition=row.get('competition') or path.parent.parent.name
             season=(row.get('season') or path.parent.name).replace('/','-')
+            match=_id_row(matches,(competition,season,provider,mid),{'competition':competition,'season':season})
+            match['_ids'][provider+'_id'].append(mid)
+            match.setdefault('_fixture',{'competition':competition,'season':season,'baseline_provider':provider})
             key=(competition,season,row.get('team',''),pp,pid)
             entry=players.setdefault(key,{'competition':competition,'season':season,
                 'team_name':row.get('team',''),'player_name':row.get('player_name',''),
@@ -226,9 +236,22 @@ def observations(root,dataset,*,report=print):
                     sides={side:{'id':centre.get(side,{}).get('teamId'),'name':centre.get(side,{}).get('name',''),
                                  'players':[{'id':p['playerId'],'name':p.get('name','')} for p in centre.get(side,{}).get('players',[]) if p.get('stats')]} for side in ('home','away')}
                 if not any(s['players'] for s in sides.values()):continue
-                context={'competition':directory.parent.name,'season':directory.name}
+                from collection.selection import competition_by_name
+                context={'competition':competition_by_name(directory.parent.name).name,'season':directory.name}
                 observed.add((provider,mid))
-                result['match'].append({**context,'_native':{provider+'_id':[mid]}})
+                facts={**context,'baseline_provider':provider,'status':'finished' if provider=='fotmob' else 'unknown',
+                    **{side+'_team':sides[side]['name'] for side in ('home','away')},
+                    **{provider+'_'+side+'_team_id':str(sides[side]['id']) if sides[side]['id'] is not None else '' for side in ('home','away')}}
+                if provider=='whoscored':
+                    kickoff=str(centre.get('startDate') or '')
+                    facts.update(date=kickoff[:10],home_score=centre.get('home',{}).get('scores',{}).get('fulltime',''),
+                                 away_score=centre.get('away',{}).get('scores',{}).get('fulltime',''))
+                    if centre.get('statusCode')==6:facts['status']='finished'
+                else:
+                    facts['kickoff_utc']=str(payload['general'].get('matchTimeUTCDate') or '')
+                    facts['date']=facts['kickoff_utc'][:10]
+                    for side,team in zip(('home','away'),payload['header']['teams']):facts[side+'_score']=team.get('score','')
+                result['match'].append({**context,'_native':{provider+'_id':[mid]},'_fixture':facts})
                 for side in sides.values():
                     team_key=(provider,str(side['id']),*context.values())
                     if side['id'] is not None and team_key not in raw_seen['team']:

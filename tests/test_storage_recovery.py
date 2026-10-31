@@ -83,5 +83,39 @@ class StorageRecoveryTests(unittest.TestCase):
         with self.assertRaises(HTTPError):Peer(server.url,'p'*40).request('/v1/diagnostics')
         server.archive.schedule_build(GOOD);self.assertEqual(len(server.archive.build_jobs()),1)
 
+    def test_quarantine_diagnostic_contains_identity_fields_without_raw_events(self):
+        from collection.storageTransfer import digest
+        from collection.storageAgent import season_files
+        from storage.pandasStore import PandasStore
+        from providers.cache import ResponseCache
+        populate(self.root,limit=1)
+        source=self.root/GOOD;store=PandasStore(source/'match_checkpoints/1');data=store.from_csv()
+        data.matches[1].metadata['provider_match_ids']={'whoscored':11};store.to_csv(data)
+        raw=ResponseCache(source/'raw').path('whoscored','match/11')
+        atomic_json(raw,{'provider':'whoscored','key':'match/11','payload':{'match_id':11,'matchCentreData':{
+            'home':{'teamId':900,'name':'Wrong home'},'away':{'teamId':901,'name':'Away'},
+            'startDate':'2024-08-10','events':[{'secret_raw_payload':'must stay on MSI'}]}}})
+        archive=Archive(self.root);files=season_files(self.root,GOOD);entries=[]
+        for name,path in files.items():
+            sha=digest(path);(archive.objects/sha).write_bytes(path.read_bytes());entries.append({'path':name,'sha256':sha})
+        value=archive.quarantine_identity({'files':entries},raw.stem)
+        self.assertEqual(value['whoscored_id'],'11');self.assertEqual(value['teams']['home']['id'],900)
+        self.assertEqual(value['checkpoints'][0]['match_id'],'1')
+        self.assertNotIn('events',json.dumps(value));self.assertNotIn('secret_raw_payload',json.dumps(value))
+
+    def test_idle_producer_can_drain_saved_queue_without_starting_scraping(self):
+        from tools.storage_diagnostics import drain,queue_status
+        from collection.storageConfig import path_for
+        options={'url':'http://127.0.0.1:0','tokens':{'headless':{'role':'producer','token':'p'*40}}}
+        server=StorageServer(self.base/'hub',options,reserve=0).start();self.addCleanup(server.close)
+        atomic_json(self.root/GOOD/'job.json',{'saved':True})
+        outbox=Outbox(self.root,'headless');outbox.enqueue({'.soccer-scraper.json':self.root/'.soccer-scraper.json',
+            GOOD+'/job.json':self.root/GOOD/'job.json'},kind='raw',season=GOOD)
+        atomic_json(path_for(self.root),{'worker_id':'headless','role':'producer','hub':'msi','url':server.url,'token':'p'*40})
+        self.assertEqual(queue_status(self.root)['queued_uploads'],1)
+        self.assertTrue(drain(self.root,self.output,'headless',{'hub':'msi','url':server.url},report=lambda *a,**k:None))
+        self.assertEqual(queue_status(self.root)['queued_uploads'],0)
+        self.assertEqual(server.archive.status()['received'],1)
+
 
 if __name__=='__main__':unittest.main()

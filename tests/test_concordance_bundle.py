@@ -75,13 +75,20 @@ class IntegrationTests(unittest.TestCase):
             with sqlite3.connect(dbpath) as db:db.execute('CREATE TABLE uploads(state TEXT)')
             expected=Path(tmp)/'expected.json'
             atomic_json(expected,{'format':EXPECTED,'generated_at':now().isoformat(),'workers':[
-                {'worker':'headless','last_seen':now().isoformat(),'records':{'match':{
+                {'worker':'headless','last_seen':now().isoformat(),'inventory_updated_at':now().isoformat(),
+                 'runtime_updated_at':now().isoformat(),'records':{'match':{
                     'capabilities':['provider:sofascore'],'resources':{'player_stats':'complete'}}}}]})
             missing=audit(root,Path(tmp)/'ensemble',expected,scan=lambda r:{})
             self.assertEqual(missing['state'],'not_ready');self.assertEqual(len(missing['missing']),1)
             ready=audit(root,Path(tmp)/'ensemble',expected,scan=lambda r:{'match':{
                 'capabilities':['provider:sofascore'],'resources':{'player_stats':'complete'}}})
             self.assertEqual(ready['state'],'ready')
+            from datetime import timedelta
+            value=json.loads(expected.read_text());value['workers'][0]['inventory_updated_at']=(now()-timedelta(days=2)).isoformat()
+            atomic_json(expected,value)
+            stale=audit(root,Path(tmp)/'ensemble',expected,scan=lambda r:{'match':{
+                'capabilities':['provider:sofascore'],'resources':{'player_stats':'complete'}}})
+            self.assertEqual(stale['state'],'not_ready');self.assertIn('Stale or missing worker inventory: headless',stale['problems'])
             with sqlite3.connect(dbpath) as db:db.execute("INSERT INTO uploads VALUES('received')")
             blocked=audit(root,Path(tmp)/'ensemble',expected,scan=lambda r:{'match':{
                 'capabilities':['provider:sofascore'],'resources':{'player_stats':'complete'}}})
@@ -102,13 +109,18 @@ class BundleTests(unittest.TestCase):
              '_native':{'sofascore_id':['100'],'fotmob_id':['200']}}],
             'observed':{('sofascore','10')},'sources':['test/2024-2025']}
 
-    def test_six_tables_include_only_observed_matches_in_scraped(self):
+    def test_unified_fixtures_include_observed_stats_without_a_second_match_table(self):
         with patch('concordance.build.observations',return_value=self.raw):
             manifest=rebuild(self.root,self.data,allow_unconfirmed=True,report=lambda *a,**k:None)
         folder=self.data/'concordance';check=validate_bundle(folder)
         self.assertFalse(manifest['ready_for_R']);self.assertTrue(check['id_requirements_met'])
         self.assertEqual(check['rows']['full/fixtures.csv'],2)
-        self.assertEqual(check['rows']['scraped/matches.csv'],1)
+        self.assertEqual(len(check['rows']),5)
+        self.assertFalse((folder/'scraped/matches.csv').exists())
+        fixtures=pd.read_csv(folder/'full/fixtures.csv',dtype=str).set_index('sofascore_id')
+        self.assertEqual(fixtures.loc['10','has_player_stats'],'True')
+        self.assertEqual(fixtures.loc['10','is_scheduled_for_scraping'],'False')
+        self.assertEqual(fixtures.loc['11','has_player_stats'],'False')
         self.assertEqual(check['rows']['scraped/teams.csv'],2)
         self.assertEqual(check['rows']['scraped/players.csv'],1)
         for name in TABLES:self.assertEqual(safe_path('concordance/'+name,'dataset'),'concordance/'+name)
@@ -125,13 +137,48 @@ class BundleTests(unittest.TestCase):
     def test_bundle_rejects_provider_key_with_wrong_canonical_even_with_valid_checksum(self):
         from concordance.build import digest
         with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
-        folder=self.data/'concordance';path=folder/'scraped/matches.csv'
-        frame=pd.read_csv(path,dtype=str,keep_default_na=False);frame['entity_id']='am-wrong'
+        folder=self.data/'concordance';path=folder/'full/fixtures.csv'
+        frame=pd.read_csv(path,dtype=str,keep_default_na=False);frame.loc[0,'entity_id']='am-wrong'
         frame.to_csv(path,index=False)
         manifest=json.loads((folder/'bundle.json').read_text())
-        manifest['files']['scraped/matches.csv']['sha256']=digest(path)
+        manifest['files']['full/fixtures.csv']['sha256']=digest(path)
         atomic_json(folder/'bundle.json',manifest)
         with self.assertRaisesRegex(ValueError,'Provider/canonical ID disagreement'):validate_bundle(folder)
+
+    def test_observed_provider_only_match_survives_and_uses_real_team_references(self):
+        self.raw['observed'].add(('fotmob','999'))
+        self.raw['match']=[{'_native':{'fotmob_id':['999']},'_fixture':{
+            'competition':'Premier League','season':'2024-2025','home_team':'Other home','away_team':'Other away',
+            'fotmob_home_team_id':'91','fotmob_away_team_id':'92','home_score':'2','away_score':'1'}}]
+        self.raw['team']=[{'team_name':name,'_native':{'fotmob_id':[mid]}} for name,mid in [('Other home','91'),('Other away','92')]]
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        folder=self.data/'concordance';validate_bundle(folder)
+        fixtures=pd.read_csv(folder/'full/fixtures.csv',dtype=str,keep_default_na=False)
+        row=fixtures[fixtures.fotmob_id.eq('999')].iloc[0]
+        self.assertTrue(row.entity_id.startswith('am'));self.assertEqual(row.sofascore_id,'')
+        self.assertEqual((row.has_player_stats,row.is_scheduled_for_scraping),('True','False'))
+        teams=pd.read_csv(folder/'full/teams.csv',dtype=str)
+        self.assertIn(row.home_entity_id,set(teams.entity_id));self.assertIn(row.away_entity_id,set(teams.entity_id))
+        self.assertEqual((row.home_score,row.away_score),('2','1'))
+
+    def test_saved_stats_without_team_metadata_are_preserved_and_flagged(self):
+        self.raw['observed'].add(('fotmob','999'))
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        folder=self.data/'concordance';validate_bundle(folder)
+        rows=pd.read_csv(folder/'full/fixtures.csv',dtype=str,keep_default_na=False)
+        row=rows[rows.fotmob_id.eq('999')].iloc[0]
+        self.assertEqual(row.has_player_stats,'True');self.assertEqual(row.fixture_metadata_complete,'False')
+        self.assertEqual(row.home_entity_id,'');self.assertEqual(row.away_entity_id,'')
+
+    def test_old_match_table_is_retired_and_old_bundle_requires_rebuild(self):
+        folder=self.data/'concordance';old=folder/'scraped/matches.csv';old.parent.mkdir(parents=True)
+        old.write_text('entity_id\nstale\n')
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        self.assertFalse(old.exists())
+        path=folder/'bundle.json';manifest=json.loads(path.read_text());manifest['format']='soccer-concordance-bundle-v2';manifest['ready_for_R']=True
+        atomic_json(path,manifest)
+        self.assertTrue(invalidate_bundle(self.data,'Unified fixtures required'))
+        with self.assertRaisesRegex(ValueError,'rebuild'):validate_bundle(folder)
 
     def test_preview_uses_the_same_registry_as_the_fixture_export(self):
         from fixtures.sharedIds import assign_ids
@@ -156,7 +203,8 @@ class BundleTests(unittest.TestCase):
         # The raw checkpoint exists, but the season CSV export was deferred.
         manifest=rebuild(self.root,self.data,allow_unconfirmed=True,report=lambda *a,**k:None)
         folder=self.data/'concordance'
-        matches=pd.read_csv(folder/'scraped/matches.csv',dtype=str,keep_default_na=False)
+        matches=pd.read_csv(folder/'full/fixtures.csv',dtype=str,keep_default_na=False)
+        matches=matches[matches.has_player_stats.eq('True')]
         players=pd.read_csv(folder/'scraped/players.csv',dtype=str,keep_default_na=False)
         full=pd.read_csv(folder/'full/fixtures.csv',dtype=str,keep_default_na=False)
         self.assertIn('1',set(matches.sofascore_id))

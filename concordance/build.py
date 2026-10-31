@@ -1,4 +1,4 @@
-"""Build six identity tables from fixture history and observed player statistics."""
+"""Build one fixture table and team/player identity references from saved statistics."""
 from collections import defaultdict
 from contextlib import ExitStack
 from datetime import datetime,timezone,timedelta
@@ -21,18 +21,18 @@ from storage.pandasStore import atomic_json,atomic_replace
 from .registry import Registry
 from .sources import observations,source_signature,read_csv
 
-FORMAT='soccer-concordance-bundle-v2'
+FORMAT='soccer-concordance-bundle-v3'
 ID_COLUMNS=['entity_id','reep_id','alex_id','id_source',*[p+'_id' for p in PROVIDERS],
             'identity_status','safe_for_cross_provider_joins']
 TABLES=('full/fixtures.csv','full/entities.csv','full/teams.csv',
-        'scraped/matches.csv','scraped/teams.csv','scraped/players.csv')
+        'scraped/teams.csv','scraped/players.csv')
 
 
 def invalidate_bundle(dataset,reason):
     path=Path(dataset)/'concordance/bundle.json'
     if not path.exists():return False
     manifest=json.loads(path.read_text(encoding='utf-8'))
-    if manifest.get('format')!=FORMAT:return False
+    if manifest.get('format') not in (FORMAT,'soccer-concordance-bundle-v2'):return False
     manifest.update(ready_for_R=False,invalidation_reason=reason,
                     invalidated_at=datetime.now(timezone.utc).isoformat())
     atomic_json(path,manifest,indent=2)
@@ -210,7 +210,7 @@ def verified_integration(root,report):
 def validate_bundle(folder):
     """Check all canonical keys, provider anchors, foreign keys and checksums."""
     folder=Path(folder);manifest=json.loads((folder/'bundle.json').read_text(encoding='utf-8'))
-    if manifest.get('format')!=FORMAT:raise ValueError('Unsupported concordance bundle')
+    if manifest.get('format')!=FORMAT:raise ValueError('Unsupported concordance bundle; rebuild for unified fixtures and availability flags')
     for relative,sha in manifest.get('auxiliary_checksums',{}).items():
         if relative not in ('id_redirects.csv','quarantine.csv','alex_registry.json','registry_conflicts.csv') or digest(folder/relative)!=sha:
             raise ValueError('Concordance sidecar checksum mismatch')
@@ -233,18 +233,25 @@ def validate_bundle(folder):
     registry=Registry(folder/'alex_registry.json')
     checked=0
     for relative,kind in (('full/fixtures.csv','match'),('full/teams.csv','team'),
-                          ('scraped/matches.csv','match'),('scraped/teams.csv','team'),('scraped/players.csv','player')):
+                          ('scraped/teams.csv','team'),('scraped/players.csv','player')):
         checked+=registry.validate_rows(kind,frames[relative])
     for prefix in ('from_','to_'):checked+=registry.validate_rows('team',frames['full/entities.csv'],prefix=prefix)
     for side in ('home','away'):
         references=[{'entity_id':r[side+'_entity_id'],
             'safe_for_cross_provider_joins':r.get(side+'_safe_for_cross_provider_joins',False),
-            **{p+'_id':r.get(p+'_'+side+'_team_id','') for p in PROVIDERS}} for r in frames['full/fixtures.csv']]
+            **{p+'_id':r.get(p+'_'+side+'_team_id','') for p in PROVIDERS}} for r in frames['full/fixtures.csv'] if r.get(side+'_entity_id')]
         checked+=registry.validate_rows('team',references)
+    from fixtures.availability import FLAGS,truth
+    for row in frames['full/fixtures.csv']:
+        if any(str(row.get(k,'')).lower() not in ('true','false') for k in FLAGS):raise ValueError('Missing or invalid fixture availability flags')
+        if truth(row['has_player_stats']) and truth(row['is_scheduled_for_scraping']):raise ValueError('Scraped fixture cannot also be pending scraping')
     team_ids={r['entity_id'] for r in frames['full/teams.csv']}
     for row in frames['full/fixtures.csv']:
-        if row['home_entity_id'] not in team_ids or row['away_entity_id'] not in team_ids:
-            raise ValueError('Fixture references a missing full team')
+        for side in ('home','away'):
+            entity=row.get(side+'_entity_id','')
+            if entity and entity not in team_ids:raise ValueError('Fixture references a missing full team')
+            if not entity and not (row.get('fixture_source')=='stored_player_stats' and truth(row['has_player_stats']) and not truth(row.get('fixture_metadata_complete'))):
+                raise ValueError('Fixture references a missing full team')
     known_aliases={p:set() for p in PROVIDERS}
     for row in frames['full/teams.csv']:
         aliases=json.loads(row.get('provider_aliases') or '{}')
@@ -316,6 +323,7 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
                       'identity_status':r.get('match_identity_status',''),'reep_id':r.get('reep_match_id','')} for r in fixtures]
         team_seeds=table(dataset/'fixture_concordance/team_ids.csv')
         all_teams=Pool('team',bridges,registry,team_seeds)
+        for observed_team in raw['team']:all_teams.add(observed_team)
         for row in fixtures:
             for side in ('home','away'):
                 peers={p+'_id':row.get(p+'_'+side+'_team_id','') for p in PROVIDERS}
@@ -357,7 +365,44 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
                 scraped_matches.add(row)
         scraped_match_rows=scraped_matches.finish()
         scraped_ids={r['entity_id'] for r in scraped_match_rows}
-        observed_teams={row[side+'_entity_id'] for row in full_fixtures if row['entity_id'] in scraped_ids for side in ('home','away')}
+        # Provider-only saved statistics remain fixtures even if the baseline
+        # directory has not supplied their metadata yet. Never invent team IDs.
+        represented={r['entity_id'] for r in full_fixtures}
+        metadata={}
+        for row in raw['match']:
+            for p in PROVIDERS:
+                for native_id in row['_native'].get(p+'_id',[]):
+                    ref=match_lookup.get((p,native_id))
+                    if ref and row.get('_fixture'):metadata.setdefault(ref['entity_id'],row['_fixture'])
+        for match in scraped_match_rows:
+            if match['entity_id'] in represented:continue
+            facts=metadata.get(match['entity_id'],{})
+            result={**facts,**{k:match.get(k,'') for k in ID_COLUMNS},'fixture_source':'stored_player_stats',
+                'competition':facts.get('competition') or match.get('competition',''),
+                'season':facts.get('season') or match.get('season',''),
+                'date':facts.get('date') or match.get('date',''),
+                'home_team':facts.get('home_team') or match.get('home_team_name',''),
+                'away_team':facts.get('away_team') or match.get('away_team_name','')}
+            for p in (*PROVIDERS,'reep'):result[p+'_match_id']=match.get(p+'_id','')
+            for side in ('home','away'):
+                team=next((team_lookup[p,str(facts[p+'_'+side+'_team_id'])] for p in PROVIDERS
+                    if facts.get(p+'_'+side+'_team_id') and (p,str(facts[p+'_'+side+'_team_id'])) in team_lookup),{})
+                result[side+'_entity_id']=team.get('entity_id','')
+                result[side+'_safe_for_cross_provider_joins']=team.get('safe_for_cross_provider_joins',False)
+                for p in (*PROVIDERS,'reep'):
+                    result.setdefault(p+'_'+side+'_team_id',team.get(p+'_id',''))
+            full_fixtures.append(result);represented.add(match['entity_id'])
+        from fixtures.availability import annotate,scrape_targets
+        evidence={(p,mid) for row in scraped_match_rows for p in PROVIDERS if (mid:=row.get(p+'_id'))}
+        annotate(full_fixtures,observed=evidence,targets=scrape_targets())
+        # Canonical coalescing later can upgrade keys, but cannot remove proof
+        # that a saved-stat match was observed through another native anchor.
+        for row in full_fixtures:
+            if row['entity_id'] in scraped_ids:row.update(has_player_stats=True,is_scheduled_for_scraping=False)
+            row['fixture_metadata_complete']=bool(row.get('home_entity_id') and row.get('away_entity_id'))
+        observed_teams={row[side+'_entity_id'] for row in full_fixtures if row['has_player_stats'] for side in ('home','away') if row.get(side+'_entity_id')}
+        used_teams={row.get(side+'_entity_id') for row in full_fixtures for side in ('home','away')}
+        full_teams=[row for row in full_teams if row['entity_id'] in used_teams]
         scraped_teams=Pool('team',bridges,registry,full_teams)
         for row in full_teams:
             if row['entity_id'] in observed_teams:scraped_teams.add(row)
@@ -380,7 +425,7 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
                 row[side+'_safe_for_cross_provider_joins']=False
                 for field,value in assigned.items():row[side+'_'+field]=value
             entities.append(row)
-        outputs=dict(zip(TABLES,[full_fixtures,entities,full_teams,scraped_match_rows,scraped_teams.finish(),player_rows]))
+        outputs=dict(zip(TABLES,[full_fixtures,entities,full_teams,scraped_teams.finish(),player_rows]))
         # Later observations may upgrade an earlier alias. Publish every
         # reference using the final registry, including fixture foreign keys.
         for rows in outputs.values():
@@ -395,6 +440,11 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
                         entity=registry.canonical(row[prefix+'alex_id'])
                         row[prefix+'reep_id']=entity if entity!=row[prefix+'alex_id'] else ''
                         row[prefix+'id_source']='reep' if row[prefix+'reep_id'] else 'alex'
+        for row in full_fixtures:
+            row['reep_match_id']=row.get('reep_id','')
+            for side in ('home','away'):
+                entity=row.get(side+'_entity_id','')
+                if entity.startswith('rt'):row['reep_'+side+'_team_id']=entity
         if source_signature(root,dataset)!=before:raise ValueError('Collection inputs changed during rebuild; previous bundle preserved; pause writes and retry')
         if confirmed:verified_integration(root,integration_report)
         with tempfile.TemporaryDirectory(prefix='.concordance-',dir=output.parent) as temp:
@@ -413,6 +463,8 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
             from .sync import version as registry_version,installed_version
             manifest={'alex_id_aliases_resolved':registry.alex_aliases_resolved(),'registry_version':registry_version(registry.value),'main_registry_version':installed_version(root),'format':FORMAT,'built_at':datetime.now(timezone.utc).isoformat(),'integration_confirmed':confirmed,
                       'ready_for_R':confirmed,'id_requirements_met':True,'source_signature':before,'files':files,
+                      'fixture_availability':{'with_player_stats':sum(r['has_player_stats'] for r in full_fixtures),'scheduled_for_scraping':sum(r['is_scheduled_for_scraping'] for r in full_fixtures)},
+                      'match_table':'full/fixtures.csv','separate_scraped_match_table':False,
                       'sources':raw['sources'],'scraped_definition':'Matches with saved player-stat rows or validated checkpoint performance values',
                       'unmatched_provider_ids_are_blank':True,'canonical_id_column':'entity_id',
                       'published_reep_ids_are_not_generated':True,'quarantined_relationships':len(quarantine),
@@ -425,4 +477,5 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
             for relative in (*TABLES,'id_redirects.csv','quarantine.csv','alex_registry.json','registry_conflicts.csv','bundle.json'):
                 target=output/relative;target.parent.mkdir(parents=True,exist_ok=True)
                 atomic_replace(stage/relative,target)
+            (output/'scraped/matches.csv').unlink(missing_ok=True)
         return manifest
