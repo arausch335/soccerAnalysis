@@ -65,8 +65,9 @@ def job_key(namespace, competition, season, mid):
 
 
 class PortableProgress:
-    def __init__(self, path, root, *, worker_id=None):
+    def __init__(self, path, root, *, worker_id=None,identity_root=None):
         self.path=Path(path) if path is not None else None;self.root=Path(root);self.scanning=False;self.skip_remote=True;self.trusted_only=False
+        self.identity_root=Path(identity_root) if identity_root is not None else self.root
         self.records=shared_progress(self.path,local_worker=worker_id or read_worker_id(root)) if self.path is not None else {}
         self.local_records={};self.previous_local={};self.worker_path=None
         self._capture=None;self._inventory_cache=None;self.scan_summary={}
@@ -331,7 +332,7 @@ class PortableProgress:
                 saved=json.loads(path.read_text(encoding='utf-8'))
                 reason=('cache provider or key differs from the checkpoint'
                         if saved.get('provider')!='whoscored' or saved.get('key')!=f'match/{mid}' else
-                        integrated_error(match,saved.get('payload',{}),root=self.root))
+                        integrated_error(match,saved.get('payload',{}),root=self.identity_root))
                 if reason:
                     if self.scanning:raise ValueError(f'Invalid integrated WhoScored raw events: {path} ({reason})')
                     return

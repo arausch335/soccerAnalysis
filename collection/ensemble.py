@@ -173,7 +173,9 @@ def import_folder(source, root, report=print, *, background=False, check=lambda:
             with path.open(encoding='utf-8-sig',newline='') as handle:
                 for row in csv.DictReader(handle):
                     if None in row or None in row.values():raise ValueError(f'Invalid imported CSV: {relative}')
-    source_progress=PortableProgress(None,source)
+    # Temporary transfer folders contain data, not the receiver's trusted
+    # identity decisions. Validate native pairs against the receiving root.
+    source_progress=PortableProgress(None,source,identity_root=root)
     source_progress.scan(cache=False,cancel=check if hasattr(check,'is_set') else None)
     local_progress=PortableProgress(None,root)
     if not background:local_progress.scan()

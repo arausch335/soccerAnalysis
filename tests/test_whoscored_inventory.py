@@ -50,6 +50,38 @@ class WhoScoredInventoryTests(unittest.TestCase):
         self.assertTrue(any(r['namespace']=='whoscored_events' for r in progress.local_records.values()))
         self.assertTrue(integrated_who(self.source,1))
 
+    def import_source(self,hub,*,batch='test'):
+        from collection.backgroundImports import import_parts
+        from collection.storageAgent import season_files
+        from providers.reep import snapshot
+        atomic_json(self.root/'.soccer-scraper.json',{'format':1})
+        install(hub,snapshot(self.root))
+        return import_parts(hub,season_files(self.root,'premier-league/2024-2025'),owner='headless',batch=batch,report=quiet)
+
+    def test_chunked_import_uses_receiver_reep_index_in_its_temporary_folder(self):
+        hub=Path(self.temp.name)/'hub'
+        original=self.raw.read_bytes()
+        self.assertTrue(self.import_source(hub))
+        imported=hub/self.raw.relative_to(self.root)
+        self.assertEqual(imported.read_bytes(),original)
+        progress=PortableProgress(None,hub);progress.scan()
+        self.assertTrue(any(r['namespace']=='whoscored_events' for r in progress.local_records.values()))
+
+    def test_chunked_import_still_rejects_wrong_team_with_same_display_name(self):
+        hub=Path(self.temp.name)/'hub'
+        payload=deepcopy(self.payload);payload['matchCentreData']['home']={'teamId':9002,'name':self.match.home_team.name}
+        self.write(payload);original=self.raw.read_bytes()
+        with self.assertRaisesRegex(ValueError,'home team differs'):self.import_source(hub)
+        self.assertEqual(self.raw.read_bytes(),original)
+        self.assertFalse((hub/'premier-league/2024-2025/match_checkpoints/1/CURRENT.json').exists())
+
+    def test_sender_reep_index_cannot_authorize_unreviewed_ids_on_receiver(self):
+        from collection.ensemble import import_folder
+        atomic_json(self.root/'.soccer-scraper.json',{'format':1})
+        hub=Path(self.temp.name)/'hub';original=self.raw.read_bytes()
+        with self.assertRaisesRegex(ValueError,'home team differs'):import_folder(self.root,hub,quiet)
+        self.assertEqual(self.raw.read_bytes(),original)
+
     def test_wrong_team_with_same_name_still_fails_and_retains_raw_data(self):
         payload=deepcopy(self.payload)
         payload['matchCentreData']['home']={'teamId':9002,'name':self.match.home_team.name}

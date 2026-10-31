@@ -324,6 +324,10 @@ teams and the checkpoint date matches. Multiple checkpoint claims, unknown or
 contradictory links, date differences and other errors stay held. Every retry
 still passes the full importer validation. MSI checks new raw arrivals between
 season exports so a long export backlog cannot monopolize incorporation.
+Transfer validation reads the data from its temporary staging folder and the
+trusted identity mappings from the receiver's data root. A temporary folder
+does not need its own registry, and a sender's identity file cannot authorize
+an otherwise unreviewed provider link on MSI.
 
 On Headless, `python -m tools.storage_diagnostics` shows the actual local queue.
 `python -m tools.storage_diagnostics --send-queued` delivers only existing queued
