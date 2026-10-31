@@ -33,6 +33,7 @@ from storage.layout import system_path
 from storage.pandasStore import atomic_json
 from .reconcile import reconcile, summarize, ATTEMPT_COLUMNS
 from .sharedIds import assign_ids,FIXTURE_KEYS,REFERENCE_KEYS
+from . import requirements
 from .builder import (COMPETITIONS, EUROPEAN_COMPETITIONS, _fotmob_event,
                       _slug, current_season_start, season_label)
 
@@ -66,6 +67,10 @@ class _PartialSchedule(ProviderError):
         super().__init__(str(cause))
         self.events = list(events)
         self.status_code = getattr(cause, 'status_code', None)
+
+
+class _UnavailableSeason(ValueError):
+    pass
 
 
 def _validate(events,provider=''):
@@ -109,9 +114,11 @@ def _load(path, provider, competition, start):
             else _validate(value['events'],provider))
 
 
-def _complete_checkpoint(path):
+def _complete_checkpoint(path, *, at=None, allow_deferred=False):
     value = json.loads(path.read_text(encoding='utf-8'))
-    return value.get('format') == FORMAT and value.get('scope') == SCHEDULE_SCOPE
+    deferred=value.get('scope_details',{}).get('deferred',[])
+    reusable=not deferred or allow_deferred and all(requirements.instant(d['recheck_after'])>requirements.instant(at) for d in deferred)
+    return value.get('format') == FORMAT and value.get('scope') == SCHEDULE_SCOPE and reusable
 
 
 def _saved_source(root, competition, start):
@@ -156,10 +163,11 @@ def _who_paths(client, competition):
     return sorted(paths)
 
 
-def _who_events(client, competition, start, baseline, *, cache_root=None, refresh=False, progress=None):
+def _who_events(client, competition, start, baseline, *, cache_root=None, refresh=False, progress=None, at=None):
     season = f'{start}/{start + 1}'
     events, errors = {}, []
     client.fixture_scope = {'competition':competition.name,'season':season,'stages':[]}
+    phase=requirements.domestic_phase(competition.name,start,baseline,at)
     # Include June qualifiers even when the baseline only has main-stage games;
     # COVID-delayed seasons can extend into the following summer.
     months = sorted(set(months_between(baseline)) | {
@@ -174,8 +182,10 @@ def _who_events(client, competition, start, baseline, *, cache_root=None, refres
         prepare=getattr(client,'register_fixture_season',None)
         if callable(prepare):prepare(path,season)
         found = [s for s in client.seasons(path) if season_key(s['name']) == season]
+        if not found:
+            raise _UnavailableSeason(f'WhoScored season {competition.name} {season} unavailable')
         if len(found) != 1:
-            raise ValueError(f'WhoScored season {competition.name} {season} unavailable or ambiguous')
+            raise ValueError(f'WhoScored season {competition.name} {season} ambiguous')
         # Configured IDs are hints for other collection workflows. A full
         # fixture history always enumerates the season's published stages.
         stages = list(dict.fromkeys(client.season_stages(found[0]['path'])))
@@ -214,9 +224,26 @@ def _who_events(client, competition, start, baseline, *, cache_root=None, refres
                     failed(ProviderError(f'WhoScored stage {stage} month {month}: {exc}')
                            if getattr(exc,'status_code',None) not in (401,403,429) else exc)
 
+    def collect_domestic(path):
+        tournament=requirements.DOMESTIC_TOURNAMENTS[competition.name]
+        if phase=='not_applicable':
+            client.fixture_scope.setdefault('not_applicable',[]).append(dict(tournament=tournament,
+                reason=requirements.NOT_HELD[competition.name,start]))
+            return
+        try:collect_path(path())
+        except _UnavailableSeason as exc:
+            if phase!='not_yet_required':failed(exc)
+            else:client.fixture_scope.setdefault('deferred',[]).append(
+                requirements.deferred_feed(competition.name,start,'whoscored',tournament,at=at))
+        except ERRORS as exc:failed(exc)
+
     try:
         paths = _who_paths(client, competition)
         for path in dict.fromkeys(paths):
+            domestic_id=requirements.DOMESTIC_TOURNAMENTS.get(competition.name)
+            if domestic_id and f'/tournaments/{domestic_id}/' in path.lower():
+                collect_domestic(lambda:path)
+                continue
             try:collect_path(path)
             except ERRORS as exc:failed(exc)
         domestic = {
@@ -225,8 +252,7 @@ def _who_events(client, competition, start, baseline, *, cache_root=None, refres
             'Ligue 2': (661,2016),
         }.get(competition.name)
         if domestic and start >= domestic[1]:
-            try:collect_path(client.supplemental_path(paths[0], domestic[0]))
-            except ERRORS as exc:failed(exc)
+            collect_domestic(lambda:client.supplemental_path(paths[0], domestic[0]))
         if competition.name in EUROPEAN_COMPETITIONS:
             try:
                 qualifying = client.qualification_path(paths[0])
@@ -240,17 +266,22 @@ def _who_events(client, competition, start, baseline, *, cache_root=None, refres
     return list(events.values())
 
 
-def _fotmob_events(client, competition, start, *, progress=None):
+def _fotmob_events(client, competition, start, *, progress=None, baseline=(), at=None):
     """Keep the primary schedule if a supplemental feed lacks this season."""
     season = f'{start}/{start + 1}'
     feeds = [(competition.fotmob_id, False), (competition.fotmob_qualification_id, True),
              (competition.fotmob_playoff_id, False)]
     events, errors = {}, []
+    client.fixture_scope={}
     for cid, qualifying in feeds:
         if cid is None:
             continue
         try:
             if season not in client.seasons(cid):
+                if cid==competition.fotmob_playoff_id and requirements.domestic_phase(competition.name,start,baseline,at)=='not_yet_required':
+                    client.fixture_scope.setdefault('deferred',[]).append(
+                        requirements.deferred_feed(competition.name,start,'fotmob',cid,at=at))
+                    continue
                 raise ValueError(f'No season {season} for FotMob competition {cid}')
             for row in client.season_events(cid, season):
                 event = _fotmob_event(row, cid, start, qualifying)
@@ -277,7 +308,7 @@ def _fotmob_events(client, competition, start, *, progress=None):
 
 
 def schedules(root, clients, competition, start, *, offline=False, refresh=False,
-              blocked=None, progress=None):
+              blocked=None, progress=None, at=None):
     """Checkpoints are full schedules, independent of output filtering switches."""
     result, coverage = {}, []
     blocked = {} if blocked is None else blocked
@@ -291,10 +322,12 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
         events = []
         complete = True
         try:
-            reusable = path.exists() and _complete_checkpoint(path)
+            reusable = path.exists() and _complete_checkpoint(path,at=at,allow_deferred=offline)
             if path.exists():
                 events = _load(path, provider, competition, start)
                 scope_details = json.loads(path.read_text(encoding='utf-8')).get('scope_details',{})
+                if scope_details.get('deferred') and requirements.domestic_phase(competition.name,start,result.get('sofascore',[]),at)!='not_yet_required':
+                    reusable=False
             if reusable and not refresh:
                 pass
             else:
@@ -337,12 +370,13 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                                 if progress:progress('provider_progress',current_fixtures=len(fetched))
                             events = list(fetched.values())
                         elif provider == 'fotmob':
-                            events, feed_errors = _fotmob_events(client, competition, start,progress=progress)
+                            events, feed_errors = _fotmob_events(client, competition, start,progress=progress,baseline=result['sofascore'],at=at)
+                            scope_details=client.fixture_scope
                             if feed_errors:
                                 complete = False
                                 error = '; '.join(feed_errors)
                         else:
-                            events = _who_events(client, competition, start, result['sofascore'],cache_root=root,refresh=refresh,progress=progress)
+                            events = _who_events(client, competition, start, result['sofascore'],cache_root=root,refresh=refresh,progress=progress,at=at)
                             scope_details = client.fixture_scope
                         origin = 'provider_schedule'
                     finally:
@@ -392,7 +426,7 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                 return {}, coverage
         result[provider] = events
         coverage.append(dict(competition=competition.name, season=season_label(start), provider=provider,
-            status='complete' if complete else 'partial' if events else 'missing',
+            status=('deferred' if scope_details.get('deferred') else 'complete') if complete else 'partial' if events else 'missing',
             fixtures=len(events), source=origin, error=error,scope_details=json.dumps(scope_details,sort_keys=True)))
         if progress:progress('provider_finished',provider=provider,status=coverage[-1]['status'],source=origin,current_fixtures=len(events))
     return result, coverage
@@ -646,6 +680,7 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
         c['matched_fixtures'] = (int(subset[c['provider']+'_fixture_check'].eq('validated').sum())
                                  if c['provider']!='sofascore' else len(subset))
         c['unmatched_fixtures'] = len(subset)-c['matched_fixtures']
+    coverage=requirements.coverage(rows,coverage,(scope or {}).get('requirements_as_of'))
     if frame.sofascore_match_id.duplicated().any():
         raise ValueError('Duplicate baseline match IDs across competition seasons')
     if rows:
@@ -660,7 +695,7 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
         ('match_ids', matches, ('competition', 'season', 'date', 'home_team_name', 'away_team_name', *(p + '_id' for p in SOURCES), 'identity_status',*REFERENCE_KEYS)),
         ('team_aliases', aliases, ('sofascore_team_id', 'sofascore_name', 'provider', 'provider_team_id', 'provider_name', 'sofascore_match_id', 'provider_match_id', 'competition','season','method')),
         ('issues', issues, ('sofascore_match_id', 'provider', 'issue', 'candidate_ids')),
-        ('coverage', coverage, ('competition', 'season', 'provider', 'status', 'fixtures', 'source', 'error','scope_details','raw_fixtures','canonical_fixtures','finished_fixtures','superseded_fixtures','phases','expected_finished','expected_fixtures','count_check','matched_fixtures','unmatched_fixtures')),
+        ('coverage', coverage, ('competition', 'season', 'provider', 'status', 'fixtures', 'source', 'error','scope_details','raw_fixtures','canonical_fixtures','finished_fixtures','superseded_fixtures','phases','expected_finished','expected_fixtures','count_check','matched_fixtures','unmatched_fixtures',*requirements.COVERAGE_COLUMNS)),
     ):
         atomic_csv(pd.DataFrame(records, columns=columns).drop_duplicates(), folder / (name + '.csv'))
     missing_ids = {column: int(frame[column].fillna('').eq('').sum()) for column in ID_COLUMNS}
@@ -672,7 +707,8 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
         count_mismatches=[c for c in coverage if c.get('count_check')=='mismatch'],
         missing_ids=missing_ids, all_four_ids_complete=not any(missing_ids.values()),
         all_provider_fixtures_validated=all(frame[p + '_fixture_check'].eq('validated').all() for p in PROVIDERS[1:]),
-        issues=len(issues), fixture_checks={p: frame[p + '_fixture_check'].value_counts().to_dict() for p in PROVIDERS[1:]})
+        issues=len(issues), fixture_checks={p: frame[p + '_fixture_check'].value_counts().to_dict() for p in PROVIDERS[1:]},
+        **requirements.summary(rows,coverage,(scope or {}).get('requirements_as_of')))
     atomic_json(folder / 'manifest.json', manifest)
     from providers.teamHistory import export_history
     export_history(root,output.parent)
@@ -695,6 +731,7 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
         raise ValueError('Offline mode cannot refresh provider schedules or Reep')
     root.mkdir(parents=True, exist_ok=True)
     scope = dict(start_season=start_season, end_season=end, current_season=current, include_upcoming=include_upcoming,
+                 requirements_as_of=requirements.instant(now).isoformat(),
                  competitions=[c.name for c in competitions])
     snapshots, coverage, blocked = [], [], {}
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -733,7 +770,7 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
             for start in range(max(start_season, competition.first_season), end + 1):
                 notify('season_started',competition=competition.name,season=season_label(start))
                 feeds, counts = schedules(root, clients, competition, start, offline=offline,
-                    refresh=refresh_schedules or refresh_current and start == current, blocked=blocked,progress=notify)
+                    refresh=refresh_schedules or refresh_current and start == current, blocked=blocked,progress=notify,at=scope['requirements_as_of'])
                 notify('season_finished')
                 coverage.extend(counts)
                 if feeds:
@@ -756,11 +793,12 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
             notify('delivering')
             from collection.compiledDelivery import deliver
             manifest['delivery'] = deliver(root, output.parent, fixture_csv=output, attempt=not offline, report=report)
-        notify('finished' if manifest['schedule_coverage_complete'] and manifest['count_checks_passed'] else 'needs_attention',
+        notify('finished' if manifest['required_schedule_coverage_complete'] and manifest['count_checks_passed'] else 'needs_attention',
             baseline_fixtures=manifest['rows'],delivery=manifest.get('delivery',{'state':'disabled'}),
             schedule_coverage_complete=manifest['schedule_coverage_complete'],count_checks_passed=manifest['count_checks_passed'],
+            required_schedule_coverage_complete=manifest['required_schedule_coverage_complete'],
             registry_version=manifest['registry_version'],registry_conflicts=manifest['registry_conflicts'])
-    report(f"Wrote {manifest['rows']} fixtures to {output}. Coverage complete: {manifest['schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
+    report(f"Wrote {manifest['rows']} fixtures to {output}. Required schedule coverage complete: {manifest['required_schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
     return manifest
 
 
@@ -790,7 +828,7 @@ def main(argv=None):
             refresh_current=args.refresh_current, refresh_reep=args.refresh_reep,
             refresh_schedules=args.refresh_schedules, include_upcoming=args.include_upcoming,
             send_to_main=args.send_to_main, api_only=args.api_only,live_reports=args.live_reports)
-        return 0 if manifest['schedule_coverage_complete'] and manifest['count_checks_passed'] else 2
+        return 0 if manifest['required_schedule_coverage_complete'] and manifest['count_checks_passed'] else 2
     except (ProviderError, OSError, ValueError) as exc:
         print(f'Fixture build needs attention: {exc}', flush=True)
         return 2

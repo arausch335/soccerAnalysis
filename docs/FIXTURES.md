@@ -81,7 +81,10 @@ can expose a single stage through their Fixtures link. Stage-ID settings do not
 restrict this full-history inventory. UEFA qualification is a separate published
 competition, discovered from tournament options as well as anchors. Separate
 German/French playoff directories and second-division playoff stages are included
-when published for that season. Missing qualifying/playoff pages are coverage gaps.
+when published for that season. Missing required qualifying/playoff pages are coverage gaps.
+Reviewed French exceptions exclude playoffs cancelled in 2019–2020, absent in
+2022–2023 during the division format change, and the absent Ligue 2/National
+barrage in 2023–2024. The Ligue 1/Ligue 2 playoffs in 2023–2024 remain required.
 Accented and percent-encoded Segunda División routes are supported.
 
 A partially rendered WhoScored directory is refreshed once, and Chrome waits for
@@ -185,7 +188,7 @@ their proposed provider URLs are not confirmations of those identities.
 The manifest distinguishes schedule-request completion, complete four-source
 ID coverage, and independent provider fixture validation. A completed request
 does not prove that a provider has every historical match. Exit code 2 signals
-missing/partial schedules or failed expected-count checks; available fixtures are still exported with gap reports.
+missing/partial required schedules or failed expected-count checks; available fixtures are still exported with gap reports.
 If no baseline schedule is available, an existing dataset is preserved and only
 the coverage report is updated. Interruptions retain completed checkpoints.
 
@@ -327,5 +330,22 @@ python main.py --fixtures --start-season 2010 --end-season 2026
 Completed cached work is reused and the compiled snapshot is delivered directly
 to Main. This code change does not itself fetch schedules on Headless. Remaining
 provider coverage stays incomplete until those requests succeed. An unpublished
-future playoff feed is still reported as pending/partial; no fixture or native
-provider ID is fabricated to make completeness checks pass.
+future domestic playoff feed is marked `deferred` when the season directory is
+not published yet. It is retried on the next online run, including without an
+explicit refresh, and becomes required at the July 1 season boundary or as soon as a played baseline
+playoff exists. Authentication, network failures and ambiguous season lookups
+remain coverage gaps. Offline reuse of a deferred checkpoint expires at that
+boundary. No fixture or native provider ID is fabricated.
+
+Published future fixtures remain in the default CSV, but matching them is
+optional. Required matching covers finished fixtures at or before the run's
+`requirements_as_of` timestamp. Cancelled and other unplayed placeholders are
+excluded. `--no-include-upcoming` continues to export only finished rows.
+`coverage.csv` preserves all-row matching totals and adds `required_status`,
+`required_fixtures`, `matched_required_fixtures`, `unmatched_required_fixtures`,
+`optional_future_fixtures` and `excluded_unplayed_fixtures`. The manifest's
+`required_schedule_coverage_complete` drives the exit status;
+`all_required_provider_fixtures_validated` separately reports matching of played
+games. The original full-published-scope and all-row validation flags remain
+available. Main recomputes these fields when reconciling received exports,
+without scraping providers.

@@ -135,6 +135,27 @@ class FixtureDatasetTests(unittest.TestCase):
         self.assertEqual(row['fotmob_fixture_check'], 'validated')
         self.assertTrue(manifest['schedule_coverage_complete'])
 
+    def test_optional_future_matching_survives_export_and_main_reconciliation(self):
+        from fixtures.identityRefresh import reconcile_exports
+        future={**event(999,home=3,away=4,home_name='Future Home',away_name='Future Away',day=1800000000),'status':{'type':'notstarted'}}
+        self.clients['sofascore'].iter_season_events=lambda *a,**k:iter([event(),future])
+        manifest=self.build()
+        self.assertEqual(manifest['rows'],2)
+        self.assertEqual(manifest['required_fixtures'],1)
+        self.assertFalse(manifest['all_provider_fixtures_validated'])
+        self.assertTrue(manifest['all_required_provider_fixtures_validated'])
+        reconcile_exports(self.root,self.output.parent)
+        import json
+        updated=json.loads((self.output.parent/'fixture_concordance/manifest.json').read_text())
+        self.assertEqual(updated['required_fixtures'],1)
+        self.assertTrue(updated['all_required_provider_fixtures_validated'])
+        with (self.output.parent/'fixture_concordance/coverage.csv').open() as stream:
+            records=list(csv.DictReader(stream))
+        who=next(r for r in records if r['provider']=='whoscored')
+        self.assertEqual(who['unmatched_fixtures'],'1')
+        self.assertEqual(who['unmatched_required_fixtures'],'0')
+        self.assertEqual(who['optional_future_fixtures'],'1')
+
     def test_offline_resume_does_not_call_any_provider(self):
         self.build()
         with patch.object(self.clients['sofascore'], 'seasons', side_effect=AssertionError('Network not allowed')):

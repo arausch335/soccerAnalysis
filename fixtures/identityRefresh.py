@@ -19,6 +19,7 @@ from providers.reep import PROVIDERS, index, snapshot
 from providers.teamProfiles import reviewed_team,canonical_record
 from storage.pandasStore import atomic_json
 from .sharedIds import assign_ids,FIXTURE_KEYS,REFERENCE_KEYS
+from . import requirements
 
 SOURCES = (*PROVIDERS, 'reep')
 
@@ -115,7 +116,7 @@ def reconcile_exports(root, dataset, *, dry_run=False, already_locked=False):
 def _reconcile(root,dataset,*,dry_run):
     bridges=index(root); pending={}; report={'state':'dry_run' if dry_run else 'updated',
         'at':datetime.now(timezone.utc).isoformat(),'release':bridges.metadata.get('release'), 'tables':{}}
-    review=[]; fixture_rows=None;removed_ids=set();attempts=[];score_repairs=[]
+    review=[]; fixture_rows=None;removed_ids=set();attempts=[];score_repairs=[];requirement_records=None
     previous=dataset/'concordance/reconciliation/review.csv'
     retry_ids=set()
     if previous.exists():
@@ -197,7 +198,9 @@ def _reconcile(root,dataset,*,dry_run):
                 row['matched_fixtures']=str(len(subset) if provider=='sofascore' else sum(r.get(provider+'_fixture_check')=='validated' for r in subset))
                 row['unmatched_fixtures']=str(len(subset)-int(row['matched_fixtures']))
                 new.append(row)
-            columns=list(dict.fromkeys([*columns,'canonical_fixtures','finished_fixtures','matched_fixtures','unmatched_fixtures']))
+            new=requirements.coverage(fixture_rows,new,report['at'])
+            requirement_records=new
+            columns=list(dict.fromkeys([*columns,'canonical_fixtures','finished_fixtures','matched_fixtures','unmatched_fixtures',*requirements.COVERAGE_COLUMNS]))
             if new!=records:pending[path]=(columns,new)
     identity_summary={}
     if fixture_rows is None or all(r.get('sofascore_'+side+'_team_id') for r in fixture_rows for side in ('home','away')):
@@ -243,6 +246,9 @@ def _reconcile(root,dataset,*,dry_run):
             value['all_four_ids_complete']=bool(fixture_rows) and not any(value['missing_ids'].values())
             value['fixture_checks']={p:dict(Counter(r.get(p+'_fixture_check','missing') for r in fixture_rows)) for p in PROVIDERS[1:]}
             value['all_provider_fixtures_validated']=bool(fixture_rows) and all(r.get(p+'_fixture_check')=='validated' for r in fixture_rows for p in PROVIDERS[1:])
+            if requirement_records is not None:
+                value.update(requirements.summary(fixture_rows,requirement_records,report['at']))
+                value['schedule_coverage_complete']=bool(requirement_records) and all(r.get('status')=='complete' for r in requirement_records)
             # Preserve schedule completeness: an ID bridge does not repair a
             # failed season request or prove that event/player data exists.
         manifests[path]=value

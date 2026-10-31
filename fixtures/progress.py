@@ -31,6 +31,8 @@ def validate(value,worker):
     for field in ('total_seasons','completed_seasons','total_schedules','checked_schedules',
                   'complete_schedules','partial_schedules','missing_schedules','cached_schedules','baseline_fixtures'):
         if type(value.get(field)) is not int or value[field]<0:raise ValueError('Invalid fixture progress count')
+    if type(value.get('deferred_schedules',0)) is not int or value.get('deferred_schedules',0)<0:
+        raise ValueError('Invalid deferred fixture progress count')
     return value
 
 
@@ -43,7 +45,7 @@ class Progress:
         self.value=dict(format=FORMAT,worker_id=self.worker,run_id=uuid4().hex,process_id=os.getpid(),
             state='starting',started_at=now(),updated_at=now(),heartbeat_at=now(),
             total_seasons=total,completed_seasons=0,total_schedules=total*3,checked_schedules=0,
-            complete_schedules=0,partial_schedules=0,missing_schedules=0,cached_schedules=0,baseline_fixtures=0,
+            complete_schedules=0,partial_schedules=0,missing_schedules=0,deferred_schedules=0,cached_schedules=0,baseline_fixtures=0,
             competition='',season='',provider='',current_fixtures=0,stage='',month='',delivery={})
 
     def __enter__(self):
@@ -93,14 +95,14 @@ class Progress:
             elif event=='provider_finished':
                 self.value['checked_schedules']+=1
                 status=values.get('status')
-                counter={'complete':'complete_schedules','partial':'partial_schedules'}.get(status,'missing_schedules')
+                counter={'complete':'complete_schedules','partial':'partial_schedules','deferred':'deferred_schedules'}.get(status,'missing_schedules')
                 self.value[counter]+=1
                 if values.get('source')=='checkpoint':self.value['cached_schedules']+=1
                 if values.get('provider')=='sofascore':self.value['baseline_fixtures']+=values.get('current_fixtures',0)
             elif event=='season_finished':self.value['completed_seasons']+=1
             elif event in ('matching','exporting','delivering','refreshing_ids'):self.value.update(state=event,provider='',stage='',month='')
             elif event in ('finished','needs_attention','stopped','failed'):self.value.update(state=event,ended_at=now())
-            if event=='provider_finished' and values.get('status') not in ('complete',):
+            if event=='provider_finished' and values.get('status') not in ('complete','deferred'):
                 self.value['last_issue']={k:self.value.get(k,'') for k in ('competition','season','provider','status')}
             self.value['event']=event;self.value['updated_at']=now()
             if event!='provider_progress':
@@ -110,7 +112,7 @@ class Progress:
                     label=' '.join(str(self.value.get(k,'')) for k in ('competition','season','provider'))
                     self.reporter.log('[Fixtures] '+label+' · '+event.replace('_',' ')+
                         (' · '+str(values['status']) if event=='provider_finished' else ''),
-                        'ERROR' if event=='failed' else 'WARNING' if event=='needs_attention' or event=='provider_finished' and values.get('status')!='complete' else 'INFO')
+                        'ERROR' if event=='failed' else 'WARNING' if event=='needs_attention' or event=='provider_finished' and values.get('status') not in ('complete','deferred') else 'INFO')
             if event!='provider_progress' or time.monotonic()-self.last_saved>=1:self.publish()
 
     def __exit__(self,kind,error,tb):
