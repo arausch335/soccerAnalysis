@@ -548,3 +548,16 @@ test('WhoScored directory loading responses are polled until selectors are ready
  const result=await execute({tabId:1},{id:'directory-ready',action:'whoscored',args:{kind:'text',endpoint}});
  assert.equal(result.status,200);assert.equal(reads,2);
 });
+
+
+test('WhoScored retries a detached frame without reading another document',async()=>{
+ let url='https://www.whoscored.com/matches/11/live',attempts=0;
+ chrome.tabs.get=async()=>({id:1,url,status:'complete'});
+ chrome.tabs.update=async(id,args)=>{url=args.url;};
+ chrome.scripting={executeScript:async()=>{
+   if(++attempts===1)throw new Error('Frame with ID 0 was removed.');
+   return [{frameId:0,result:{ok:true,status:200,source_url:url,text:'matchId: 11, matchCentreData: {}'}}];
+ }};
+ const result=await execute({tabId:1},{id:'retry-frame',action:'whoscored',args:{kind:'text',endpoint:'matches/11/live'}});
+ assert.equal(result.status,200);assert.equal(attempts,2);
+});

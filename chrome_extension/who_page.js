@@ -9,11 +9,9 @@ export async function whoPageOperation(args) {
     const text=document.documentElement.outerHTML;
     if (/^regions\//i.test(args.endpoint || '')) {
       const seasons=document.querySelector('select#seasons');
-      const stages=document.querySelector('select#stages');
-      const seasonPage=/\/seasons\/\d+/i.test(args.endpoint);
-      const fixtures=/href=["'][^"']*\/stages\/\d+\/(?:show|fixtures)\//i.test(text);
-      if (document.readyState!=='complete' || !seasons?.options?.length ||
-          (seasonPage && !stages?.options?.length && !fixtures)) {
+      const context=(args.endpoint || '').match(/^regions\/\d+\/tournaments\/\d+\/seasons\/\d+(?=\/|$)/i)?.[0];
+      const fixtures=context && new RegExp(`(?:href|value)=["']/?${context}/stages/\\d+/(?:show|fixtures)/`,'i').test(text);
+      if (document.readyState!=='complete' || !seasons?.options?.length || (context && !fixtures)) {
         return {...base,status:202,reason:'directory_loading'};
       }
     }

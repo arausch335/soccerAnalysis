@@ -18,6 +18,7 @@ from collection.files import atomic_csv
 from providers.reep import PROVIDERS, index, snapshot
 from providers.teamProfiles import reviewed_team,canonical_record
 from storage.pandasStore import atomic_json
+from .sharedIds import assign_ids,FIXTURE_KEYS,REFERENCE_KEYS
 
 SOURCES = (*PROVIDERS, 'reep')
 
@@ -97,7 +98,11 @@ def reconcile_exports(root, dataset, *, dry_run=False, already_locked=False):
     owns its install lock, so a worker cannot replace files during reconciliation.
     """
     root,dataset=Path(root),Path(dataset)
-    if snapshot(root) is None:return {'state':'no_index','tables':{}}
+    if snapshot(root) is None:
+        path=dataset/'fixtures.csv'
+        columns=read_table(path)[0] if path.is_file() else []
+        if not {'sofascore_match_id','sofascore_home_team_id','sofascore_away_team_id'}<=set(columns):
+            return {'state':'no_index','tables':{}}
     with ExitStack() as stack:
         if not already_locked:
             lock=root/'_system/compiled/receiver/.install.lock'
@@ -194,6 +199,21 @@ def _reconcile(root,dataset,*,dry_run):
                 new.append(row)
             columns=list(dict.fromkeys([*columns,'canonical_fixtures','finished_fixtures','matched_fixtures','unmatched_fixtures']))
             if new!=records:pending[path]=(columns,new)
+    identity_summary={}
+    if fixture_rows and all(r.get('sofascore_'+side+'_team_id') for r in fixture_rows for side in ('home','away')):
+        reference_tables={}
+        for kind in ('match','team'):
+            path=dataset/'fixture_concordance'/(kind+'_ids.csv')
+            if path in pending:reference_tables[kind]=pending[path]
+            elif path.exists():reference_tables[kind]=read_table(path)
+        identity_summary=assign_ids(root,fixture_rows,
+            reference_tables.get('match',([],[]))[1],reference_tables.get('team',([],[]))[1],
+            folder=dataset/'fixture_concordance',save=not dry_run)
+        path=dataset/'fixtures.csv';columns=read_table(path)[0]
+        pending[path]=(list(dict.fromkeys([*columns,*FIXTURE_KEYS])),fixture_rows)
+        for kind,(columns,records) in reference_tables.items():
+            pending[dataset/'fixture_concordance'/(kind+'_ids.csv')]=(list(dict.fromkeys([*columns,*REFERENCE_KEYS])),records)
+        report['canonical_ids']=identity_summary
     manifests={}
     for folder in ('concordance','fixture_concordance'):
         path=dataset/folder/'manifest.json'
@@ -208,6 +228,7 @@ def _reconcile(root,dataset,*,dry_run):
                     value.setdefault('tables',{})[kind]={'rows':n,'reep_linked':after['present']['reep'],
                         'conflicts':after['conflicts'],'missing_ids':{p:n-after['present'][p] for p in PROVIDERS}}
         elif fixture_rows is not None:
+            value.update(identity_summary)
             value['rows']=len(fixture_rows)
             value['superseded_fixtures_removed']=value.get('superseded_fixtures_removed',0)+len(removed_ids)
             issues_path=dataset/'fixture_concordance/issues.csv'

@@ -114,6 +114,41 @@ class FixtureDatasetTests(unittest.TestCase):
             manifest = self.build(offline=True)
         self.assertEqual(manifest['rows'], 1)
 
+    def test_failed_month_resume_reuses_durable_successful_months(self):
+        client=self.clients['whoscored'];original=client.season_events;calls=[];failed=[True]
+        def fetch(stage,month):
+            calls.append((stage,month))
+            if month=='201009' and failed[0]:raise ProviderRequestError('WhoScored HTTP 502',status_code=502)
+            return original(stage,month)
+        client.season_events=fetch
+        first=self.build();self.assertFalse(first['schedule_coverage_complete'])
+        self.assertTrue(list((self.root/'_system/fixtures/whoscored_months').rglob('*.json')))
+        failed[0]=False;calls.clear()
+        second=self.build();self.assertTrue(second['schedule_coverage_complete'])
+        self.assertEqual(calls,[(2010,'201009')])
+
+    def test_fixture_keys_use_alex_fallback_and_upgrade_without_scraping(self):
+        from fixtures.identityRefresh import reconcile_exports
+        from providers.reep import path_for
+        path_for(self.root).unlink()
+        first=self.build();row,=self.records()
+        self.assertTrue(row['entity_id'].startswith('am'))
+        self.assertTrue(row['home_entity_id'].startswith('at'))
+        self.assertEqual(row['reep_match_id'],'');self.assertTrue(first['all_canonical_ids_present'])
+        old=row['entity_id'];home=row['home_entity_id']
+        self.build(offline=True);self.assertEqual(self.records()[0]['entity_id'],old)
+        reconcile_exports(self.root,self.output.parent)
+        self.assertEqual(self.records()[0]['entity_id'],old)
+        rows=[['match','sofascore','100','rm-published'],['team','sofascore','1','rt-published']]
+        reep.install(self.root,dict(format=reep.FORMAT,version=reep._digest(rows),rows=rows))
+        reconcile_exports(self.root,self.output.parent)
+        upgraded=self.records()[0]
+        self.assertEqual(upgraded['entity_id'],'rm-published')
+        self.assertEqual(upgraded['home_entity_id'],'rt-published')
+        with (self.output.parent/'fixture_concordance/id_redirects.csv').open() as stream:redirects=list(csv.DictReader(stream))
+        self.assertIn({'from_id':old,'to_id':'rm-published'},redirects)
+        self.assertIn({'from_id':home,'to_id':'rt-published'},redirects)
+
     def test_output_filter_is_independent_of_checkpoint(self):
         self.clients['sofascore'].iter_season_events = lambda *a, **k: iter([
             {**event(), 'status': {'type': 'notstarted'}}])

@@ -32,6 +32,7 @@ from providers.whoScoredClient import _Directory, directory_path
 from storage.layout import system_path
 from storage.pandasStore import atomic_json
 from .reconcile import reconcile, summarize, ATTEMPT_COLUMNS
+from .sharedIds import assign_ids,FIXTURE_KEYS,REFERENCE_KEYS
 from .builder import (COMPETITIONS, EUROPEAN_COMPETITIONS, _fotmob_event,
                       _slug, current_season_start, season_label)
 
@@ -54,7 +55,7 @@ CHECK_COLUMNS = tuple(f'{p}_{field}' for p in PROVIDERS[1:]
                       for field in ('fixture_check', 'match_method'))
 COLUMNS = (*FIXTURE_COLUMNS, *ID_COLUMNS, *NAME_COLUMNS, *CHECK_COLUMNS,
            'whoscored_stage_id','whoscored_stage','whoscored_round',
-           'match_identity_status', 'home_team_identity_status', 'away_team_identity_status')
+           'match_identity_status', 'home_team_identity_status', 'away_team_identity_status',*FIXTURE_KEYS)
 ERRORS = (ProviderError, OSError, ValueError, KeyError, TypeError)
 FORMAT = 'soccer-fixture-schedule-v2'
 SCHEDULE_SCOPE = 'all-published-stages-and-supplements-v2'
@@ -125,8 +126,6 @@ def _who_paths(client, competition):
     parent = {'Championship':'Premier League', 'La Liga 2':'La Liga',
               '2. Bundesliga':'Bundesliga', 'Serie B':'Serie A',
               'Ligue 2':'Ligue 1', 'Conference League':'Champions League'}[competition.name]
-    parser = _Directory()
-    parser.feed(client.get_text(next(c.whoscored_path for c in COLLECTION_COMPETITIONS if c.name == parent)))
     suffixes = {
         'Championship': ('england-championship',),
         'La Liga 2': ('spain-segunda-division', 'spain-segunda-divisi%C3%B3n', 'spain-laliga2', 'spain-laliga-2'),
@@ -134,12 +133,20 @@ def _who_paths(client, competition):
         'Serie B': ('italy-serie-b',), 'Ligue 2': ('france-ligue-2',),
         'Conference League': ('europe-conference-league', 'europe-europa-conference-league'),
     }[competition.name]
-    paths = set()
-    for raw in (*parser.competition_paths, *parser.links):
-        try: path = directory_path(raw)
-        except (ValueError, UnicodeError): continue
-        if any(re.search(re.escape(suffix)+r'(?:-\d{4}-\d{4})?/?$',path,re.I) for suffix in suffixes):
-            paths.add(path)
+    def discovered(parser):
+        paths = set()
+        for raw in (*parser.competition_paths, *parser.links):
+            try: path = directory_path(raw)
+            except (ValueError, UnicodeError): continue
+            if any(re.search(re.escape(suffix)+r'(?:-\d{4}-\d{4})?/?$',path,re.I) for suffix in suffixes):
+                paths.add(path)
+        return paths
+    parent_path=next(c.whoscored_path for c in COLLECTION_COMPETITIONS if c.name==parent)
+    if callable(getattr(client,'_directory',None)):
+        parser=client._directory(parent_path,lambda p:bool(discovered(p)))
+    else:
+        parser=_Directory();parser.feed(client.get_text(parent_path))
+    paths=discovered(parser)
     # A tournament dropdown gives the stable competition route. Prefer it to
     # links to individual stages of its currently selected season.
     stable={p for p in paths if '/seasons/' not in p.lower()}
@@ -149,7 +156,7 @@ def _who_paths(client, competition):
     return sorted(paths)
 
 
-def _who_events(client, competition, start, baseline):
+def _who_events(client, competition, start, baseline, *, cache_root=None, refresh=False):
     season = f'{start}/{start + 1}'
     events, errors = {}, []
     client.fixture_scope = {'competition':competition.name,'season':season,'stages':[]}
@@ -179,7 +186,15 @@ def _who_events(client, competition, start, baseline):
                 season_path=found[0]['path'],qualifying=qualifying,months=months))
             for month in months:
                 try:
-                    for row in client.season_events(stage, month):
+                    cache=(Path(cache_root)/'_system/fixtures/whoscored_months'/_slug(competition.name)/season_label(start)/str(stage)/(month+'.json')) if cache_root is not None else None
+                    expected={'format':'soccer-whoscored-month-v1','season_path':found[0]['path'],
+                              'stage':stage,'month':month}
+                    saved=json.loads(cache.read_text(encoding='utf-8')) if cache is not None and cache.is_file() and not refresh else None
+                    if saved is not None:
+                        if any(saved.get(k)!=v for k,v in expected.items()):raise ValueError('WhoScored month checkpoint identity differs')
+                        monthly=saved['matches']
+                    else:monthly=client.season_events(stage, month)
+                    for row in monthly:
                         event = whoscored_fixture(row)
                         event['stageInfo'] = {'id':stage, 'name':name}
                         event['tournament'] = {'qualificationOrPreliminary':qualifying,
@@ -192,6 +207,7 @@ def _who_events(client, competition, start, baseline):
                                 ('startTimestamp','homeTeam','awayTeam','homeScore','awayScore','status')):
                             raise ValueError('Contradictory WhoScored schedule entries')
                         events[event['id']] = event
+                    if cache is not None and saved is None:atomic_json(cache,{**expected,'matches':monthly})
                 except ERRORS as exc:
                     failed(ProviderError(f'WhoScored stage {stage} month {month}: {exc}')
                            if getattr(exc,'status_code',None) not in (401,403,429) else exc)
@@ -321,7 +337,7 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                                 complete = False
                                 error = '; '.join(feed_errors)
                         else:
-                            events = _who_events(client, competition, start, result['sofascore'])
+                            events = _who_events(client, competition, start, result['sofascore'],cache_root=root,refresh=refresh)
                             scope_details = client.fixture_scope
                         origin = 'provider_schedule'
                     finally:
@@ -609,6 +625,7 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
         c['expected_fixtures'] = expected
         c['count_check'] = ('pass' if c.get('finished_fixtures')==expected and c.get('canonical_fixtures')==expected else 'mismatch') if expected else 'not_applicable'
     rows, teams, matches, aliases, issues = concord(canonical, root, include_upcoming=include_upcoming)
+    identity_summary=assign_ids(root,rows,matches,teams,folder=Path(output).parent/'fixture_concordance')
     frame = pd.DataFrame(rows, columns=COLUMNS)
     for column in ('match_id', 'matchweek', 'home_team_id', 'away_team_id',
                    'home_score', 'away_score', 'winner_code'):
@@ -629,8 +646,8 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
     atomic_csv(frame, output)
     for name, records, columns in (
         ('attempts', attempts, ATTEMPT_COLUMNS),
-        ('team_ids', teams, ('competition','season','team_name', *(p + '_id' for p in SOURCES), 'identity_status')),
-        ('match_ids', matches, ('competition', 'season', 'date', 'home_team_name', 'away_team_name', *(p + '_id' for p in SOURCES), 'identity_status')),
+        ('team_ids', teams, ('competition','season','team_name', *(p + '_id' for p in SOURCES), 'identity_status',*REFERENCE_KEYS)),
+        ('match_ids', matches, ('competition', 'season', 'date', 'home_team_name', 'away_team_name', *(p + '_id' for p in SOURCES), 'identity_status',*REFERENCE_KEYS)),
         ('team_aliases', aliases, ('sofascore_team_id', 'sofascore_name', 'provider', 'provider_team_id', 'provider_name', 'sofascore_match_id', 'provider_match_id', 'competition','season','method')),
         ('issues', issues, ('sofascore_match_id', 'provider', 'issue', 'candidate_ids')),
         ('coverage', coverage, ('competition', 'season', 'provider', 'status', 'fixtures', 'source', 'error','scope_details','raw_fixtures','canonical_fixtures','finished_fixtures','superseded_fixtures','phases','expected_finished','expected_fixtures','count_check','matched_fixtures','unmatched_fixtures')),
@@ -638,7 +655,7 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
         atomic_csv(pd.DataFrame(records, columns=columns).drop_duplicates(), folder / (name + '.csv'))
     missing_ids = {column: int(frame[column].fillna('').eq('').sum()) for column in ID_COLUMNS}
     manifest = dict(format='soccer-cross-provider-fixtures-v2', updated_at=datetime.now(timezone.utc).isoformat(),
-        baseline='sofascore', scope=scope or {}, rows=len(frame), reep=index(root).metadata,
+        baseline='sofascore', scope=scope or {}, rows=len(frame), reep=index(root).metadata,**identity_summary,
         schedule_coverage_complete=bool(coverage) and all(c['status'] == 'complete' for c in coverage),
         count_checks_passed=all(c.get('count_check')!='mismatch' for c in coverage),
         fixture_attempts=len(attempts), raw_fixture_rows=sum(c.get('raw_fixtures',0) for c in coverage if c['provider']=='sofascore'),

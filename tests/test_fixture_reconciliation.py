@@ -65,11 +65,26 @@ class PublishedDirectoryTests(unittest.TestCase):
     def test_unicode_slug_discovery_and_path_validation(self):
         competition=FixtureCompetition('La Liga 2',54)
         for slug in ('spain-segunda-división','spain-segunda-divisi%C3%B3n'):
-            client=Mock();client.get_text.return_value=f'<select id="tournaments"><option value="/Regions/206/Tournaments/63/{slug}">Segunda</option></select>'
+            client=WhoScoredClient();client.get_text=Mock(return_value=f'<select id="tournaments"><option value="/Regions/206/Tournaments/63/{slug}">Segunda</option></select>')
             self.assertEqual(_who_paths(client,competition),['regions/206/tournaments/63/spain-segunda-divisi%c3%b3n'])
         self.assertEqual(directory_path('/Regions/206/Tournaments/63/Seasons/6961'),'regions/206/tournaments/63/seasons/6961')
         for slug in ('../private','%2e%2e','abc%2fdef','abc%5cdef','abc%252fdef','abc?secret','abc#fragment'):
             with self.subTest(slug=slug),self.assertRaises(ValueError):directory_path('regions/206/tournaments/63/'+slug)
+
+    def test_wrong_season_shell_is_not_accepted_as_ready(self):
+        wanted='regions/81/tournaments/3/seasons/7405'
+        old='<a href="/regions/81/tournaments/3/seasons/11217/stages/25666/fixtures/germany-bundesliga">Fixtures</a>'
+        correct=f'<a href="/{wanted}/stages/16427/fixtures/germany-bundesliga-2018-2019">Fixtures</a>'
+        client=WhoScoredClient();client.get_text=Mock(side_effect=[old,correct])
+        self.assertEqual(client.season_stages(wanted+'/germany-bundesliga'),[16427])
+        self.assertEqual(client.get_text.call_count,2)
+        self.assertNotIn(25666,client.fixture_paths)
+
+    def test_second_division_directory_shell_is_refreshed(self):
+        client=WhoScoredClient();client.get_text=Mock(side_effect=['<html>Loading</html>',
+            '<select id="tournaments"><option value="/Regions/206/Tournaments/63/spain-segunda-divisi%C3%B3n">Segunda División</option></select>'])
+        self.assertEqual(_who_paths(client,FixtureCompetition('La Liga 2',54)),['regions/206/tournaments/63/spain-segunda-divisi%c3%b3n'])
+        self.assertEqual(client.get_text.call_count,2)
 
     def test_missing_one_month_retains_other_stages_and_qualifying_results(self):
         client=Who();client.stage_names={10:'Group A',11:'Final Stage',12:'Qualifying'}

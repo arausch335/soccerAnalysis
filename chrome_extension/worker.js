@@ -480,7 +480,15 @@ export async function executeWho(s,args) {
     throw new Error('WhoScored fixture request needs its published competition/season stage URL. Update Python and refresh season discovery.');
   }
   const url='https://www.whoscored.com/'+(stage ? args.page_path : args.endpoint);
-  if (initial.url.replace(/\/$/,'') !== url) await chrome.tabs.update(s.tabId,{url});
+  const transientNavigation=error=>/frame.*(?:removed|detached)|execution context.*destroyed|navigation.*(?:rejected|interrupted)/i.test(String(error?.message || error));
+  if (initial.url.replace(/\/$/,'') !== url) {
+    try {await chrome.tabs.update(s.tabId,{url});}
+    catch (error) {
+      if (!transientNavigation(error)) throw error;
+      await new Promise(r=>setTimeout(r,500));
+      await chrome.tabs.update(s.tabId,{url});
+    }
+  }
   const dataWait=Math.min(60000,Math.max(1000,args.timeout_ms || 30000));
   const manualWait=Math.min(300000,Math.max(1000,args.manual_wait_ms || 120000));
   let deadline=Date.now()+dataWait;
@@ -499,7 +507,12 @@ export async function executeWho(s,args) {
     if (!correctPath) {
       await new Promise(r=>setTimeout(r,500));continue;
     }
-    const frames=await chrome.scripting.executeScript({target:{tabId:s.tabId},world:'MAIN',func:whoPageOperation,args:[args]});
+    let frames;
+    try {frames=await chrome.scripting.executeScript({target:{tabId:s.tabId},world:'MAIN',func:whoPageOperation,args:[args]});}
+    catch (error) {
+      if (!transientNavigation(error)) throw error;
+      await new Promise(r=>setTimeout(r,500));continue;
+    }
     result=frames.find(f=>f.frameId===0)?.result;
     if (result?.status===403 && result.verification) {
       if (waitingSince===null) {waitingSince=Date.now();deadline=Math.max(deadline,waitingSince+manualWait);}

@@ -49,6 +49,21 @@ class _Directory(HTMLParser):
         if tag=='select': self.select=None
 
 
+def published_stages(parser,season_path):
+    """Return only published stage routes belonging to the requested season."""
+    context=re.search(r'(regions/\d+/tournaments/\d+/seasons/\d+)',season_path,re.I)
+    paths={}
+    for raw in (*parser.stage_paths,*parser.links):
+        try:path=directory_path(raw)
+        except (ValueError,UnicodeError):continue
+        if context and not path.startswith(context[1].lower()+'/'):continue
+        found=re.search(r'/stages/(\d+)/(show|fixtures)/',path,re.I)
+        if found:
+            stage=int(found[1])
+            if stage not in paths or found[2].lower()=='fixtures':paths[stage]=path
+    return paths
+
+
 def embedded_json(text, key):
     # The provider's object values are JSON; the enclosing assignment is JS.
     found=list(re.finditer(r'\b'+re.escape(key)+r'[\"\']?\s*[:=]\s*',text))
@@ -124,20 +139,8 @@ class WhoScoredClient(HttpClient):
         return [{'name':name.strip(),'path':directory_path(path)} for path,name in parser.options]
 
     def season_stages(self, season_path):
-        parser=self._directory(season_path, lambda p: bool(p.stage_paths) or any(
-            re.search(r'/stages/\d+/(?:show|fixtures)',link,re.I) for link in p.links))
-        # A domestic league may have no stage select: its published Fixtures
-        # link is the implicit single stage. Never use links from another season.
-        context=re.search(r'(regions/\d+/tournaments/\d+/seasons/\d+)',season_path,re.I)
-        paths={}
-        for raw in (*parser.stage_paths,*parser.links):
-            try:path=directory_path(raw)
-            except (ValueError,UnicodeError):continue
-            if context and not path.startswith(context[1].lower()+'/'):continue
-            found=re.search(r'/stages/(\d+)/(show|fixtures)/',path,re.I)
-            if found:
-                stage=int(found[1])
-                if stage not in paths or found[2].lower()=='fixtures':paths[stage]=path
+        parser=self._directory(season_path,lambda p:bool(published_stages(p,season_path)))
+        paths=published_stages(parser,season_path)
         if not paths:raise ProviderError('WhoScored season has no fixture stages')
         if not hasattr(self,'fixture_paths'):self.fixture_paths={}
         if not hasattr(self,'stage_names'):self.stage_names={}

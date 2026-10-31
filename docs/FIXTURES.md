@@ -278,3 +278,54 @@ provider score evidence can revalidate an older rejected fixture against its
 exported baseline, but the date, both teams, final score, published match bridge
 and one-to-one provider ID checks must still pass. No arbitrary subtraction is
 used to turn a genuine disagreement into a match.
+
+## Stable shared IDs and recovering missing provider schedules
+
+`fixtures.csv` now includes `entity_id`, `home_entity_id` and `away_entity_id`.
+Each key uses the published Reep identity where one is known; otherwise it uses
+an Alex fallback (`am…` for a match, `at…` for a team). `id_source`,
+`home_id_source` and `away_id_source` record which was used. The original
+`reep_*` columns contain genuine published Reep IDs only. Missing provider IDs
+remain blank; a project key is not an invented Sofascore/FotMob/WhoScored ID.
+
+Fixture match/team reference files have the same `entity_id` keys. Every key
+requires a real provider anchor. Conflicts remain flagged with
+`safe_for_cross_provider_joins` rather than being approved by ID generation.
+The fixture builder and the full/scraped concordance rebuild share
+`data/_system/identity/alex_ids.json`. Names and row order do not determine IDs.
+`fixture_concordance/alex_registry.json` and `id_redirects.csv` travel with the
+compiled bundle, allowing a cold registry restore and recording later promotion
+to a published Reep ID. Never delete the registry to recover a failed scrape.
+
+Run `python -m tools.reconcile_match_ids` to add/reconcile these keys in an
+already compiled export without requesting provider data. This preserves previous
+exports under `data/_system/identity/previous_exports/`.
+
+The October 23 snapshot's missing provider schedules chiefly reflected WhoScored
+season/directory discovery and interrupted requests. The current collector checks
+that published stage links belong to the exact requested competition/season;
+domestic leagues can publish a Fixtures link without a stage dropdown. Incomplete
+country directories get a fresh read, including Segunda División's Unicode route.
+The extension waits for the correct season and tolerates brief detached-frame or
+interrupted-navigation errors within the request deadline.
+
+Successful WhoScored stage/month responses now persist in
+`data/_system/fixtures/whoscored_months/`. A resumed incomplete season reuses those
+responses and retries missing months. These small durable checkpoints survive
+scratch-cache trimming; no failed request is recorded as an empty success.
+Existing full schedule checkpoints remain reusable. Explicit refresh flags also
+refresh these month checkpoints.
+
+On Headless, pull the code, reload Soccer Collector in Chrome's extensions page,
+and rerun the full fixture command:
+
+```sh
+git pull --ff-only origin main
+python main.py --fixtures --start-season 2010 --end-season 2026
+```
+
+Completed cached work is reused and the compiled snapshot is delivered directly
+to Main. This code change does not itself fetch schedules on Headless. Remaining
+provider coverage stays incomplete until those requests succeed. An unpublished
+future playoff feed is still reported as pending/partial; no fixture or native
+provider ID is fabricated to make completeness checks pass.
