@@ -49,7 +49,8 @@ def checkpoint_rows(source,cfg,players,teams,matches,observed,player_observed):
                     'competition':competition,'season':season,
                     'date':json.loads(row['kickoff'])[:10],
                     'home_team_name':team_names.get(row['home_team_id'],''),
-                    'away_team_name':team_names.get(row['away_team_id'],'')})
+                    'away_team_name':team_names.get(row['away_team_id'],''),
+                    provider+'_name':team_names.get(row['home_team_id'],'')+' vs '+team_names.get(row['away_team_id'],'')})
                 match['_ids'][provider+'_id'].append(mid)
                 kickoff=json.loads(row['kickoff'])
                 match['_fixture']={'competition':competition,'season':season,'date':kickoff[:10],'kickoff_utc':kickoff,
@@ -61,20 +62,22 @@ def checkpoint_rows(source,cfg,players,teams,matches,observed,player_observed):
                 for side in ('home','away'):
                     tid=row[side+'_team_id']
                     team=_id_row(teams,(competition,season,provider,tid),{
-                        'competition':competition,'season':season,'team_name':team_names.get(tid,'')})
+                        'competition':competition,'season':season,'team_name':team_names.get(tid,''),provider+'_name':team_names.get(tid,'')})
                     team['_ids'][provider+'_id'].append(tid)
                 for appearance in appearances:
                     if appearance['match_id']!=mid:continue
                     pid=appearance['player_id'];team_name=team_names.get(appearance['team_id'],'')
                     player_observed.add((provider,pid))
                     player=_id_row(players,(competition,season,team_name,provider,pid),{
-                        'competition':competition,'season':season,'team_name':team_name,'player_name':names.get(pid,'')})
+                        'competition':competition,'season':season,'team_name':team_name,'player_name':names.get(pid,''),provider+'_name':names.get(pid,'')})
                     player['_ids'][provider+'_id'].append(pid)
                     stats=json.loads(appearance.get('raw_stats') or '{}')
                     for p,entry in stats.get('_providers',{}).items():
                         if p in PROVIDERS:
                             linked=_reviewed_provider_player_id(p,pid,entry.get('id'))
-                            if linked:player['_ids'][p+'_id'].append(linked)
+                            if linked:
+                                player['_ids'][p+'_id'].append(linked)
+                                if entry.get('name'):player[p+'_name']=entry['name']
 
 
 def lineup_rows(source,cfg,players,teams,matches,observed,player_observed):
@@ -101,11 +104,11 @@ def lineup_rows(source,cfg,players,teams,matches,observed,player_observed):
             team=event.get(side+'Team',{});team_name=team.get('name','')
             player_observed.add(('sofascore',pid))
             row=_id_row(players,(competition,season,team_name,'sofascore',pid),{
-                'competition':competition,'season':season,'team_name':team_name,'player_name':player.get('name','')})
+                'competition':competition,'season':season,'team_name':team_name,'player_name':player.get('name',''),'sofascore_name':player.get('name','')})
             row['_ids']['sofascore_id'].append(pid)
             if team.get('id'):
                 row=_id_row(teams,(competition,season,'sofascore',str(team['id'])),{
-                    'competition':competition,'season':season,'team_name':team_name})
+                    'competition':competition,'season':season,'team_name':team_name,'sofascore_name':team_name})
                 row['_ids']['sofascore_id'].append(str(team['id']))
 
 
@@ -199,7 +202,7 @@ def observations(root,dataset,*,report=print):
             match.setdefault('_fixture',{'competition':competition,'season':season,'baseline_provider':provider})
             key=(competition,season,row.get('team',''),pp,pid)
             entry=players.setdefault(key,{'competition':competition,'season':season,
-                'team_name':row.get('team',''),'player_name':row.get('player_name',''),
+                'team_name':row.get('team',''),'player_name':row.get('player_name',''),pp+'_name':row.get('player_name',''),
                 '_ids':{p+'_id':[] for p in PROVIDERS}})
             entry['_ids'][pp+'_id'].append(pid)
             for link in links[row.get('match_id'),row.get('player_id')]:
@@ -251,16 +254,16 @@ def observations(root,dataset,*,report=print):
                     facts['kickoff_utc']=str(payload['general'].get('matchTimeUTCDate') or '')
                     facts['date']=facts['kickoff_utc'][:10]
                     for side,team in zip(('home','away'),payload['header']['teams']):facts[side+'_score']=team.get('score','')
-                result['match'].append({**context,'_native':{provider+'_id':[mid]},'_fixture':facts})
+                result['match'].append({**context,provider+'_name':sides['home']['name']+' vs '+sides['away']['name'],'_native':{provider+'_id':[mid]},'_fixture':facts})
                 for side in sides.values():
                     team_key=(provider,str(side['id']),*context.values())
                     if side['id'] is not None and team_key not in raw_seen['team']:
-                        result['team'].append({**context,'team_name':side['name'],'_native':{provider+'_id':[str(side['id'])]}})
+                        result['team'].append({**context,'team_name':side['name'],provider+'_name':side['name'],'_native':{provider+'_id':[str(side['id'])]}})
                         raw_seen['team'].add(team_key)
                     for player in side['players']:
                         key=(provider,str(player['id']),side['name'],*context.values())
                         if key not in raw_seen['player']:
-                            result['player'].append({**context,'team_name':side['name'],'player_name':player['name'],'_native':{provider+'_id':[str(player['id'])]}})
+                            result['player'].append({**context,'team_name':side['name'],'player_name':player['name'],provider+'_name':player['name'],'_native':{provider+'_id':[str(player['id'])]}})
                             raw_seen['player'].add(key)
     result['observed']=observed;result['sources']=sources
     return result

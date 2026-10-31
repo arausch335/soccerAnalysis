@@ -1,3 +1,8 @@
+The public R import format is now chunked Parquet under
+`data/concordances`, with compact fixtures, separate extras/linkage, and
+six-ID/five-name match/team/player tables. See [R Parquet layout](R_PARQUET_LAYOUT.md).
+The CSV layouts below document internal compatibility inputs.
+
 # Confirm MSI integration, then rebuild the identity tables
 
 The raw archive being received is different from its contents being incorporated.
@@ -157,7 +162,7 @@ Provider-only saved-stat matches missing from the baseline history are retained;
 when team metadata is unavailable, `fixture_metadata_complete` is false and
 missing team references remain blank. Known metadata and scores are preserved.
 The rebuilt bundle retires `scraped/matches.csv`; compiled delivery removes an
-older copy on Main too. In R, use `subset(ids$full$fixtures, has_player_stats)`
+older copy on Main too. In R, use `subset(ids$fixtures, has_player_stats)`
 for the collected matches.
 `scraped/teams.csv` contains teams observed in those matches. `scraped/players.csv`
 has one row per player identity, with competitions/seasons/clubs retained in JSON
@@ -209,9 +214,9 @@ Missing provider mappings stay blank, and contradictory profiles stay flagged.
 
 ```r
 source("analysis/read_concordances.R")
-ids <- read_concordances("dataset")
-fixtures <- ids$full$fixtures
-players <- ids$scraped$players
+ids <- read_concordances("data/concordances")
+fixtures <- ids$fixtures
+players <- ids$player_ids
 ```
 
 The reader requires `readr`, `jsonlite` and `digest`. It checks the integration

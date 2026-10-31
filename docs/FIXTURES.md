@@ -1,3 +1,8 @@
+The R-facing fixture export is now chunked Parquet at
+`dataset/concordances/fixtures/fixtures`, with `extra` and `metadata` next to it.
+ID tables are sibling folders under `concordances`. See
+[R Parquet layout](R_PARQUET_LAYOUT.md) for the schema and R import.
+
 # Historical fixtures and provider concordance
 
 Run `python main.py --fixtures` from the repository directory. `python -m fixtures`

@@ -46,6 +46,9 @@ def safe_path(value,kind):
     if path.is_absolute() or not path.parts or any(p in ('','.','..') for p in value.split('/')):raise ValueError('Transfer path leaves its root')
     if value=='.soccer-scraper.json' and kind=='raw':return value
     if any(p.startswith('.') or p=='_system' for p in path.parts):raise ValueError('Machine state cannot be transferred')
+    if kind=='dataset' and (value=='concordances/manifest.json' or re.fullmatch(
+            r'concordances/(?:fixtures/(?:fixtures|extra|metadata)|metadata/(?:match_ids|team_ids|player_ids|registry)|match_ids|team_ids|player_ids|entities)/part-\d{5}\.parquet',value)):
+        return value
     if path.suffix not in ('.csv','.json'):raise ValueError('Only collection/dataset files may be transferred')
     if kind=='dataset':
         if any(p in ('raw','match_checkpoints','snapshots') for p in path.parts):raise ValueError('Raw data cannot be sent to dataset consumers')

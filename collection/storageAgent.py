@@ -13,7 +13,7 @@ import time
 from uuid import uuid4
 
 from filelock import FileLock,Timeout
-from storage.pandasStore import PandasStore, SCHEMA, atomic_json
+from storage.pandasStore import PandasStore, SCHEMA, atomic_json,atomic_replace
 from .paths import collection_name
 from .storageConfig import path_for
 from .storageTransfer import (Outbox, Peer, FORMAT, digest, identifier, safe_path,
@@ -92,7 +92,7 @@ def _install_dataset(peer,manifest,output,staging_root,*,exclude=()):
     """Verify an entire publication before publishing any file; preserve other seasons."""
     validate_manifest(manifest)
     if manifest['kind']!='dataset':raise ValueError('Raw data cannot be installed as a dataset')
-    files=[item for item in manifest['files'] if item['path'] not in exclude]
+    files=[item for item in manifest['files'] if item['path'] not in exclude or item['path'].startswith('concordances/')]
     output=Path(output);output.mkdir(parents=True,exist_ok=True)
     staging_root=Path(staging_root);staging_root.mkdir(parents=True,exist_ok=True)
     from .ensemble import atomic_copy
@@ -108,9 +108,24 @@ def _install_dataset(peer,manifest,output,staging_root,*,exclude=()):
             if target.is_file() and target.stat().st_size==item['size'] and digest(target)==item['sha256']:link_or_copy(target,incoming)
             else:peer.download(item['sha256'],incoming)
             if incoming.stat().st_size!=item['size'] or digest(incoming)!=item['sha256']:raise ValueError('Dataset file differs from manifest')
+        parquet=stage/'concordances'
+        if (parquet/'manifest.json').is_file():
+            from concordance.parquet import validate
+            validate(parquet)
         # The receipt is updated only after every publication file is installed.
         # An interrupted installation is retried from the same verified manifest.
-        for item in files:atomic_copy(stage/item['path'],output/item['path'])
+        for item in files:
+            if not item['path'].startswith('concordances/'):atomic_copy(stage/item['path'],output/item['path'])
+        if (parquet/'manifest.json').is_file():
+            previous=output/('.concordances-previous-'+uuid4().hex);target=output/'concordances'
+            if target.exists():atomic_replace(target,previous)
+            try:atomic_replace(parquet,target)
+            except BaseException:
+                if previous.exists():atomic_replace(previous,target)
+                raise
+            if previous.exists():shutil.rmtree(previous)
+            from concordance.parquet import read_registry
+            atomic_json(output/'fixture_concordance/alex_registry.json',read_registry(target),sort_keys=True)
         bundle=stage/'concordance/bundle.json'
         if bundle.is_file() and json.loads(bundle.read_text(encoding='utf-8')).get('format')=='soccer-concordance-bundle-v3':
             (output/'concordance/scraped/matches.csv').unlink(missing_ok=True)
@@ -374,6 +389,12 @@ class StorageAgent:
                     if old_bundle.is_file():
                         target=output/'concordance/bundle.json';target.parent.mkdir(parents=True,exist_ok=True)
                         shutil.copyfile(old_bundle,target)
+                        from concordance.build import invalidate_bundle
+                        invalidate_bundle(output,'New statistics exported; re-audit integration and rebuild concordances')
+                    public_manifest=self.output/'concordances/manifest.json'
+                    if public_manifest.is_file():
+                        destination=output/'concordances/manifest.json';destination.parent.mkdir(parents=True,exist_ok=True)
+                        shutil.copyfile(public_manifest,destination)
                         from concordance.build import invalidate_bundle
                         invalidate_bundle(output,'New statistics exported; re-audit integration and rebuild concordances')
                     check()

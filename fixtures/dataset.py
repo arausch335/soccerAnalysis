@@ -736,6 +736,8 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
     atomic_json(folder / 'manifest.json', manifest)
     from providers.teamHistory import export_history
     export_history(root,output.parent)
+    from concordance.parquet import refresh
+    manifest['parquet']=refresh(root,output.parent,rows=rows)
     return manifest
 
 
@@ -822,7 +824,7 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
             schedule_coverage_complete=manifest['schedule_coverage_complete'],count_checks_passed=manifest['count_checks_passed'],
             required_schedule_coverage_complete=manifest['required_schedule_coverage_complete'],
             registry_version=manifest['registry_version'],registry_conflicts=manifest['registry_conflicts'])
-    report(f"Wrote {manifest['rows']} fixtures to {output}. Required schedule coverage complete: {manifest['required_schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
+    report(f"Wrote {manifest['rows']} fixtures to {output.parent / 'concordances/fixtures/fixtures'} (Parquet chunks). Required schedule coverage complete: {manifest['required_schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
     return manifest
 
 

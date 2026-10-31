@@ -38,6 +38,22 @@ class CompiledDeliveryTests(unittest.TestCase):
         return CompiledPeer(self.options['url'], self.token,
             headers={'X-Worker-Instance': instance or identity['instance_id']})
 
+    def test_chunked_parquet_bundle_is_reconciled_and_installed_before_ack(self):
+        from tests.test_parquet_concordances import ParquetTests
+        from concordance.parquet import validate,read_table
+        from collection.compiledDelivery import fixture_files
+        case=ParquetTests();case.setUp()
+        try:case.write(output=self.source/'concordances',chunk_rows=2)
+        finally:case.doCleanups()
+        files=fixture_files(self.source)
+        self.assertTrue(all(name.endswith(('.parquet','manifest.json')) for name in files))
+        result=deliver(self.root,self.source,report=lambda *a,**k:None)
+        self.assertEqual(result['state'],'installed_on_main')
+        self.assertEqual(validate(self.output/'concordances')['rows'],3)
+        self.assertEqual(len(read_table(self.output/'concordances','match_ids')),3)
+        self.assertFalse(list((self.output/'concordances').rglob('*.csv')))
+        self.assertEqual(json.loads(receipt_path(self.main).read_text())['route'],'worker_to_main')
+
     def test_compiled_bundle_is_installed_on_main_before_ack_without_raw_outbox(self):
         raw = self.root / 'premier-league/2010-2011/raw/sofascore/match.json'
         atomic_json(raw, {'raw': 'stays on the worker'})

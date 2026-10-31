@@ -29,14 +29,16 @@ TABLES=('full/fixtures.csv','full/entities.csv','full/teams.csv',
 
 
 def invalidate_bundle(dataset,reason):
-    path=Path(dataset)/'concordance/bundle.json'
-    if not path.exists():return False
-    manifest=json.loads(path.read_text(encoding='utf-8'))
-    if manifest.get('format') not in (FORMAT,'soccer-concordance-bundle-v2'):return False
-    manifest.update(ready_for_R=False,invalidation_reason=reason,
-                    invalidated_at=datetime.now(timezone.utc).isoformat())
-    atomic_json(path,manifest,indent=2)
-    return True
+    changed=False
+    for path,formats in ((Path(dataset)/'concordance/bundle.json',(FORMAT,'soccer-concordance-bundle-v2')),
+                         (Path(dataset)/'concordances/manifest.json',('soccer-concordances-parquet-v1',))):
+        if not path.exists():continue
+        manifest=json.loads(path.read_text(encoding='utf-8'))
+        if manifest.get('format') not in formats:continue
+        manifest.update(ready_for_R=False,invalidation_reason=reason,
+                        invalidated_at=datetime.now(timezone.utc).isoformat())
+        atomic_json(path,manifest,indent=2);changed=True
+    return changed
 
 
 def digest(path):
@@ -121,7 +123,7 @@ class Pool:
         item['statuses'].add(resolved['identity_status'])
         for k,v in values.items():
             if k in ('competition','season','team_name') and v:item['context'][k].add(str(v))
-            if k in ('team_name','player_name','date','home_team_name','away_team_name') and v:item['values'].setdefault(k,v)
+            if (k in ('team_name','player_name','date','home_team_name','away_team_name') or k in ('reep_name','sofascore_name','fotmob_name','whoscored_name')) and v:item['values'].setdefault(k,v)
         return key
 
     def finish(self):
@@ -478,4 +480,7 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
                 target=output/relative;target.parent.mkdir(parents=True,exist_ok=True)
                 atomic_replace(stage/relative,target)
             (output/'scraped/matches.csv').unlink(missing_ok=True)
+        from .parquet import publish
+        publish(root,dataset,full_fixtures,matches=match_references,teams=full_teams,players=player_rows,
+                entities=entities,registry=registry,confirmed=confirmed)
         return manifest

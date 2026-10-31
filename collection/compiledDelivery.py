@@ -20,6 +20,10 @@ def receipt_path(root):
 
 def fixture_files(output, *, fixture_csv=None):
     output = Path(output)
+    from concordance.parquet import exists,folder,validate
+    if exists(output):
+        validate(folder(output))
+        return {p.relative_to(output).as_posix():p for p in folder(output).rglob('*') if p.is_file()}
     files = {name: output / name for name in FIXTURE_DATASET_PATHS
              if name in FIXTURE_REQUIRED_PATHS or (output / name).is_file()}
     if fixture_csv is not None:
@@ -98,7 +102,8 @@ class CompiledReceiver(Archive):
     def register(self, worker, manifest):
         validate_manifest(manifest)
         paths = {f['path'] for f in manifest['files']}
-        if manifest['kind'] != 'dataset' or manifest['worker'] != worker or not FIXTURE_REQUIRED_PATHS <= paths <= FIXTURE_DATASET_PATHS:
+        parquet=bool('concordances/manifest.json' in paths and all(p.startswith('concordances/') for p in paths))
+        if manifest['kind'] != 'dataset' or manifest['worker'] != worker or not (parquet or FIXTURE_REQUIRED_PATHS <= paths <= FIXTURE_DATASET_PATHS):
             raise PermissionError('Only owned compiled fixture bundles may be delivered to Main')
         mid = identifier(manifest)
         with self.lock, self.connect() as db:
@@ -120,11 +125,18 @@ class CompiledReceiver(Archive):
                     link_or_copy(receiver.objects / check_hash(sha), target)
             from .storageAgent import install_dataset
             install_dataset(Objects(), manifest, self.output, self.directory / 'downloads')
+            if any(f['path']=='concordances/manifest.json' for f in manifest['files']):
+                # Keep the internal linker input aligned with a direct fixture
+                # delivery before reconciling it with Main's existing players.
+                import pandas as pd
+                from collection.files import atomic_csv
+                from concordance.parquet import wide_rows
+                atomic_csv(pd.DataFrame(wide_rows(self.output)),self.output/'fixtures.csv')
             from concordance.build import invalidate_bundle
             invalidate_bundle(self.output,'New fixture history received; rebuild the full concordance snapshot')
             # A legacy seven-file snapshot must not inherit a newer audit.
             installed = {f['path'] for f in manifest['files']}
-            for name in FIXTURE_DATASET_PATHS - FIXTURE_REQUIRED_PATHS - installed:
+            for name in FIXTURE_DATASET_PATHS - FIXTURE_REQUIRED_PATHS - installed - {'concordances/manifest.json'}:
                 (self.output / name).unlink(missing_ok=True)
             from fixtures.identityRefresh import reconcile_exports
             reconcile_exports(self.root,self.output,already_locked=True)

@@ -299,4 +299,7 @@ def _reconcile(root,dataset,*,dry_run):
         atomic_csv(pd.DataFrame(score_repairs),destination/'score_repairs.csv')
     from concordance.sync import check_bundle
     report['bundle_alignment']=check_bundle(root,dataset)
+    if fixture_rows is not None:
+        from concordance.parquet import refresh
+        report['parquet']=refresh(root,dataset,rows=fixture_rows)
     return report
