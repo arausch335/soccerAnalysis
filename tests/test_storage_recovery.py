@@ -73,6 +73,19 @@ class StorageRecoveryTests(unittest.TestCase):
         blocked=next(r for r in archive.diagnostics()['builds'] if r['state']=='blocked')
         self.assertIn('No saved combined job',blocked['error'])
 
+    def test_season_exports_yield_to_new_imports_between_backlog_jobs(self):
+        populate(self.root,limit=1)
+        second='la-liga/2024-2025';atomic_json(self.root/second/'job.json',{})
+        archive=Archive(self.root);archive.schedule_build(GOOD);archive.schedule_build(second)
+        agent=StorageAgent(self.root,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.output,log=lambda _:None)
+        class Server:pass
+        agent.server=Server();agent.server.archive=archive
+        calls=[]
+        def build(root,output,names):
+            calls.extend(names);(output/'match_ids.csv').write_text('sofascore_id\n1\n');return 0
+        with patch('dataset_builder.build_dataset',side_effect=build):self.assertTrue(agent.maintenance_once())
+        self.assertEqual(calls,['premier-league-2024-25']);self.assertEqual(archive.builds(),[second])
+
     def test_diagnostic_api_exposes_metadata_to_consumer_and_rejects_producer(self):
         options={'url':'http://127.0.0.1:0','tokens':{'main':{'role':'consumer','token':'c'*40},'headless':{'role':'producer','token':'p'*40}}}
         server=StorageServer(self.root,options,reserve=0).start();self.addCleanup(server.close)

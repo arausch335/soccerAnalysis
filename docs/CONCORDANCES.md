@@ -318,6 +318,13 @@ consumers at `/v1/diagnostics`. It reports team IDs/names, match IDs and dates
 from the held file and its checkpoint; raw events and player stats stay on MSI.
 Repeated deliveries may refer to the same offending file.
 
+On MSI, `python -m tools.review_imports --retry-matching-identities` retries
+held team mismatches only when the current published Reep index agrees on both
+teams and the checkpoint date matches. Multiple checkpoint claims, unknown or
+contradictory links, date differences and other errors stay held. Every retry
+still passes the full importer validation. MSI checks new raw arrivals between
+season exports so a long export backlog cannot monopolize incorporation.
+
 On Headless, `python -m tools.storage_diagnostics` shows the actual local queue.
 `python -m tools.storage_diagnostics --send-queued` delivers only existing queued
 captures/uploads to MSI without starting scraping. It shares the producer lock

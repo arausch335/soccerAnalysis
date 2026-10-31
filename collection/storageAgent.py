@@ -387,6 +387,10 @@ class StorageAgent:
                         atomic_copy(path,self.output/relative)
                 archive.published(season,build_revision)
                 self.log('[Storage] Dataset published for Main: '+season)
+                # Recheck new raw arrivals between expensive season exports.
+                # An initial backlog must not monopolize incorporation for hours.
+                changed=True
+                break
             except (ValueError,KeyError,TypeError,csv.Error) as exc:
                 archive.block_build(season,build_revision,exc)
                 self.log(f'[Storage] Set aside dataset build {season}: {type(exc).__name__}: {exc}; continuing other seasons.')
