@@ -12,6 +12,28 @@ from storage.pandasStore import atomic_json
 
 
 class DashboardTests(unittest.TestCase):
+    def test_fixture_only_remote_worker_is_visible_without_stats_inventory(self):
+        from fixtures.progress import Progress
+        from collection.workerIdentity import ensure_identity
+        from collection.reporting import Reporter,ReportingStore
+        from unittest.mock import patch
+        worker_root=self.base/'headless-data';ensure_identity(worker_root,'headless')
+        with Progress(worker_root,self.ensemble,2,network=False) as progress:
+            progress('season_started',competition='Europa League',season='2017-2018')
+            progress('provider_started',provider='whoscored')
+            progress('provider_progress',stage='Group L',month='201712')
+            fixture=dict(progress.value)
+        reporter=Reporter(worker_root,self.ensemble,'headless',{'worker_id':'headless','url':None,'token':''})
+        reporter.enqueue_fixture(fixture)
+        with reporter.connect() as db:seq,payload=db.execute("SELECT id,payload FROM queue WHERE kind='fixture'").fetchone()
+        event={**json.loads(payload),'instance_id':reporter.identity['instance_id'],'stream':reporter.stream,'sequence':seq}
+        ReportingStore(self.root,self.ensemble).accept('headless',[event])
+        model=DashboardModel(self.root,self.ensemble,self.plan,'main')
+        with patch('dashboard.model.DashboardModel._schedule',return_value=None):status=model.status()
+        worker=next(w for w in status['workers'] if w['id']=='headless')
+        self.assertTrue(worker['fixture_run']['active']);self.assertEqual(worker['fixture_run']['stage'],'Group L')
+        self.assertEqual(worker['records'],0);self.assertEqual(worker['connection'],'connected')
+
     def test_opening_identity_review_never_scans_saved_checkpoints(self):
         from unittest.mock import patch
         model=DashboardModel(self.root,self.ensemble,self.plan,'main')

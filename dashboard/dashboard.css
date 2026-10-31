@@ -18,3 +18,7 @@
 .comparison-cell.comparison-match{border-left:0}.comparison-cell.comparison-match.comparison-right{border-left:1px solid var(--line)}.match-number,.match-date{font-size:11px;font-weight:400;color:var(--muted)}#review-status,#collection-review-status{font-size:11px;color:var(--muted);line-height:1.6}
 
 .collection-comparison{margin:16px 0}.collection-comparison strong{display:block;font-size:20px;font-weight:500;margin:8px 0}.collection-comparison small{display:block}.collection-comparison a{display:inline-block;margin-top:10px;font-size:12px}
+
+.fixture-progress{margin-top:12px;padding-top:12px;border-top:1px solid var(--line,#ddd)}
+.fixture-progress h4{margin-top:0}.fixture-bar{height:7px;margin:10px 0}.fixture-bar .type-fill{background:var(--worker-color,#6b8667)}
+.fixture-issue{color:#946028}

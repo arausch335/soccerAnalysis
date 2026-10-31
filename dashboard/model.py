@@ -115,6 +115,20 @@ class DashboardModel:
                             seconds=(datetime.now(timezone.utc)-received).total_seconds()
                             info['connection']='connected' if seconds<=plan.reporting['heartbeat_seconds']*3 else 'disconnected'
                 except (OSError,ValueError,TypeError,KeyError):warnings.append(f'Status for {worker} could not be read.')
+        from .fixtureProgress import view as fixture_view
+        from fixtures.progress import path_for as fixture_path
+        receipt_path=self.root/'_system/compiled/receipt.json'
+        try:fixture_receipt=json.loads(receipt_path.read_text()) if receipt_path.exists() else None
+        except (OSError,ValueError):fixture_receipt=None
+        for worker,info in workers.items():
+            fixture=(info.get('runtime') or {}).get('fixture_run')
+            local=fixture_path(self.root,worker)
+            if worker==self.worker and local.exists():
+                try:fixture=json.loads(local.read_text())
+                except (OSError,ValueError):warnings.append('Local fixture status could not be read.')
+            if fixture:
+                try:info['fixture_run']=fixture_view(fixture,receipt=fixture_receipt)
+                except (ValueError,KeyError,TypeError):warnings.append(f'Fixture status for {worker} could not be read.')
         for row in rows:
             for resource,state in row['resources'].items():
                 key=(row['holder'],row['competition'],row['season'],resource)

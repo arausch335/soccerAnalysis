@@ -30,6 +30,7 @@ from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHand
 from uuid import uuid4
 
 from storage.pandasStore import atomic_json
+from filelock import FileLock,Timeout
 from .workerIdentity import valid_worker_id
 
 MAX_BODY = 64 * 1024 * 1024
@@ -242,7 +243,22 @@ class ReportingStore:
                         raise ValueError('Invalid log entry')
                     db.execute('INSERT INTO logs(worker,at,level,message) VALUES(?,?,?,?)',
                                (worker, log['at'], log['level'], log['message']))
-                if runtime is not None:runtime_json = encode(runtime)
+                fixture=event.get('fixture_run')
+                if fixture is not None:
+                    from fixtures.progress import validate
+                    validate(fixture,worker)
+                if runtime is not None or fixture is not None:
+                    previous=json.loads(runtime_json) if runtime_json else {}
+                    combined=dict(runtime) if runtime is not None else previous
+                    # Fixture and match-stat processes share an identity, but
+                    # neither may replace the other's progress snapshots.
+                    combined.pop('fixture_run',None)
+                    if previous.get('fixture_run'):combined['fixture_run']=previous['fixture_run']
+                    if fixture is not None:
+                        combined['fixture_run']={**fixture,'received_at':now()}
+                    if not combined.get('format'):
+                        combined.update(format=RUNTIME_FORMAT,worker_id=worker,state='fixture_only',updated_at=now())
+                    runtime_json=encode(combined)
                 instance_seen, stream_seen, sequence_seen = instance, stream, sequence
             # One write per batch, rather than decoding/re-encoding the complete
             # inventory for every log or heartbeat in a 50-event catch-up batch.
@@ -289,7 +305,8 @@ def read_logs(root, worker='', level='', search='', limit=200, after=0, *, focus
             clauses.append('level=?'); args.append(level)
         milestones="(message LIKE '[Season started] %' OR message LIKE '[Season completed] %' OR message LIKE '[Season paused] %' OR message LIKE '=== START:%' OR message LIKE '=== FINISHED:%' OR message LIKE '=== PAUSED:%')"
         important={
-            'important':"(level IN ('WARNING','ERROR') OR message LIKE '[Storage] %' OR "+milestones+")",
+            'important':"(level IN ('WARNING','ERROR') OR message LIKE '[Storage] %' OR message LIKE '[Fixtures] %' OR "+milestones+")",
+            'fixtures':"message LIKE '[Fixtures] %'",
             'errors':"level='ERROR'",
             'warnings':"level IN ('WARNING','ERROR')",
             'seasons':"message LIKE '[Season completed] %'",
@@ -512,6 +529,14 @@ class Reporter:
             self._insert(db, kind, payload)
         self.wake.set()
 
+    def enqueue_fixture(self,value):
+        from fixtures.progress import validate
+        validate(value,self.worker)
+        with self.lock,self.connect() as db:
+            db.execute("DELETE FROM queue WHERE kind='fixture'")
+            self._insert(db,'fixture',{'fixture_run':value})
+        self.wake.set()
+
     def log(self, message, level='INFO'):
         message = redact(message, self.options['token'], str(self.root), str(self.ensemble))
         if not message.strip():
@@ -533,6 +558,12 @@ class Reporter:
             return json.loads(data)
 
     def flush(self):
+        # The stats worker and fixture CLI can share one durable queue.
+        try:
+            with FileLock(str(self.path)+'.send.lock',timeout=0):return self._flush()
+        except Timeout:return False
+
+    def _flush(self):
         with self.lock, self.connect() as db:
             rows = db.execute('SELECT id,payload FROM queue ORDER BY id LIMIT 50').fetchall()
         if not rows:
@@ -578,8 +609,9 @@ class Reporter:
                 print('[Identity review] Shared decisions updated; incomplete matches will be revalidated in a saved-checkpoint pass.',flush=True)
         self.versions = value['versions']
 
-    def start(self):
-        self.enqueue(reset=True)
+    def start(self,*,snapshot=None):
+        enqueue=snapshot or self.enqueue
+        enqueue(reset=True)
         if not self.url:return self
         def send():
             next_heartbeat = 0; retry_at = 0
@@ -591,7 +623,7 @@ class Reporter:
                     continue
                 try:
                     if current >= next_heartbeat:
-                        self.enqueue(inventory=False)
+                        enqueue(inventory=False)
                         next_heartbeat = current + self.heartbeat
                     # A bounded batch yields to shutdown and heartbeat checks during catch-up.
                     if current >= retry_at and self.flush():
@@ -624,11 +656,13 @@ class Reporter:
         self.compiled_thread = threading.Thread(target=send_compiled, name='compiled-data-to-main', daemon=True)
         self.compiled_thread.start()
         self.thread = threading.Thread(target=send, name='worker-reporter', daemon=True)
-        self.peer_thread=threading.Thread(target=receive_inventories,name='worker-inventory-receiver',daemon=True)
-        self.thread.start();self.peer_thread.start()
+        if snapshot is None:self.peer_thread=threading.Thread(target=receive_inventories,name='worker-inventory-receiver',daemon=True)
+        self.thread.start()
+        if self.peer_thread:self.peer_thread.start()
         return self
 
-    def close(self):
+    def close(self,*,grace=0):
+        if grace:self.wake.set();self.stop.wait(grace)
         # No synchronous network drain: an offline Main must not hold up stopping.
         self.stop.set(); self.wake.set()
         if self.thread:self.thread.join(timeout=6)

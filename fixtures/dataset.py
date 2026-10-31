@@ -156,7 +156,7 @@ def _who_paths(client, competition):
     return sorted(paths)
 
 
-def _who_events(client, competition, start, baseline, *, cache_root=None, refresh=False):
+def _who_events(client, competition, start, baseline, *, cache_root=None, refresh=False, progress=None):
     season = f'{start}/{start + 1}'
     events, errors = {}, []
     client.fixture_scope = {'competition':competition.name,'season':season,'stages':[]}
@@ -185,6 +185,7 @@ def _who_events(client, competition, start, baseline, *, cache_root=None, refres
             client.fixture_scope['stages'].append(dict(id=stage,name=name,competition_path=path,
                 season_path=found[0]['path'],qualifying=qualifying,months=months))
             for month in months:
+                if progress:progress('provider_progress',stage=name or str(stage),month=month,current_fixtures=len(events))
                 try:
                     cache=(Path(cache_root)/'_system/fixtures/whoscored_months'/_slug(competition.name)/season_label(start)/str(stage)/(month+'.json')) if cache_root is not None else None
                     expected={'format':'soccer-whoscored-month-v1','season_path':found[0]['path'],
@@ -208,6 +209,7 @@ def _who_events(client, competition, start, baseline, *, cache_root=None, refres
                             raise ValueError('Contradictory WhoScored schedule entries')
                         events[event['id']] = event
                     if cache is not None and saved is None:atomic_json(cache,{**expected,'matches':monthly})
+                    if progress:progress('provider_progress',current_fixtures=len(events))
                 except ERRORS as exc:
                     failed(ProviderError(f'WhoScored stage {stage} month {month}: {exc}')
                            if getattr(exc,'status_code',None) not in (401,403,429) else exc)
@@ -238,7 +240,7 @@ def _who_events(client, competition, start, baseline, *, cache_root=None, refres
     return list(events.values())
 
 
-def _fotmob_events(client, competition, start):
+def _fotmob_events(client, competition, start, *, progress=None):
     """Keep the primary schedule if a supplemental feed lacks this season."""
     season = f'{start}/{start + 1}'
     feeds = [(competition.fotmob_id, False), (competition.fotmob_qualification_id, True),
@@ -264,6 +266,7 @@ def _fotmob_events(client, competition, start):
                     if qualifying:previous['tournament']['qualificationOrPreliminary']=True
                     continue
                 events[event['id']] = event
+            if progress:progress('provider_progress',current_fixtures=len(events))
         except ERRORS as exc:
             if cid == competition.fotmob_id or getattr(exc, 'status_code', None) in (401, 403, 429):
                 if events:
@@ -274,12 +277,13 @@ def _fotmob_events(client, competition, start):
 
 
 def schedules(root, clients, competition, start, *, offline=False, refresh=False,
-              blocked=None):
+              blocked=None, progress=None):
     """Checkpoints are full schedules, independent of output filtering switches."""
     result, coverage = {}, []
     blocked = {} if blocked is None else blocked
     source = _saved_source(root, competition, start)
     for provider in PROVIDERS:
+        if progress:progress('provider_started',provider=provider)
         path = _checkpoint(root, provider, competition, start)
         origin = 'checkpoint'
         scope_details = {}
@@ -330,14 +334,15 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                                     raise ValueError('Conflicting Sofascore schedule entries')
                                 fetched[event['id']] = event
                                 events = list({e['id']:e for e in (*events,event)}.values())
+                                if progress:progress('provider_progress',current_fixtures=len(fetched))
                             events = list(fetched.values())
                         elif provider == 'fotmob':
-                            events, feed_errors = _fotmob_events(client, competition, start)
+                            events, feed_errors = _fotmob_events(client, competition, start,progress=progress)
                             if feed_errors:
                                 complete = False
                                 error = '; '.join(feed_errors)
                         else:
-                            events = _who_events(client, competition, start, result['sofascore'],cache_root=root,refresh=refresh)
+                            events = _who_events(client, competition, start, result['sofascore'],cache_root=root,refresh=refresh,progress=progress)
                             scope_details = client.fixture_scope
                         origin = 'provider_schedule'
                     finally:
@@ -382,11 +387,14 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                     provider=provider, status='missing', fixtures=0, source=origin, error=error))
                 coverage.extend(dict(competition=competition.name, season=season_label(start),
                     provider=p, status='not_attempted', fixtures=0, source='', error='Baseline schedule unavailable') for p in PROVIDERS[1:])
+                if progress:
+                    for item in coverage:progress('provider_finished',provider=item['provider'],status=item['status'],source=item['source'],current_fixtures=item['fixtures'])
                 return {}, coverage
         result[provider] = events
         coverage.append(dict(competition=competition.name, season=season_label(start), provider=provider,
             status='complete' if complete else 'partial' if events else 'missing',
             fixtures=len(events), source=origin, error=error,scope_details=json.dumps(scope_details,sort_keys=True)))
+        if progress:progress('provider_finished',provider=provider,status=coverage[-1]['status'],source=origin,current_fixtures=len(events))
     return result, coverage
 
 
@@ -607,7 +615,8 @@ def concord(snapshots, root, *, include_upcoming=True):
     return rows, list(team_rows.values()), match_rows, aliases, issues
 
 
-def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=None):
+def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=None, progress=None):
+    if progress:progress('matching')
     canonical, attempts, counts = [], [], {}
     for competition, start, feeds in snapshots:
         cleaned = {}
@@ -625,6 +634,7 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
         c['expected_fixtures'] = expected
         c['count_check'] = ('pass' if c.get('finished_fixtures')==expected and c.get('canonical_fixtures')==expected else 'mismatch') if expected else 'not_applicable'
     rows, teams, matches, aliases, issues = concord(canonical, root, include_upcoming=include_upcoming)
+    if progress:progress('exporting',baseline_fixtures=len(rows))
     identity_summary=assign_ids(root,rows,matches,teams,folder=Path(output).parent/'fixture_concordance')
     frame = pd.DataFrame(rows, columns=COLUMNS)
     for column in ('match_id', 'matchweek', 'home_team_id', 'away_team_id',
@@ -673,7 +683,8 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
           start_season=START_SEASON, end_season=END_SEASON, offline=OFFLINE,
           refresh_current=REFRESH_CURRENT, include_upcoming=INCLUDE_UPCOMING,
           refresh_reep=REFRESH_REEP, refresh_schedules=REFRESH_SCHEDULES,
-          send_to_main=SEND_TO_MAIN, api_only=False, now=None, report=print):
+          send_to_main=SEND_TO_MAIN, api_only=False, now=None, report=print,
+          live_reports=True, ensemble_root=None, progress=None):
     root = Path(config.DATA_ROOT if data_root is None else data_root)
     output = Path(config.DATASET_ROOT / 'fixtures.csv' if output_csv is None else output_csv)
     current = current_season_start(now)
@@ -690,6 +701,13 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
     with ExitStack() as stack:
         stack.enter_context(FileLock(str(system_path(root, '.collector.lock')), timeout=0))
         stack.enter_context(FileLock(str(output) + '.lock', timeout=0))
+        from .progress import Progress
+        total=sum(max(0,end-max(start_season,c.first_season)+1) for c in competitions)
+        live=stack.enter_context(Progress(root,ensemble_root or root.parent/'ensemble_data',total,
+            enabled=live_reports,network=not offline))
+        def notify(event,**values):
+            live(event,**values)
+            if progress:progress(event,**values)
         if clients is None:
             if not api_only:
                 from providers.transports.bridge import extension_scope,acquire_bridge
@@ -713,8 +731,10 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
                 stack.callback(client.close)
         for competition in competitions:
             for start in range(max(start_season, competition.first_season), end + 1):
+                notify('season_started',competition=competition.name,season=season_label(start))
                 feeds, counts = schedules(root, clients, competition, start, offline=offline,
-                    refresh=refresh_schedules or refresh_current and start == current, blocked=blocked)
+                    refresh=refresh_schedules or refresh_current and start == current, blocked=blocked,progress=notify)
+                notify('season_finished')
                 coverage.extend(counts)
                 if feeds:
                     snapshots.append((competition, start, feeds))
@@ -726,14 +746,19 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
             folder.mkdir(parents=True, exist_ok=True)
             atomic_csv(pd.DataFrame(coverage), folder / 'coverage.csv')
             raise ValueError('No Sofascore schedules available; existing fixture dataset was preserved. See fixture_concordance/coverage.csv')
-        manifest = export(snapshots, coverage, root, output, include_upcoming=include_upcoming, scope=scope)
+        manifest = export(snapshots, coverage, root, output, include_upcoming=include_upcoming, scope=scope,progress=notify)
         if refresh_reep:
+            notify('refreshing_ids')
             from providers.reep import refresh
             refresh(root, output.parent)
-            manifest = export(snapshots, coverage, root, output, include_upcoming=include_upcoming, scope=scope)
+            manifest = export(snapshots, coverage, root, output, include_upcoming=include_upcoming, scope=scope,progress=notify)
         if send_to_main:
+            notify('delivering')
             from collection.compiledDelivery import deliver
             manifest['delivery'] = deliver(root, output.parent, fixture_csv=output, attempt=not offline, report=report)
+        notify('finished' if manifest['schedule_coverage_complete'] and manifest['count_checks_passed'] else 'needs_attention',
+            baseline_fixtures=manifest['rows'],delivery=manifest.get('delivery',{'state':'disabled'}),
+            schedule_coverage_complete=manifest['schedule_coverage_complete'],count_checks_passed=manifest['count_checks_passed'])
     report(f"Wrote {manifest['rows']} fixtures to {output}. Coverage complete: {manifest['schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
     return manifest
 
@@ -754,6 +779,8 @@ def main(argv=None):
     parser.add_argument('--api-only', action='store_true', help='Disable Chrome extension fallback')
     parser.add_argument('--send-to-main', action=argparse.BooleanOptionalAction, default=SEND_TO_MAIN,
                         help='Queue compiled files for direct delivery to Main over reporting/Tailscale')
+    parser.add_argument('--live-reports',action=argparse.BooleanOptionalAction,default=True,
+                        help='Report fixture progress and logs to the existing dashboard')
     args = parser.parse_args(argv)
     selected = tuple(c for c in COMPETITIONS if not args.competition or c.name in args.competition)
     try:
@@ -761,7 +788,7 @@ def main(argv=None):
             start_season=args.start_season, end_season=args.end_season, offline=args.offline,
             refresh_current=args.refresh_current, refresh_reep=args.refresh_reep,
             refresh_schedules=args.refresh_schedules, include_upcoming=args.include_upcoming,
-            send_to_main=args.send_to_main, api_only=args.api_only)
+            send_to_main=args.send_to_main, api_only=args.api_only,live_reports=args.live_reports)
         return 0 if manifest['schedule_coverage_complete'] and manifest['count_checks_passed'] else 2
     except (ProviderError, OSError, ValueError) as exc:
         print(f'Fixture build needs attention: {exc}', flush=True)

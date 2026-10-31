@@ -96,6 +96,22 @@ class FixtureDatasetTests(unittest.TestCase):
             self.assertEqual(tuple(reader.fieldnames), COLUMNS)
             return list(reader)
 
+    def test_live_progress_reports_provider_stages_cache_and_terminal_coverage(self):
+        events=[]
+        result=self.build(progress=lambda event,**values:events.append((event,values)))
+        self.assertEqual(events[0][0],'season_started')
+        self.assertTrue(any(e=='provider_progress' and v.get('month')=='201009' for e,v in events))
+        self.assertEqual([v['provider'] for e,v in events if e=='provider_finished'],['sofascore','fotmob','whoscored'])
+        self.assertEqual(events[-1][0],'needs_attention')  # One toy Premier League fixture fails the 380-game check.
+        from fixtures.progress import path_for
+        import json
+        state=json.loads(path_for(self.root,'legacy-unidentified').read_text())
+        self.assertEqual(state['checked_schedules'],3);self.assertEqual(state['completed_seasons'],1)
+        self.assertEqual(state['baseline_fixtures'],result['rows'])
+        self.build(offline=True)
+        state=json.loads(path_for(self.root,'legacy-unidentified').read_text())
+        self.assertEqual(state['cached_schedules'],3)
+
     def test_four_ids_per_entity_and_scores_season_names(self):
         manifest = self.build()
         row, = self.records()

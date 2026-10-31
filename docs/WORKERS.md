@@ -890,3 +890,35 @@ If the previous worker already exited, update and restart it on MSI:
 git pull --ff-only origin main
 python main.py --worker-id msi
 ```
+
+
+## Live fixture collection reports
+
+The dedicated fixture command (`python -m fixtures`, `python main.py --fixtures`,
+or the IDE entry point in `fixtures/builder.py`) automatically uses the saved
+worker identity and Main reporting connection. The dashboard shows fixture
+collection separately from match-stat scraping on the same computer. It reports
+competition and season, current provider, WhoScored stage/group and month,
+fixtures found, competition-seasons and provider schedules checked, cached
+schedules, coverage gaps, ID matching/export, and compiled delivery to Main.
+
+The fixture process sends a heartbeat every ten seconds during long provider
+requests. A fixture report becomes stale after 45 seconds without its own
+heartbeat; a stats-worker heartbeat cannot keep a stopped fixture run looking
+active. Fixture schedules do not count as scraped player-stat coverage. Provider
+schedules checked includes partial/missing schedules, which are shown separately
+from complete schedules.
+
+Progress and console logs use the existing durable reporting queue and saved
+credentials; an offline Main does not discard them. Fixture and stats processes
+share the queue safely and keep independent status snapshots. Compiled fixtures
+still go directly to Main; raw collection uploads still go to MSI. Main's install
+receipt confirms delivery independently of whether the fixture process remains
+running. Offline fixture builds make no reporting network requests. Use
+`--no-live-reports` to disable fixture status/log reporting for a run.
+
+Pull the latest code and restart Main's monitor to accept fixture reports. On
+Headless, the next fixture run uses reporting automatically. An already-running
+Python fixture process keeps its previously loaded code: update and resume it
+from its saved checkpoints to enable these reports. Do not start a second
+fixture scraper while the first is running.
