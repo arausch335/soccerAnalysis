@@ -60,7 +60,9 @@ class Progress:
             self.reporter=Reporter(self.root,self.ensemble,self.worker,options,self.heartbeat)
             if self.network and self.reporter.url:
                 try:self.reporter.pull_registry()
-                except (OSError,ValueError):self.reporter.log('[Fixtures] Main registry unavailable; using the cached registry.','WARNING')
+                except (OSError,ValueError,EOFError):
+                    message='[Fixtures] Main registry download unavailable; continuing with saved local IDs. The next run will retry.'
+                    print(message,flush=True);self.reporter.log(message,'WARNING')
             from concordance.sync import installed_version
             self.value['main_registry_version']=installed_version(self.root)
             self.stack.callback(lambda:self.reporter.close(grace=1))

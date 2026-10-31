@@ -8,9 +8,11 @@ from storage.sqlitePaths import readonly_uri
 from contextlib import contextmanager, closing
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
+from http.client import IncompleteRead
 from storage.httpServer import DisconnectSafeHandler, CLIENT_DISCONNECTED
 import argparse
 import gzip
+import zlib
 import io
 import hashlib
 import hmac
@@ -36,6 +38,11 @@ from .workerIdentity import valid_worker_id
 MAX_BODY = 64 * 1024 * 1024
 INVENTORY_FORMAT = 'soccer-analysis-progress-v1'
 RUNTIME_FORMAT = 'soccer-worker-runtime-v1'
+
+
+class ReportingDownloadError(OSError):
+    """An incomplete response is retryable; it must never replace saved state."""
+
 
 
 def now():
@@ -368,6 +375,7 @@ class ReportingServer:
                 if self.path.startswith('/v1/compiled/'):
                     compiled.dispatch(self, worker, store); return
                 if self.path=='/v1/identity-registry':
+                    self.connection.settimeout(60)  # Large snapshots can traverse a slower private relay.
                     try:
                         from concordance.sync import snapshot
                         value=snapshot(root)
@@ -553,16 +561,34 @@ class Reporter:
         self.wake.set()
 
     def request(self, path, payload=None, headers=None):
+        # Only read requests are retried inline. POST acknowledgements remain
+        # controlled by the durable queue and its replay/sequence checks.
+        attempts=2 if payload is None else 1
+        for attempt in range(attempts):
+            extra=dict(headers or {})
+            if attempt:extra['Accept-Encoding']='identity'
+            try:return self._request_once(path,payload,extra)
+            except ReportingDownloadError:
+                if attempt+1==attempts:raise
+
+    def _request_once(self, path, payload=None, headers=None):
         request = Request(self.url + path, data=encode(payload).encode() if payload is not None else None,
                           headers={'Authorization': 'Bearer ' + self.options['token'], 'Content-Type': 'application/json', 'Accept-Encoding':'gzip', **(headers or {})})
-        with self.opener.open(request, timeout=15 if path=='/v1/inventories' else 30) as response:
-            data = response.read(MAX_BODY + 1)
-            if len(data) > MAX_BODY:
-                raise ValueError('Reporting response exceeds size limit')
-            if response.headers.get('Content-Encoding')=='gzip':
-                with gzip.GzipFile(fileobj=io.BytesIO(data)) as compressed:data=compressed.read(MAX_BODY+1)
-                if len(data)>MAX_BODY:raise ValueError('Reporting response exceeds size limit')
-            return json.loads(data)
+        try:
+            with self.opener.open(request, timeout=15 if path=='/v1/inventories' else 30) as response:
+                length=response.headers.get('Content-Length')
+                expected=int(length) if length is not None else None
+                if expected is not None and expected>MAX_BODY:raise ValueError('Reporting response exceeds size limit')
+                data = response.read(MAX_BODY + 1)
+                if len(data) > MAX_BODY:raise ValueError('Reporting response exceeds size limit')
+                if expected is not None and len(data)!=expected:
+                    raise ReportingDownloadError('Reporting download was interrupted')
+                if response.headers.get('Content-Encoding')=='gzip':
+                    with gzip.GzipFile(fileobj=io.BytesIO(data)) as compressed:data=compressed.read(MAX_BODY+1)
+                    if len(data)>MAX_BODY:raise ValueError('Reporting response exceeds size limit')
+                return json.loads(data)
+        except (EOFError,IncompleteRead,gzip.BadGzipFile,zlib.error) as exc:
+            raise ReportingDownloadError('Reporting download was incomplete or compressed data was damaged') from exc
 
     def flush(self):
         # The stats worker and fixture CLI can share one durable queue.

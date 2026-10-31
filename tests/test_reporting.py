@@ -248,6 +248,62 @@ class ReportingTests(unittest.TestCase):
         self.assertIn('IDENTITY CONFLICT',output.getvalue())
         self.assertNotIn(self.token,output.getvalue())
 
+    def test_truncated_gzip_get_retries_with_uncompressed_download(self):
+        import gzip
+        class Reply(io.BytesIO):
+            def __init__(self,body,headers):super().__init__(body);self.headers=headers
+        client=self.reporter();body=b'{"snapshot":null}'
+        replies=[Reply(gzip.compress(body)[:-6],{'Content-Encoding':'gzip'}),Reply(body,{'Content-Length':str(len(body))})]
+        with patch.object(client.opener,'open',side_effect=replies) as opened:
+            self.assertEqual(client.request('/v1/identity-registry'),{'snapshot':None})
+        self.assertEqual(opened.call_count,2)
+        self.assertEqual(opened.call_args_list[1].args[0].get_header('Accept-encoding'),'identity')
+
+    def test_incomplete_wire_body_retries_before_json_decode(self):
+        from http.client import IncompleteRead
+        class Reply(io.BytesIO):
+            headers={}
+        client=self.reporter();broken=Reply();broken.read=lambda *a:(_ for _ in ()).throw(IncompleteRead(b'part',20))
+        with patch.object(client.opener,'open',side_effect=[broken,Reply(b'{"snapshot":null}')]):
+            self.assertEqual(client.request('/v1/identity-registry'),{'snapshot':None})
+        short=Reply(b'{"snapshot":null}');short.headers={'Content-Length':'500'}
+        with patch.object(client.opener,'open',side_effect=[short,Reply(b'{"snapshot":null}')]):
+            self.assertEqual(client.request('/v1/identity-registry'),{'snapshot':None})
+
+    def test_repeated_truncated_registry_download_preserves_installed_snapshot(self):
+        import gzip
+        from concordance.registry import Registry
+        from concordance.sync import local_path,snapshot,install,snapshot_path
+        registry=Registry(local_path(self.main));registry.assign('team',{'sofascore_id':'1'});registry.save()
+        install(self.root,snapshot(self.main));before=snapshot_path(self.root).read_bytes()
+        class Reply(io.BytesIO):headers={'Content-Encoding':'gzip'}
+        broken=gzip.compress(b'{"snapshot":null}')[:-5];client=self.reporter()
+        with patch.object(client.opener,'open',side_effect=[Reply(broken),Reply(broken)]) as opened:
+            with self.assertRaises(OSError):client.pull_registry()
+        self.assertEqual(opened.call_count,2)
+        self.assertEqual(snapshot_path(self.root).read_bytes(),before)
+
+    def test_truncated_post_ack_is_not_retried_inline_or_removed_from_queue(self):
+        import gzip
+        class Reply(io.BytesIO):headers={'Content-Encoding':'gzip'}
+        client=self.reporter();client.log('Keep this queued log')
+        with patch.object(client.opener,'open',return_value=Reply(gzip.compress(b'{"ack":1}')[:-5])) as opened:
+            with self.assertRaises(OSError):client.flush()
+        self.assertEqual(opened.call_count,1)
+        with client.connect() as db:self.assertEqual(db.execute('SELECT count(*) FROM queue').fetchone()[0],1)
+
+    def test_corrupt_gzip_and_expanded_size_limit_remain_bounded(self):
+        import gzip
+        from collection.reporting import ReportingDownloadError
+        class Reply(io.BytesIO):headers={'Content-Encoding':'gzip'}
+        client=self.reporter();body=b'{"snapshot":null}'
+        corrupt=bytearray(gzip.compress(body));corrupt[-8]^=255
+        with patch.object(client.opener,'open',side_effect=[Reply(corrupt),Reply(corrupt)]):
+            with self.assertRaises(ReportingDownloadError):client.request('/v1/identity-registry')
+        with patch('collection.reporting.MAX_BODY',100),patch.object(client.opener,'open',return_value=Reply(gzip.compress(b'x'*200))) as opened:
+            with self.assertRaisesRegex(ValueError,'size limit'):client.request('/v1/identity-registry')
+        self.assertEqual(opened.call_count,1)
+
     def test_large_inventory_response_is_compressed_and_client_decodes_it(self):
         from urllib.request import Request
         historical={**self.saved,'worker_id':'headless','instance_id':'other',

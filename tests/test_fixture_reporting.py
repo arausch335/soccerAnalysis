@@ -123,6 +123,25 @@ class FixtureReportingTests(unittest.TestCase):
             with Progress(self.root,self.ensemble,1,network=False):pass
         self.assertTrue(all('inventory' not in e and 'reset' not in e for e in self.events()))
 
+    def test_registry_transfer_failure_does_not_stop_fixture_startup(self):
+        from concordance.registry import Registry
+        from concordance.sync import local_path,snapshot,install,snapshot_path
+        from collection.reporting import ReportingDownloadError
+        master=self.base/'main';registry=Registry(local_path(master));registry.assign('team',{'sofascore_id':'1'});registry.save()
+        install(self.root,snapshot(master));before=snapshot_path(self.root).read_bytes()
+        atomic_json(self.root/'_system/config/reporting.json',{'mode':'client','worker_id':'headless',
+            'url':'http://127.0.0.1:8766','token':'t'*40})
+        def start(reporter,*,snapshot=None):snapshot();return reporter
+        with patch.object(Reporter,'_request_once',side_effect=ReportingDownloadError('Interrupted download')) as request,patch.object(Reporter,'start',autospec=True,side_effect=start):
+            with Progress(self.root,self.ensemble,1) as progress:
+                progress('season_started',competition='Premier League',season='2010-2011')
+                self.assertEqual(progress.value['state'],'collecting')
+        self.assertEqual(request.call_count,2)
+        self.assertEqual(snapshot_path(self.root).read_bytes(),before)
+        with self.reporter.connect() as db:
+            messages=[json.loads(row[0]) for row in db.execute("SELECT payload FROM queue WHERE kind='logs'")]
+        self.assertTrue(any('continuing with saved local IDs' in str(value) for value in messages))
+
     def test_interrupted_fixture_run_is_saved_without_touching_stats(self):
         stats={'worker_id':'headless','state':'waiting_for_extension'}
         path=self.root/'_system/workers/headless.json';atomic_json(path,stats)

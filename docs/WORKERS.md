@@ -922,3 +922,18 @@ Headless, the next fixture run uses reporting automatically. An already-running
 Python fixture process keeps its previously loaded code: update and resume it
 from its saved checkpoints to enable these reports. Do not start a second
 fixture scraper while the first is running.
+
+
+### Interrupted registry downloads
+
+Fixture startup retries a truncated or damaged compressed registry download once
+using an uncompressed request. If it still cannot download the registry, it logs
+a warning and continues with saved local IDs. The existing registry cache is
+replaced only after a complete snapshot passes its version/checksum checks.
+Background reporting uses the same recoverable download errors, so an interrupted
+response does not silently kill its reporting thread. Main allows a longer send
+time for the large registry snapshot on slower Tailscale links.
+
+After updating a worker that stopped with `EOFError: Compressed file ended`,
+rerun the fixture command with its original settings. Existing checkpoints and
+registry files can remain in place.
