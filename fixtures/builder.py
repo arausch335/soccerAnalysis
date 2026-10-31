@@ -48,27 +48,59 @@ class FixtureCompetition:
     fotmob_id: int | None = None
     fotmob_qualification_id: int | None = None
     fotmob_playoff_id: int | None = None
+    kind: str = 'league'
+    country: str = ''
+    last_season: int | None = None
+    whoscored_parent: str = ''
+    whoscored_suffixes: tuple[str,...] = ()
 
 
 # SofaScore unique-tournament IDs. Qualifying rounds of the UEFA tournaments
 # are included in the same season endpoint and identified per event.
-COMPETITIONS = (
-    FixtureCompetition('Premier League', SOFASCORE_COMPETITION_IDS['Premier League'], fotmob_id=47),
-    FixtureCompetition('Championship', SOFASCORE_COMPETITION_IDS['Championship'], fotmob_id=48),
-    FixtureCompetition('La Liga', SOFASCORE_COMPETITION_IDS['La Liga'], fotmob_id=87),
-    FixtureCompetition('La Liga 2', SOFASCORE_COMPETITION_IDS['La Liga 2'], fotmob_id=140),
-    FixtureCompetition('Bundesliga', SOFASCORE_COMPETITION_IDS['Bundesliga'], fotmob_id=54, fotmob_playoff_id=9081),
-    FixtureCompetition('2. Bundesliga', SOFASCORE_COMPETITION_IDS['2. Bundesliga'], fotmob_id=146),
-    FixtureCompetition('Serie A', SOFASCORE_COMPETITION_IDS['Serie A'], fotmob_id=55),
-    FixtureCompetition('Serie B', SOFASCORE_COMPETITION_IDS['Serie B'], fotmob_id=86),
-    FixtureCompetition('Ligue 1', SOFASCORE_COMPETITION_IDS['Ligue 1'], fotmob_id=53),
-    FixtureCompetition('Ligue 2', SOFASCORE_COMPETITION_IDS['Ligue 2'], fotmob_id=110),
+LEAGUE_COMPETITIONS = (
+    FixtureCompetition('Premier League', SOFASCORE_COMPETITION_IDS['Premier League'], fotmob_id=47,country='England'),
+    FixtureCompetition('Championship', SOFASCORE_COMPETITION_IDS['Championship'], fotmob_id=48,country='England'),
+    FixtureCompetition('La Liga', SOFASCORE_COMPETITION_IDS['La Liga'], fotmob_id=87,country='Spain'),
+    FixtureCompetition('La Liga 2', SOFASCORE_COMPETITION_IDS['La Liga 2'], fotmob_id=140,country='Spain'),
+    FixtureCompetition('Bundesliga', SOFASCORE_COMPETITION_IDS['Bundesliga'], fotmob_id=54, fotmob_playoff_id=9081,country='Germany'),
+    FixtureCompetition('2. Bundesliga', SOFASCORE_COMPETITION_IDS['2. Bundesliga'], fotmob_id=146,country='Germany'),
+    FixtureCompetition('Serie A', SOFASCORE_COMPETITION_IDS['Serie A'], fotmob_id=55,country='Italy'),
+    FixtureCompetition('Serie B', SOFASCORE_COMPETITION_IDS['Serie B'], fotmob_id=86,country='Italy'),
+    FixtureCompetition('Ligue 1', SOFASCORE_COMPETITION_IDS['Ligue 1'], fotmob_id=53,country='France'),
+    FixtureCompetition('Ligue 2', SOFASCORE_COMPETITION_IDS['Ligue 2'], fotmob_id=110,country='France'),
     FixtureCompetition('Champions League', SOFASCORE_COMPETITION_IDS['Champions League'], fotmob_id=42,
-                       fotmob_qualification_id=10611),
+                       fotmob_qualification_id=10611,kind='continental',country='Europe'),
     FixtureCompetition('Europa League', SOFASCORE_COMPETITION_IDS['Europa League'], fotmob_id=73,
-                       fotmob_qualification_id=10613),
-    FixtureCompetition('Conference League', SOFASCORE_COMPETITION_IDS['Conference League'], 2021, 10216, 10615),
+                       fotmob_qualification_id=10613,kind='continental',country='Europe'),
+    FixtureCompetition('Conference League', SOFASCORE_COMPETITION_IDS['Conference League'], 2021, 10216, 10615,kind='continental',country='Europe'),
 )
+CUP_COMPETITIONS = (
+    FixtureCompetition('FA Cup',19,fotmob_id=132,kind='cup',country='England',
+        whoscored_parent='Premier League',whoscored_suffixes=('england-fa-cup',)),
+    FixtureCompetition('EFL Cup',21,fotmob_id=133,kind='cup',country='England',
+        whoscored_parent='Premier League',whoscored_suffixes=('england-league-cup','england-efl-cup','england-carabao-cup')),
+    FixtureCompetition('Community Shield',346,fotmob_id=247,kind='supercup',country='England',
+        whoscored_parent='Premier League',whoscored_suffixes=('england-community-shield','england-fa-community-shield')),
+    FixtureCompetition('Copa del Rey',329,fotmob_id=138,kind='cup',country='Spain',
+        whoscored_parent='La Liga',whoscored_suffixes=('spain-copa-del-rey',)),
+    FixtureCompetition('Supercopa de España',213,fotmob_id=139,kind='supercup',country='Spain',
+        whoscored_parent='La Liga',whoscored_suffixes=('spain-supercopa-de-espana','spain-supercopa-de-espa%C3%B1a','spain-super-cup')),
+    FixtureCompetition('DFB-Pokal',217,fotmob_id=209,kind='cup',country='Germany',
+        whoscored_parent='Bundesliga',whoscored_suffixes=('germany-dfb-pokal',)),
+    FixtureCompetition('DFL-Supercup',799,fotmob_id=8924,kind='supercup',country='Germany',
+        whoscored_parent='Bundesliga',whoscored_suffixes=('germany-super-cup','germany-dfl-supercup','germany-franz-beckenbauer-supercup')),
+    FixtureCompetition('Coppa Italia',328,fotmob_id=141,kind='cup',country='Italy',
+        whoscored_parent='Serie A',whoscored_suffixes=('italy-coppa-italia',)),
+    FixtureCompetition('Supercoppa Italiana',341,fotmob_id=222,kind='supercup',country='Italy',
+        whoscored_parent='Serie A',whoscored_suffixes=('italy-supercoppa-italiana','italy-supercoppa','italy-super-cup')),
+    FixtureCompetition('Coupe de France',335,fotmob_id=134,kind='cup',country='France',
+        whoscored_parent='Ligue 1',whoscored_suffixes=('france-coupe-de-france',)),
+    FixtureCompetition('Coupe de la Ligue',333,fotmob_id=150,kind='cup',country='France',last_season=2019,
+        whoscored_parent='Ligue 1',whoscored_suffixes=('france-coupe-de-la-ligue',)),
+    FixtureCompetition('Trophée des Champions',339,fotmob_id=207,kind='supercup',country='France',
+        whoscored_parent='Ligue 1',whoscored_suffixes=('france-trophee-des-champions','france-troph%C3%A9e-des-champions','france-super-cup')),
+)
+COMPETITIONS = (*LEAGUE_COMPETITIONS,*CUP_COMPETITIONS)
 EUROPEAN_COMPETITIONS = {'Champions League', 'Europa League', 'Conference League'}
 
 
@@ -208,7 +240,7 @@ def _schedule_events(client, competition, start, season_id, *, provider,
 
 
 def build(*, provider=PROVIDER, client=None, data_root=DATA_ROOT, output_csv=OUTPUT_CSV,
-          competitions=COMPETITIONS, start_season=START_SEASON,
+          competitions=LEAGUE_COMPETITIONS, start_season=START_SEASON,
           end_season=END_SEASON, include_upcoming=INCLUDE_UPCOMING,
           refresh_current=REFRESH_CURRENT_SEASON, offline=OFFLINE, now=None):
     """Backfill all selected seasons and atomically replace one combined CSV."""

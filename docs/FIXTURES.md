@@ -13,6 +13,43 @@ included and labelled. Conference League begins in 2021–2022. Bundesliga
 promotion/relegation playoffs remain part of Bundesliga and use FotMob's
 supplemental feed when available.
 
+National cups, league cups and supercups are included by default from
+2010–2011, across all clubs/rounds available on Sofascore (including opponents
+below the second division). Provider coverage of the earliest qualifying rounds
+can differ.
+
+| Country | Cup competitions |
+| --- | --- |
+| England | FA Cup, EFL Cup, Community Shield |
+| Spain | Copa del Rey, Supercopa de España |
+| Germany | DFB-Pokal, DFL-Supercup (now Franz Beckenbauer Supercup) |
+| Italy | Coppa Italia, Supercoppa Italiana |
+| France | Coupe de France, Coupe de la Ligue, Trophée des Champions |
+
+Coupe de la Ligue ends with 2019–2020; subsequent nonexistent editions are not
+requested. These competitions share the same fixture CSV, concordances,
+registry, checkpoints, live reports and direct compiled delivery to Main. The
+match-statistics collection scope is unchanged. `competition_type` distinguishes
+`league`, `continental`, `cup` and `supercup`; `competition_country` identifies
+the country/region. Cup fixtures have no 380-game requirement.
+
+Paired provider seasons are resolved from the published index. If a supercup
+uses single calendar years, both adjacent editions are read and only fixtures
+played/scheduled in the target July–June season are retained. For example, a
+January 2025 match is in 2024–2025, not automatically 2025–2026. This date-window
+rule applies only to single-year supercup editions: a delayed final in an
+ordinary cup keeps its published competition season, even when played in the
+following year. WhoScored cup routes come from published country menus, with
+historical parent-season menus as a fallback for retired/renamed competitions;
+all published stages are enumerated. Missing provider stages/fixtures remain
+visible in coverage rather than being assigned guessed IDs.
+
+The verified provider tournament pages include [FA Cup](https://www.sofascore.com/football/tournament/england/fa-cup/19),
+[German supercup](https://www.sofascore.com/football/tournament/germany/super-cup/799),
+[FotMob German supercup](https://www.fotmob.com/leagues/8924/fixtures/super-cup),
+[FotMob French League Cup](https://www.fotmob.com/leagues/150/overview/coupe-de-la-ligue)
+and [FotMob French supercup](https://www.fotmob.com/leagues/207/seasons/trophee-des-champions).
+
 Only schedules are requested: no match details, lineups, statistics or player
 event streams. Existing pacing, response caches, provider cooldowns and Chrome
 extension fallback apply. `--api-only` disables extension fallback. A blocked

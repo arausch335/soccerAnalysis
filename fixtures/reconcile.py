@@ -59,6 +59,9 @@ def reconcile(events, provider, competition, start, *, bridges=None):
                     # A named stage/leg must agree when present on both attempts.
                     if any(a.get(k) is not None and b.get(k) is not None and a[k]!=b[k] for k in ('name','leg')):continue
                     same_round=any(a.get(k) is not None and a.get(k)==b.get(k) for k in ('round','name','leg'))
+                    # An upcoming cup replay/leg can share teams and round with
+                    # a completed game. Only a published identity can merge it.
+                    if competition not in DOMESTIC and old_status in ('notstarted','inprogress') and not linked:continue
                     if not linked and not same_round and not (competition in DOMESTIC and phase=='main'):continue
                     candidates.append(other)
                 if bridges is not None:

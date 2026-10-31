@@ -20,7 +20,7 @@ import config
 from collection.files import atomic_csv
 from collection.selection import (COMPETITIONS as COLLECTION_COMPETITIONS,
                                   months_between,
-                                  resolve_sofascore_season, season_key)
+                                  season_key)
 from dataset_builder import FIXTURE_COLUMNS, _cached_provider_fixtures, fixtures_from_events
 from providers.events import whoscored_fixture
 from providers.scores import final_score
@@ -34,6 +34,7 @@ from storage.pandasStore import atomic_json
 from .reconcile import reconcile, summarize, ATTEMPT_COLUMNS
 from .sharedIds import assign_ids,FIXTURE_KEYS,REFERENCE_KEYS
 from . import requirements
+from . import seasons as fixture_seasons
 from .builder import (COMPETITIONS, EUROPEAN_COMPETITIONS, _fotmob_event,
                       _slug, current_season_start, season_label)
 
@@ -55,6 +56,7 @@ NAME_COLUMNS = tuple(f'{p}_{side}_team' for p in PROVIDERS for side in ('home', 
 CHECK_COLUMNS = tuple(f'{p}_{field}' for p in PROVIDERS[1:]
                       for field in ('fixture_check', 'match_method'))
 COLUMNS = (*FIXTURE_COLUMNS, *ID_COLUMNS, *NAME_COLUMNS, *CHECK_COLUMNS,
+           'competition_type','competition_country',
            'whoscored_stage_id','whoscored_stage','whoscored_round',
            'match_identity_status', 'home_team_identity_status', 'away_team_identity_status',*FIXTURE_KEYS)
 ERRORS = (ProviderError, OSError, ValueError, KeyError, TypeError)
@@ -125,15 +127,15 @@ def _saved_source(root, competition, start):
     return Path(root) / _slug(competition.name) / season_label(start)
 
 
-def _who_paths(client, competition):
+def _who_paths(client, competition, start=None):
     existing = next((c for c in COLLECTION_COMPETITIONS if c.name == competition.name), None)
     if existing:
         return [existing.whoscored_path, *existing.whoscored_supplemental_paths]
     # Read published navigation links; never invent tournament or stage IDs.
-    parent = {'Championship':'Premier League', 'La Liga 2':'La Liga',
+    parent = competition.whoscored_parent or {'Championship':'Premier League', 'La Liga 2':'La Liga',
               '2. Bundesliga':'Bundesliga', 'Serie B':'Serie A',
               'Ligue 2':'Ligue 1', 'Conference League':'Champions League'}[competition.name]
-    suffixes = {
+    suffixes = competition.whoscored_suffixes or {
         'Championship': ('england-championship',),
         'La Liga 2': ('spain-segunda-division', 'spain-segunda-divisi%C3%B3n', 'spain-laliga2', 'spain-laliga-2'),
         '2. Bundesliga': ('germany-bundesliga-ii', 'germany-2-bundesliga'),
@@ -145,15 +147,24 @@ def _who_paths(client, competition):
         for raw in (*parser.competition_paths, *parser.links):
             try: path = directory_path(raw)
             except (ValueError, UnicodeError): continue
-            if any(re.search(re.escape(suffix)+r'(?:-\d{4}-\d{4})?/?$',path,re.I) for suffix in suffixes):
+            if any(re.fullmatch(re.escape(suffix)+r'(?:-\d{4}(?:-\d{4})?)?',path.rstrip('/').rsplit('/',1)[-1],re.I) for suffix in suffixes):
                 paths.add(path)
         return paths
     parent_path=next(c.whoscored_path for c in COLLECTION_COMPETITIONS if c.name==parent)
-    if callable(getattr(client,'_directory',None)):
-        parser=client._directory(parent_path,lambda p:bool(discovered(p)))
-    else:
-        parser=_Directory();parser.feed(client.get_text(parent_path))
-    paths=discovered(parser)
+    def lookup(path):
+        if callable(getattr(client,'_directory',None)):
+            return discovered(client._directory(path,lambda p:bool(discovered(p))))
+        parser=_Directory();parser.feed(client.get_text(path))
+        return discovered(parser)
+    try:paths=lookup(parent_path)
+    except ERRORS as exc:
+        if not competition.whoscored_parent or start is None or getattr(exc,'status_code',None) in (401,403,429):raise
+        paths=set()
+    if not paths and competition.whoscored_parent and start is not None:
+        # A retired/renamed cup may be absent from today's country menu.
+        # Follow the published parent-season route to its historical menu.
+        parent_seasons,_=fixture_seasons.select(competition,start,client.seasons(parent_path),label=lambda s:s['name'])
+        for parent_season in parent_seasons:paths.update(lookup(parent_season['path']))
     # A tournament dropdown gives the stable competition route. Prefer it to
     # links to individual stages of its currently selected season.
     stable={p for p in paths if '/seasons/' not in p.lower()}
@@ -179,50 +190,50 @@ def _who_events(client, competition, start, baseline, *, cache_root=None, refres
         errors.append(str(exc))
 
     def collect_path(path, qualifying=False):
-        prepare=getattr(client,'register_fixture_season',None)
-        if callable(prepare):prepare(path,season)
-        found = [s for s in client.seasons(path) if season_key(s['name']) == season]
+        found,calendar_window=fixture_seasons.select(competition,start,client.seasons(path),label=lambda s:s['name'])
         if not found:
             raise _UnavailableSeason(f'WhoScored season {competition.name} {season} unavailable')
-        if len(found) != 1:
-            raise ValueError(f'WhoScored season {competition.name} {season} ambiguous')
-        # Configured IDs are hints for other collection workflows. A full
-        # fixture history always enumerates the season's published stages.
-        stages = list(dict.fromkeys(client.season_stages(found[0]['path'])))
-        for stage in stages:
-            names=getattr(client,'stage_names',{})
-            name=names.get(stage,'') if isinstance(names,dict) else ''
-            client.fixture_scope['stages'].append(dict(id=stage,name=name,competition_path=path,
-                season_path=found[0]['path'],qualifying=qualifying,months=months))
-            for month in months:
-                if progress:progress('provider_progress',stage=name or str(stage),month=month,current_fixtures=len(events))
-                try:
-                    cache=(Path(cache_root)/'_system/fixtures/whoscored_months'/_slug(competition.name)/season_label(start)/str(stage)/(month+'.json')) if cache_root is not None else None
-                    expected={'format':'soccer-whoscored-month-v1','season_path':found[0]['path'],
-                              'stage':stage,'month':month}
-                    saved=json.loads(cache.read_text(encoding='utf-8')) if cache is not None and cache.is_file() and not refresh else None
-                    if saved is not None:
-                        if any(saved.get(k)!=v for k,v in expected.items()):raise ValueError('WhoScored month checkpoint identity differs')
-                        monthly=saved['matches']
-                    else:monthly=client.season_events(stage, month)
-                    for row in monthly:
-                        event = whoscored_fixture(row)
-                        event['stageInfo'] = {'id':stage, 'name':name}
-                        event['tournament'] = {'qualificationOrPreliminary':qualifying,
-                            'name':event['stageInfo']['name'] or competition.name}
-                        if competition.name in ('Bundesliga','2. Bundesliga','Ligue 1','Ligue 2') and 'qualification' in path.lower():
-                            event['tournament']['name'] = competition.name + ', Promotion/Relegation Playoffs'
-                        event['roundInfo'] = {'round':row.get('round'), 'name':row.get('roundName')}
-                        prior = events.get(event['id'])
-                        if prior is not None and any(prior.get(k)!=event.get(k) for k in
-                                ('startTimestamp','homeTeam','awayTeam','homeScore','awayScore','status')):
-                            raise ValueError('Contradictory WhoScored schedule entries')
-                        events[event['id']] = event
-                    if cache is not None and saved is None:atomic_json(cache,{**expected,'matches':monthly})
-                    if progress:progress('provider_progress',current_fixtures=len(events))
-                except ERRORS as exc:
-                    failed(ProviderError(f'WhoScored stage {stage} month {month}: {exc}')
-                           if getattr(exc,'status_code',None) not in (401,403,429) else exc)
+        for found_season in found:
+            prepare=getattr(client,'register_fixture_season',None)
+            if callable(prepare):prepare(path,found_season['name'])
+            # Configured IDs are hints for other collection workflows. A full
+            # fixture history always enumerates the season's published stages.
+            stages = list(dict.fromkeys(client.season_stages(found_season['path'])))
+            for stage in stages:
+                names=getattr(client,'stage_names',{})
+                name=names.get(stage,'') if isinstance(names,dict) else ''
+                client.fixture_scope['stages'].append(dict(id=stage,name=name,competition_path=path,
+                    season_path=found_season['path'],qualifying=qualifying,months=months))
+                for month in months:
+                    if progress:progress('provider_progress',stage=name or str(stage),month=month,current_fixtures=len(events))
+                    try:
+                        cache=(Path(cache_root)/'_system/fixtures/whoscored_months'/_slug(competition.name)/season_label(start)/str(stage)/(month+'.json')) if cache_root is not None else None
+                        expected={'format':'soccer-whoscored-month-v1','season_path':found_season['path'],
+                                  'stage':stage,'month':month}
+                        saved=json.loads(cache.read_text(encoding='utf-8')) if cache is not None and cache.is_file() and not refresh else None
+                        if saved is not None:
+                            if any(saved.get(k)!=v for k,v in expected.items()):raise ValueError('WhoScored month checkpoint identity differs')
+                            monthly=saved['matches']
+                        else:monthly=client.season_events(stage, month)
+                        for row in monthly:
+                            event = whoscored_fixture(row)
+                            if calendar_window and not fixture_seasons.in_window(event,start):continue
+                            event['stageInfo'] = {'id':stage, 'name':name}
+                            event['tournament'] = {'qualificationOrPreliminary':qualifying,
+                                'name':event['stageInfo']['name'] or competition.name}
+                            if competition.name in ('Bundesliga','2. Bundesliga','Ligue 1','Ligue 2') and 'qualification' in path.lower():
+                                event['tournament']['name'] = competition.name + ', Promotion/Relegation Playoffs'
+                            event['roundInfo'] = {'round':row.get('round'), 'name':row.get('roundName')}
+                            prior = events.get(event['id'])
+                            if prior is not None and any(prior.get(k)!=event.get(k) for k in
+                                    ('startTimestamp','homeTeam','awayTeam','homeScore','awayScore','status')):
+                                raise ValueError('Contradictory WhoScored schedule entries')
+                            events[event['id']] = event
+                        if cache is not None and saved is None:atomic_json(cache,{**expected,'matches':monthly})
+                        if progress:progress('provider_progress',current_fixtures=len(events))
+                    except ERRORS as exc:
+                        failed(ProviderError(f'WhoScored stage {stage} month {month}: {exc}')
+                               if getattr(exc,'status_code',None) not in (401,403,429) else exc)
 
     def collect_domestic(path):
         tournament=requirements.DOMESTIC_TOURNAMENTS[competition.name]
@@ -238,7 +249,7 @@ def _who_events(client, competition, start, baseline, *, cache_root=None, refres
         except ERRORS as exc:failed(exc)
 
     try:
-        paths = _who_paths(client, competition)
+        paths = _who_paths(client, competition, start)
         for path in dict.fromkeys(paths):
             domestic_id=requirements.DOMESTIC_TOURNAMENTS.get(competition.name)
             if domestic_id and f'/tournaments/{domestic_id}/' in path.lower():
@@ -277,26 +288,29 @@ def _fotmob_events(client, competition, start, *, progress=None, baseline=(), at
         if cid is None:
             continue
         try:
-            if season not in client.seasons(cid):
+            selected,calendar_window=fixture_seasons.select(competition,start,client.seasons(cid))
+            if not selected:
                 if cid==competition.fotmob_playoff_id and requirements.domestic_phase(competition.name,start,baseline,at)=='not_yet_required':
                     client.fixture_scope.setdefault('deferred',[]).append(
                         requirements.deferred_feed(competition.name,start,'fotmob',cid,at=at))
                     continue
                 raise ValueError(f'No season {season} for FotMob competition {cid}')
-            for row in client.season_events(cid, season):
-                event = _fotmob_event(row, cid, start, qualifying)
-                if cid == competition.fotmob_playoff_id:
-                    event['tournament']['name'] = 'Bundesliga, Relegation/Promotion Playoffs'
-                previous = events.get(event['id'])
-                # The primary and qualifying feeds can overlap in some years.
-                if previous:
-                    if any(previous[key] != event[key] for key in ('startTimestamp', 'homeTeam', 'awayTeam')):
-                        raise ValueError('Conflicting FotMob fixture IDs across feeds')
-                    if all(e.get('status',{}).get('type')=='finished' for e in (previous,event)) and any(final_score(previous,side)!=final_score(event,side) for side in ('home','away')):
-                        raise ValueError('Conflicting FotMob results across feeds')
-                    if qualifying:previous['tournament']['qualificationOrPreliminary']=True
-                    continue
-                events[event['id']] = event
+            for provider_season in selected:
+                for row in client.season_events(cid, provider_season):
+                    event = _fotmob_event(row, cid, start, qualifying)
+                    if calendar_window and not fixture_seasons.in_window(event,start):continue
+                    if cid == competition.fotmob_playoff_id:
+                        event['tournament']['name'] = 'Bundesliga, Relegation/Promotion Playoffs'
+                    previous = events.get(event['id'])
+                    # The primary and qualifying feeds can overlap in some years.
+                    if previous:
+                        if any(previous[key] != event[key] for key in ('startTimestamp', 'homeTeam', 'awayTeam')):
+                            raise ValueError('Conflicting FotMob fixture IDs across feeds')
+                        if all(e.get('status',{}).get('type')=='finished' for e in (previous,event)) and any(final_score(previous,side)!=final_score(event,side) for side in ('home','away')):
+                            raise ValueError('Conflicting FotMob results across feeds')
+                        if qualifying:previous['tournament']['qualificationOrPreliminary']=True
+                        continue
+                    events[event['id']] = event
             if progress:progress('provider_progress',current_fixtures=len(events))
         except ERRORS as exc:
             if cid == competition.fotmob_id or getattr(exc, 'status_code', None) in (401, 403, 429):
@@ -358,16 +372,22 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                     client.refresh_cache = refresh
                     try:
                         if provider == 'sofascore':
-                            season = resolve_sofascore_season(client, competition, season_label(start))
+                            selected,calendar_window=fixture_seasons.select(competition,start,
+                                client.seasons(competition.sofascore_id)['seasons'],label=lambda s:s['year'])
+                            if not selected:raise ValueError(f'Cannot resolve {competition.name} {season_label(start)} on Sofascore')
                             events = list(events)
                             fetched = {}
-                            for event in client.iter_season_events(competition.sofascore_id, season['id'], include_upcoming=True):
-                                _validate_sofa([event], competition, season['id'])
-                                if event['id'] in fetched and fetched[event['id']] != event:
-                                    raise ValueError('Conflicting Sofascore schedule entries')
-                                fetched[event['id']] = event
-                                events = list({e['id']:e for e in (*events,event)}.values())
-                                if progress:progress('provider_progress',current_fixtures=len(fetched))
+                            scope_details={'provider_seasons':[dict(id=s['id'],label=s['year']) for s in selected],
+                                           'season_mapping':'fixture_date_window' if calendar_window else 'published_season'}
+                            for season in selected:
+                                for event in client.iter_season_events(competition.sofascore_id, season['id'], include_upcoming=True):
+                                    _validate_sofa([event], competition, season['id'])
+                                    if calendar_window and not fixture_seasons.in_window(event,start):continue
+                                    if event['id'] in fetched and fetched[event['id']] != event:
+                                        raise ValueError('Conflicting Sofascore schedule entries')
+                                    fetched[event['id']] = event
+                                    events = list({e['id']:e for e in (*events,event)}.values())
+                                    if progress:progress('provider_progress',current_fixtures=len(fetched))
                             events = list(fetched.values())
                         elif provider == 'fotmob':
                             events, feed_errors = _fotmob_events(client, competition, start,progress=progress,baseline=result['sofascore'],at=at)
@@ -579,6 +599,7 @@ def concord(snapshots, root, *, include_upcoming=True):
         if not include_upcoming and event.get('status', {}).get('type') != 'finished':
             continue
         row = fixtures_from_events([event], competition.name, season_label(start), include_qualifying=True).iloc[0].to_dict()
+        row.update(competition_type=competition.kind,competition_country=competition.country)
         if row['status'] not in ('finished', 'inprogress') and not row['awarded']:
             row.update(home_score=None, away_score=None, winner_code=None)
         native_matches = {'sofascore': event['id']}
@@ -739,7 +760,7 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
         stack.enter_context(FileLock(str(system_path(root, '.collector.lock')), timeout=0))
         stack.enter_context(FileLock(str(output) + '.lock', timeout=0))
         from .progress import Progress
-        total=sum(max(0,end-max(start_season,c.first_season)+1) for c in competitions)
+        total=sum(len(fixture_seasons.years(c,start_season,end)) for c in competitions)
         live=stack.enter_context(Progress(root,ensemble_root or root.parent/'ensemble_data',total,
             enabled=live_reports,network=not offline))
         def notify(event,**values):
@@ -767,7 +788,7 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
                 client = clients[p] = factory(root, offline=offline)
                 stack.callback(client.close)
         for competition in competitions:
-            for start in range(max(start_season, competition.first_season), end + 1):
+            for start in fixture_seasons.years(competition,start_season,end):
                 notify('season_started',competition=competition.name,season=season_label(start))
                 feeds, counts = schedules(root, clients, competition, start, offline=offline,
                     refresh=refresh_schedules or refresh_current and start == current, blocked=blocked,progress=notify,at=scope['requirements_as_of'])

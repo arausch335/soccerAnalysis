@@ -1,4 +1,6 @@
-"""Sofascore unique-tournament IDs checked against ScraperFC's reference.
+"""Sofascore league IDs checked against ScraperFC's reference.
+
+Domestic cup IDs are verified against provider pages in docs/FIXTURES.md.
 
 Season IDs are resolved from the provider's season index, never from the year.
 Match and player IDs come from fixture and lineup responses respectively.
@@ -24,4 +26,17 @@ SOFASCORE_COMPETITION_IDS = {
     'Champions League': 7,
     'Europa League': 679,
     'Conference League': 17015,
+    # Domestic cup IDs verified against the provider's tournament pages.
+    'FA Cup': 19,
+    'EFL Cup': 21,
+    'Community Shield': 346,
+    'Copa del Rey': 329,
+    'Supercopa de España': 213,
+    'DFB-Pokal': 217,
+    'DFL-Supercup': 799,
+    'Coppa Italia': 328,
+    'Supercoppa Italiana': 341,
+    'Coupe de France': 335,
+    'Coupe de la Ligue': 333,
+    'Trophée des Champions': 339,
 }
