@@ -55,6 +55,30 @@ def _details(row):
     return json.loads(value) if isinstance(value,str) else dict(value)
 
 
+def future_until(rows,at=None):
+    """Evidence that a published baseline consists entirely of future games."""
+    if not rows:return None
+    stamps=[]
+    for row in rows:
+        stamp=(datetime.fromtimestamp(row['startTimestamp'],timezone.utc) if 'startTimestamp' in row
+               else instant(row.get('kickoff_utc') or row['date']) if row.get('kickoff_utc') or row.get('date') else None)
+        if stamp is None or stamp<=instant(at):return None
+        stamps.append(stamp)
+    return min(stamps).isoformat()
+
+
+def defer_future(record,rows,at=None):
+    """A future-only baseline cannot require an unpublished peer schedule yet."""
+    row=dict(record);error=row.get('error','');until=future_until(rows,at)
+    absent=(error=='ValueError: No fixtures returned' or re.fullmatch(r'(?:ValueError|_PartialSchedule): No season \d{4}/\d{4} for FotMob competition \d+',error)
+            or re.fullmatch(r'(?:_UnavailableSeason|_PartialSchedule): WhoScored season .+ unavailable',error))
+    if until and row.get('provider')!='sofascore' and row.get('status') in ('partial','missing') and absent:
+        detail=_details(row);detail.update(previous_warning=error,
+            deferred=[dict(provider=row['provider'],reason='future_fixtures_not_published',recheck_after=until)])
+        row.update(status='deferred',error='',scope_details=json.dumps(detail,sort_keys=True))
+    return row
+
+
 def _baseline(rows):
     return [dict(startTimestamp=instant(r.get('kickoff_utc') or r['date']).timestamp(),status={'type':r.get('status')},
         tournament={'name':'Promotion/Relegation Playoffs' if r.get('competition_phase')=='playoffs' else r.get('competition','')})
@@ -63,7 +87,7 @@ def _baseline(rows):
 
 def classify_existing(record,rows,at=None):
     """Upgrade legacy warning wording only when its exact source is established."""
-    row=dict(record);detail=_details(row);competition=row['competition'];start=int(row['season'][:4])
+    row=defer_future(record,rows,at);detail=_details(row);competition=row['competition'];start=int(row['season'][:4])
     phase=domestic_phase(competition,start,_baseline(rows),at)
     error=row.get('error','');provider=row.get('provider')
     # Never hide month/network errors or an unsuccessful regular-season lookup.
@@ -101,7 +125,8 @@ def coverage(rows,records,at=None):
         p=row['provider'];matched=sum(p=='sofascore' or r.get(p+'_fixture_check')=='validated' for r in needed)
         detail=_details(row);deferred=detail.get('deferred',[])
         future_deferred=(bool(deferred) and all(instant(d['recheck_after'])>at for d in deferred)
-            and domestic_phase(row['competition'],int(row['season'][:4]),_baseline(subset),at)=='not_yet_required')
+            and all(bool(future_until(subset,at)) if d.get('reason')=='future_fixtures_not_published' else
+                domestic_phase(row['competition'],int(row['season'][:4]),_baseline(subset),at)=='not_yet_required' for d in deferred))
         row.update(required_status='complete' if row['status']=='complete' or row['status']=='deferred' and future_deferred else 'partial',
             required_fixtures=len(needed),matched_required_fixtures=matched,unmatched_required_fixtures=len(needed)-matched,
             optional_future_fixtures=sum(bool(r.get('kickoff_utc') or r.get('date')) and instant(r.get('kickoff_utc') or r['date'])>at for r in subset),

@@ -138,5 +138,30 @@ class FixtureRequirementTests(unittest.TestCase):
                 self.assertEqual(value['missing_schedules'],0)
                 self.assertNotIn('last_issue',value)
 
+    def test_future_only_edition_can_wait_for_missing_peer_but_not_auth_or_ambiguity(self):
+        rows=[dict(competition='Supercopa de España',season='2026-2027',status='notstarted',date='2027-01-10')]
+        base=dict(competition='Supercopa de España',season='2026-2027',provider='whoscored',status='missing',
+            error='_UnavailableSeason: WhoScored season Supercopa de España 2026/2027 unavailable')
+        result=req.coverage(rows,[base],AT)[0]
+        self.assertEqual((result['status'],result['required_status'],result['required_fixtures']),('deferred','complete',0))
+        self.assertEqual(req.coverage(rows,[result],'2027-01-10T00:00:00Z')[0]['required_status'],'partial')
+        for error in ('ProviderRequestError: HTTP 403','ValueError: Ambiguous Supercopa season'):
+            self.assertEqual(req.coverage(rows,[{**base,'error':error}],AT)[0]['status'],'missing')
+        rows[0].update(status='finished',date='2026-10-01')
+        self.assertEqual(req.coverage(rows,[base],AT)[0]['status'],'missing')
+
+    def test_future_only_schedule_does_not_fabricate_peer_matches(self):
+        from fixtures.builder import CUP_COMPETITIONS
+        comp=next(c for c in CUP_COMPETITIONS if c.name=='Supercopa de España')
+        sofa=Mock();sofa.seasons.return_value={'seasons':[dict(id=27,year='26/27')]}
+        future={**event(day=int(datetime(2027,1,10,tzinfo=timezone.utc).timestamp())),'status':{'type':'notstarted'}}
+        sofa.iter_season_events.return_value=[future]
+        fot=Fot();fot.seasons=lambda cid:[]
+        who=who_client(2026);who.seasons.return_value=[];who.seasons.side_effect=None
+        with tempfile.TemporaryDirectory() as tmp,patch('fixtures.dataset._who_paths',return_value=[MAIN]):
+            feeds,records=schedules(Path(tmp),dict(sofascore=sofa,fotmob=fot,whoscored=who),comp,2026,at=AT)
+        self.assertEqual([r['status'] for r in records],['complete','deferred','deferred'])
+        self.assertEqual(feeds['fotmob'],[]);self.assertEqual(feeds['whoscored'],[])
+
 
 if __name__=='__main__':unittest.main()

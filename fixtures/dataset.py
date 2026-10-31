@@ -448,6 +448,7 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
         coverage.append(dict(competition=competition.name, season=season_label(start), provider=provider,
             status=('deferred' if scope_details.get('deferred') else 'complete') if complete else 'partial' if events else 'missing',
             fixtures=len(events), source=origin, error=error,scope_details=json.dumps(scope_details,sort_keys=True)))
+        coverage[-1]=requirements.defer_future(coverage[-1],result.get('sofascore',[]),at)
         if progress:progress('provider_finished',provider=provider,status=coverage[-1]['status'],source=origin,current_fixtures=len(events))
     return result, coverage
 

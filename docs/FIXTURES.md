@@ -375,7 +375,10 @@ remain coverage gaps. Offline reuse of a deferred checkpoint expires at that
 boundary. No fixture or native provider ID is fabricated.
 
 Published future fixtures remain in the default CSV, but matching them is
-optional. Required matching covers finished fixtures at or before the run's
+optional. When the entire baseline edition is still in the future, a peer
+provider's explicit missing-season/empty-schedule response is deferred until
+the first baseline kickoff; authentication errors and ambiguous lookup results
+remain visible. The next online run retries the unpublished peer schedule. Required matching covers finished fixtures at or before the run's
 `requirements_as_of` timestamp. Cancelled and other unplayed placeholders are
 excluded. `--no-include-upcoming` continues to export only finished rows.
 `coverage.csv` preserves all-row matching totals and adds `required_status`,
