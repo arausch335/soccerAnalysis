@@ -276,3 +276,25 @@ project aliases, and `id_redirects.csv` lets earlier exports resolve to the winn
 Fixtures, their home/away team references, and player/team/match concordances use
 the selected key. Different Sofascore entities and contradictory published Reep
 IDs remain conflicts; selecting a project key cannot verify a provider mapping.
+
+### Removed raw collections and isolated dataset build failures
+
+`config/removed_raw_collections.json` records explicit user removals of raw
+competition-seasons. Bundesliga 2018–2019 was removed on 31 October 2026 because
+its unrecognized provider-only job stub was repeatedly scheduled as a combined
+season export. On each computer, storage maintenance moves matching active raw
+folders and season exports under `_system/removed_raw_collections/`, records a
+local recovery receipt, and cancels that season's import/build work. Raw bytes
+stay on their owning computer. Fixture schedules, historical fixture references
+and shared identity keys are separate and remain in scope. Old transfer packages
+cannot restore the removed raw collection; sender acknowledgements identify the
+removed integration state without resending its bytes.
+
+A provider-only directory without `job.json` is checked before taking a large
+build snapshot. Unsupported or invalid season builds are recorded as `blocked`
+with their failure reason; later seasons continue. A new build request after
+source repair increments the revision and makes that season eligible again.
+Busy files, cancellation and capacity errors remain resumable rather than being
+classified as invalid source data. The authenticated consumer-only
+`GET /v1/diagnostics` endpoint exposes build states and preserved quarantine error
+metadata, never raw response bodies or archive objects.

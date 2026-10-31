@@ -25,6 +25,10 @@ def import_parts(root, files, *, owner, batch, origins=None, check=lambda:None, 
     The caller owns a cooperative season lease for the affected season(s).
     """
     from .ensemble import import_folder
+    from .removedCollections import removed_seasons,raw_season
+    excluded=removed_seasons()
+    files={key:path for key,path in files.items() if raw_season(key) not in excluded}
+    if not any(key!='.soccer-scraper.json' for key in files):return False
     root=full_path(root);directory=root/'_system/storage';directory.mkdir(parents=True,exist_ok=True)
     with closing(sqlite3.connect(directory/'parts.sqlite',timeout=30)) as db:
         db.execute('CREATE TABLE IF NOT EXISTS parts(batch TEXT,path TEXT,sha TEXT,PRIMARY KEY(batch,path))');db.commit()
@@ -133,7 +137,8 @@ def import_staged(root, ensemble, *, stop=None, report=print,on_season=None,on_p
         def selected_season(key):
             parts=Path(key).parts
             return '/'.join(parts[1:3] if parts[0] in ('whoscored','whoscored_events','fotmob_player_stats') else parts[:2])
-        seasons=sorted({selected_season(key) for key in files if key!='.soccer-scraper.json'})
+        from .removedCollections import removed_seasons
+        seasons=sorted({selected_season(key) for key in files if key!='.soccer-scraper.json'}-removed_seasons().keys())
         # A folder may span several seasons; each season can advance independently.
         pending=False
         from filelock import Timeout
@@ -177,7 +182,10 @@ def snapshot_data(root, output, *, check=lambda:None):
         require_space(output,source.stat().st_size if source.stat().st_dev!=output.stat().st_dev else 4096)
         link_or_copy(source,target)
     pin(root/'.soccer-scraper.json')
+    from .removedCollections import removed_seasons
+    excluded=removed_seasons()
     for directory in sorted(root.glob('*/*')):
+        if directory.relative_to(root).as_posix() in excluded:continue
         if directory.relative_to(root).parts[0]=='_system' or not (directory/'job.json').is_file():continue
         for source in directory.glob('*'):
             if source.is_file() and source.suffix in ('.csv','.json'):pin(source)

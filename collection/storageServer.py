@@ -24,7 +24,8 @@ class Archive:
             db.executescript('CREATE TABLE IF NOT EXISTS uploads(id TEXT PRIMARY KEY,owner TEXT,manifest TEXT,state TEXT,received_at TEXT); '
                              'CREATE TABLE IF NOT EXISTS upload_failures(id INTEGER PRIMARY KEY AUTOINCREMENT,upload_id TEXT,at TEXT,error TEXT,retried_at TEXT); '
                              'CREATE TABLE IF NOT EXISTS publication(slot INTEGER PRIMARY KEY,manifest TEXT); '
-                             'CREATE TABLE IF NOT EXISTS builds(season TEXT PRIMARY KEY,state TEXT,revision INTEGER NOT NULL DEFAULT 0);')
+                             'CREATE TABLE IF NOT EXISTS builds(season TEXT PRIMARY KEY,state TEXT,revision INTEGER NOT NULL DEFAULT 0); '
+                             'CREATE TABLE IF NOT EXISTS build_failures(id INTEGER PRIMARY KEY AUTOINCREMENT,season TEXT,revision INTEGER,at TEXT,error TEXT);')
             db.execute('BEGIN IMMEDIATE')
             if 'revision' not in {row[1] for row in db.execute('PRAGMA table_info(builds)')}:
                 db.execute('ALTER TABLE builds ADD COLUMN revision INTEGER NOT NULL DEFAULT 0')
@@ -36,8 +37,10 @@ class Archive:
         validate_manifest(manifest)
         if manifest['kind']!='raw' or manifest['worker']!=worker:raise PermissionError('Only owned raw collections may be uploaded')
         mid=identifier(manifest)
+        from .removedCollections import removed_seasons
+        state='removed' if manifest['season'] in removed_seasons() else 'pending'
         with self.lock,self.connect() as db:
-            db.execute('INSERT OR IGNORE INTO uploads VALUES(?,?,?,?,?)',(mid,worker,encode(manifest).decode(),'pending',None));db.commit()
+            db.execute('INSERT OR IGNORE INTO uploads VALUES(?,?,?,?,?)',(mid,worker,encode(manifest).decode(),state,None));db.commit()
         return {'id':mid}
 
     def upload(self,worker,mid):
@@ -54,7 +57,7 @@ class Archive:
 
     def offset(self,worker,mid,sha):
         item,state=self.descriptor(worker,mid,sha);target=self.objects/sha
-        if state in ('received','imported','quarantined'):return {'complete':True,'offset':item['size']}
+        if state in ('received','imported','quarantined','removed'):return {'complete':True,'offset':item['size']}
         if item['size']==0 and not target.exists():
             target.touch()
             if digest(target)!=sha:target.unlink();raise ValueError('Empty object checksum differs')
@@ -83,7 +86,7 @@ class Archive:
     def commit(self,worker,mid):
         with self.lock:
             manifest,state=self.upload(worker,mid)
-            if state not in ('received','imported','quarantined'):
+            if state not in ('received','imported','quarantined','removed'):
                 for item in manifest['files']:
                     if not self.offset(worker,mid,item['sha256'])['complete']:raise ValueError('Upload is incomplete')
                 with self.connect() as db:
@@ -92,8 +95,8 @@ class Archive:
             # Older producers understand received/imported acknowledgements. A
             # quarantined upload is still durably received; replay must not
             # requeue it or force producers to resend preserved raw bytes.
-            return {'id':mid,'state':'received' if state=='quarantined' else state,
-                    **({'integration_state':'quarantined'} if state=='quarantined' else {})}
+            return {'id':mid,'state':'received' if state in ('quarantined','removed') else state,
+                    **({'integration_state':state} if state in ('quarantined','removed') else {})}
 
     def completed(self):
         with self.connect() as db:rows=db.execute("SELECT id,manifest FROM uploads WHERE state='received' ORDER BY rowid").fetchall()
@@ -134,7 +137,7 @@ class Archive:
             if manifest.get('completed'):
                 # A full-season snapshot supersedes earlier packages. A single
                 # match must never acknowledge another match that was deferred.
-                rows=db.execute("SELECT id,manifest FROM uploads WHERE owner=? AND state!='quarantined' AND rowid<=(SELECT rowid FROM uploads WHERE id=?)",
+                rows=db.execute("SELECT id,manifest FROM uploads WHERE owner=? AND state NOT IN ('quarantined','removed') AND rowid<=(SELECT rowid FROM uploads WHERE id=?)",
                                 (manifest['worker'],mid)).fetchall()
                 for key,body in rows:
                     if json.loads(body).get('season')==manifest['season']:db.execute("UPDATE uploads SET state='imported' WHERE id=?",(key,))
@@ -142,7 +145,33 @@ class Archive:
             db.commit()
 
     def schedule_build(self,season):
+        from .removedCollections import removed_seasons
+        if season in removed_seasons():
+            self.remove_season(season);return
         with self.connect() as db:db.execute("INSERT INTO builds(season,state,revision) VALUES(?,'pending',1) ON CONFLICT(season) DO UPDATE SET state='pending',revision=revision+1",(season,));db.commit()
+
+    def remove_season(self,season):
+        """Retain receipts while removing this season from active build/import work."""
+        with self.lock,self.connect() as db:
+            db.execute("UPDATE builds SET state='removed' WHERE season=?",(season,))
+            for mid,body in db.execute("SELECT id,manifest FROM uploads WHERE state!='removed'").fetchall():
+                if json.loads(body).get('season')==season:db.execute("UPDATE uploads SET state='removed' WHERE id=?",(mid,))
+            db.commit()
+
+    def block_build(self,season,revision,error):
+        with self.connect() as db:
+            db.execute("UPDATE builds SET state='blocked' WHERE season=? AND revision=?",(season,revision))
+            db.execute('INSERT INTO build_failures(season,revision,at,error) VALUES(?,?,?,?)',
+                       (season,revision,now(),(type(error).__name__+': '+str(error))[:4096]));db.commit()
+
+    def diagnostics(self):
+        with self.connect() as db:
+            builds=[dict(season=s,state=state,revision=revision,error=error,failed_at=at) for s,state,revision,error,at in db.execute(
+                "SELECT b.season,b.state,b.revision,f.error,f.at FROM builds b LEFT JOIN build_failures f ON f.id="
+                "(SELECT max(id) FROM build_failures WHERE season=b.season) ORDER BY b.season")]
+        from .removedCollections import removed_seasons
+        return dict(format='soccer-storage-diagnostics-v1',checked_at=now(),status=self.status(),
+                    builds=builds,quarantined_uploads=self.quarantined(),removed_raw_seasons=removed_seasons())
 
     def builds(self):
         with self.connect() as db:return [r[0] for r in db.execute("SELECT season FROM builds WHERE state='pending'")]
@@ -186,7 +215,7 @@ class Archive:
         """Remove transfer duplicates only after incorporation; keep ledger receipts."""
         with self.lock,self.connect() as db:
             if self.publishing or self.readers:return
-            manifests=[json.loads(r[0]) for r in db.execute("SELECT manifest FROM uploads WHERE state!='imported'")]
+            manifests=[json.loads(r[0]) for r in db.execute("SELECT manifest FROM uploads WHERE state NOT IN ('imported','removed')")]
             publication=self.publication()
             if publication:manifests.append(publication)
             keep={f['sha256'] for m in manifests for f in m['files']}
@@ -199,7 +228,8 @@ class Archive:
             counts=dict(db.execute('SELECT state,count(*) FROM uploads GROUP BY state'))
             last=db.execute('SELECT max(received_at) FROM uploads').fetchone()[0]
         publication=self.publication()
-        return {'received':counts.get('received',0),'incorporated':counts.get('imported',0),
+        with self.connect() as db:builds=dict(db.execute('SELECT state,count(*) FROM builds GROUP BY state'))
+        return {'pending_builds':builds.get('pending',0),'blocked_builds':builds.get('blocked',0),'removed_builds':builds.get('removed',0),'received':counts.get('received',0),'incorporated':counts.get('imported',0),
                 'quarantined':counts.get('quarantined',0),'last_received':last,
                 'dataset_id':identifier(publication) if publication else None}
 
@@ -232,6 +262,7 @@ class StorageServer:
                     if self.command=='GET' and parts==['v1','status']:return self.reply(archive.status())
                     if role=='consumer' and self.command=='GET':
                         publication=archive.publication()
+                        if parts==['v1','diagnostics']:return self.reply(archive.diagnostics())
                         if parts==['v1','dataset']:return self.reply({'manifest':publication})
                         if len(parts)==4 and parts[:3]==['v1','dataset','blobs']:
                             sha=check_hash(parts[3])

@@ -293,12 +293,13 @@ class TransferTests(unittest.TestCase):
         hubroot=self.base/'msi';atomic_json(hubroot/'.soccer-scraper.json',{'format':1});ensure_identity(hubroot,'msi')
         agent=StorageAgent(hubroot,'msi',settings,dataset_root=self.base/'hub-dataset',log=quiet);agent.server=self.server
         with patch('dataset_builder.build_dataset',return_value=2):
-            with self.assertRaisesRegex(ValueError,'build failed'):agent.maintenance_once()
+            self.assertTrue(agent.maintenance_once())
         self.assertTrue((hubroot/self.season/'match_checkpoints/1/CURRENT.json').exists())
         progress=PortableProgress(None,hubroot);progress.scan()
         self.assertTrue(any('headless' in r['origins'] for r in progress.local_records.values()))
-        self.assertEqual(agent.server.archive.builds(),[self.season])
-        self.assertTrue(agent.maintenance_changed.is_set())
+        self.assertEqual(agent.server.archive.builds(),[])
+        self.assertEqual(agent.server.archive.status()['blocked_builds'],1)
+        self.assertIn('build failed',agent.server.archive.diagnostics()['builds'][0]['error'])
 
     def test_a_new_build_request_cannot_be_lost_when_a_previous_build_finishes(self):
         archive=self.server.archive

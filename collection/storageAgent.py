@@ -12,7 +12,7 @@ import threading
 import time
 from uuid import uuid4
 
-from filelock import FileLock
+from filelock import FileLock,Timeout
 from storage.pandasStore import PandasStore, SCHEMA, atomic_json
 from .paths import collection_name
 from .storageConfig import path_for
@@ -122,7 +122,7 @@ class StorageAgent:
         self.database=self.directory/'tasks.sqlite';self.outbox=Outbox(root,worker)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS captures(season TEXT,match_id TEXT,completed INTEGER,revision TEXT,PRIMARY KEY(season,match_id))');db.commit()
-        self.stop=threading.Event();self.busy=threading.Event();self.server=None;self.options=None;self.last_error=None
+        self.stop=threading.Event();self.busy=threading.Event();self.server=None;self.options=None;self.last_error=None;self.removals_applied=False;self.archive_removals_applied=False
         self.status={'state':'setup_pending','message':'Waiting for storage setup from Main'}
         self.thread=threading.Thread(target=self.run,daemon=True,name='storage-transfer')
         self.maintenance_thread=threading.Thread(target=self.maintain,daemon=True,name='storage-maintenance')
@@ -146,6 +146,8 @@ class StorageAgent:
         if self.server:self.server.close()
 
     def capture(self,season,match_id='*',completed=False):
+        from .removedCollections import removed_seasons
+        if season in removed_seasons():return
         safe_path(season+'/job.json','raw')
         if match_id!='*' and (not str(match_id).isdigit()):raise ValueError('Invalid checkpoint match ID')
         with self.connect() as db:
@@ -177,6 +179,10 @@ class StorageAgent:
         if options['worker_id']!=self.worker or options['hub']!=self.settings['hub'] or options['url']!=self.settings['url']:
             raise ValueError('Storage setup does not match shared plan')
         self.options=options;role=options['role']
+        if not self.removals_applied:
+            from .removedCollections import apply_removals
+            apply_removals(self.root,dataset=self.output,stop=self.stop,report=self.log)
+            self.removals_applied=True
         if role=='hub':
             if self.server is None:
                 from .storageServer import StorageServer
@@ -186,23 +192,10 @@ class StorageAgent:
             return
         peer=Peer(options['url'],options['token'])
         if role=='producer':
-            if self.outbox.queued():
-                self.outbox.send_one(peer,stop=self.stop)
-                with self.connect() as db:pending=db.execute('SELECT count(*) FROM captures').fetchone()[0]
-                self.status={'state':'sending','role':role,'queued':self.outbox.queued()+pending,'last_received':now()}
-                return
-            with self.connect() as db:task=db.execute('SELECT season,match_id,completed,revision FROM captures ORDER BY rowid LIMIT 1').fetchone()
-            if task:
-                season,match_id,completed,revision=task
-                from .workerIdentity import read_origins
-                origins=read_origins(self.root)
-                origins={k:v for k,v in origins.items() if '|'+season.replace('/','|')+'|' in k}
-                self.outbox.enqueue(season_files(self.root,season,match_id),kind='raw',season=season,completed=bool(completed),origins=origins)
-                with self.connect() as db:db.execute('DELETE FROM captures WHERE season=? AND match_id=? AND completed=? AND revision=?',task);db.commit()
-            sent=self.outbox.send_one(peer,stop=self.stop)
-            with self.connect() as db:pending=db.execute('SELECT count(*) FROM captures').fetchone()[0]
-            self.status={'state':'sending' if self.outbox.queued()+pending else 'up_to_date','role':role,'queued':self.outbox.queued()+pending,
-                         **({'last_received':now()} if sent else {'last_received':self.status.get('last_received')})}
+            try:
+                with FileLock(str(self.directory/'producer.lock'),timeout=0):self._produce(peer)
+            except Timeout:
+                self.status={'state':'sending_elsewhere','role':'producer','queued':self.outbox.queued()}
         else:
             manifest=peer.request('/v1/dataset')['manifest']
             if manifest and manifest.get('worker')!=self.settings['hub']:raise ValueError('Unexpected dataset publisher')
@@ -218,6 +211,31 @@ class StorageAgent:
                 self.receipt={'id':mid,'received_at':now()};atomic_json(self.directory/'dataset-receipt.json',self.receipt)
                 self.log('[Storage] Updated datasets and concordance received from MSI.')
             self.status={'state':'up_to_date' if manifest else 'awaiting_dataset','role':role,'last_dataset':self.receipt.get('received_at')}
+
+    def _produce(self,peer):
+        role='producer'
+        if self.outbox.queued():
+            self.outbox.send_one(peer,stop=self.stop)
+            with self.connect() as db:pending=db.execute('SELECT count(*) FROM captures').fetchone()[0]
+            self.status={'state':'sending','role':role,'queued':self.outbox.queued()+pending,'last_received':now()}
+            return
+        with self.connect() as db:task=db.execute('SELECT season,match_id,completed,revision FROM captures ORDER BY rowid LIMIT 1').fetchone()
+        if task:
+            season,match_id,completed,revision=task
+            from .removedCollections import removed_seasons
+            if season in removed_seasons():
+                with self.connect() as db:db.execute('DELETE FROM captures WHERE season=? AND match_id=? AND revision=?',(season,match_id,revision));db.commit()
+                self.status={'state':'sending','role':role,'queued':1}
+                return
+            from .workerIdentity import read_origins
+            origins=read_origins(self.root)
+            origins={k:v for k,v in origins.items() if '|'+season.replace('/','|')+'|' in k}
+            self.outbox.enqueue(season_files(self.root,season,match_id),kind='raw',season=season,completed=bool(completed),origins=origins)
+            with self.connect() as db:db.execute('DELETE FROM captures WHERE season=? AND match_id=? AND completed=? AND revision=?',task);db.commit()
+        sent=self.outbox.send_one(peer,stop=self.stop)
+        with self.connect() as db:pending=db.execute('SELECT count(*) FROM captures').fetchone()[0]
+        self.status={'state':'sending' if self.outbox.queued()+pending else 'up_to_date','role':role,'queued':self.outbox.queued()+pending,
+                     **({'last_received':now()} if sent else {'last_received':self.status.get('last_received')})}
 
     def run(self):
         while not self.stop.is_set():
@@ -306,6 +324,10 @@ class StorageAgent:
         check=Checkpoint(self.stop);check();changed=False
         if not self.server:return changed
         archive=self.server.archive
+        if not self.archive_removals_applied:
+            from .removedCollections import apply_removals
+            apply_removals(self.root,dataset=self.output,archive=archive,stop=self.stop,report=self.log)
+            self.archive_removals_applied=True
         for mid,manifest in archive.completed():
             check()
             self.maintenance_status={'state':'incorporating','season':manifest['season']}
@@ -331,6 +353,8 @@ class StorageAgent:
             self.maintenance_status={'state':'building_dataset','season':season}
             self.log('[Storage] Background dataset build: '+season)
             try:
+                if not (self.root/season/'job.json').is_file():
+                    raise ValueError('No saved combined job; provider-only metadata is not a combined season export')
                 self.output.parent.mkdir(parents=True,exist_ok=True)
                 # Pin saved generations into an isolated input folder, so the
                 # export command's collector lock belongs only to that snapshot.
@@ -360,15 +384,19 @@ class StorageAgent:
                         atomic_copy(path,self.output/relative)
                 archive.published(season,build_revision)
                 self.log('[Storage] Dataset published for Main: '+season)
+            except (ValueError,KeyError,TypeError,csv.Error) as exc:
+                archive.block_build(season,build_revision,exc)
+                self.log(f'[Storage] Set aside dataset build {season}: {type(exc).__name__}: {exc}; continuing other seasons.')
+                continue
             except Exception:
                 # Import receipts have already been committed and must remain
                 # observable even if a separate dataset build needs attention.
                 if changed:self.maintenance_changed.set()
                 raise
         archive.collected()
-        held=archive.status()['quarantined']
-        self.maintenance_status=({'state':'review_needed','message':f'{held} upload(s) set aside for review; other imports continue'}
-                                 if held else {'state':'current'})
+        counts=archive.status();held=counts['quarantined'];blocked=counts['blocked_builds']
+        self.maintenance_status=({'state':'review_needed','message':f'{held} upload(s) and {blocked} dataset build(s) set aside; other work continues'}
+                                 if held or blocked else {'state':'current'})
         return changed
 
     def log_report(self,message,**kwargs):self.log(message)

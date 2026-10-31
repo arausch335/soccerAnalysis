@@ -33,7 +33,7 @@ include = ["config", "analysis*", "collection*", "concordance*", "fixtures*", "m
 "providers" = ["*.json"]
 "providers.concordance" = ["*.json"]
 
-"config" = ["settings.yaml", "workers.yaml"]
+"config" = ["settings.yaml", "workers.yaml", "removed_raw_collections.json"]
 "dashboard" = ["*.html", "*.css", "*.js"]
 
 "chrome_extension" = ["*.json", "*.js", "*.html", "*.css"]
