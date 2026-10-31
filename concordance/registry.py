@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from providers.reep import PROVIDERS
+from providers.teamProfiles import canonical_team_id
 from storage.pandasStore import atomic_json
 
 FORMAT='soccer-alex-ids-v1'
@@ -17,6 +18,19 @@ class Registry:
         self.value=json.loads(saved.read_text(encoding='utf-8')) if saved is not None else {
             'format':FORMAT,'aliases':{},'published':{},'redirects':{},'anchors':{}}
         if self.value.get('format')!=FORMAT:raise ValueError('Unsupported Alex ID registry')
+        self.baselines={}
+        for token,alias in self.value['aliases'].items():
+            kind,provider,native=token.split('|',2)
+            if provider=='sofascore':self.baselines.setdefault(self.follow(alias),set()).add(native)
+
+    def canonical(self,value):
+        value=self.follow(value)
+        return self.follow(self.value['published'].get(value,value))
+
+    def lookup(self,kind,provider,native):
+        if kind=='team':native=canonical_team_id(provider,native)
+        alias=self.value['aliases'].get(f'{kind}|{provider}|{native}')
+        return self.canonical(alias) if alias else ''
 
     def follow(self,value):
         seen=set()
@@ -39,11 +53,13 @@ class Registry:
         if published:known.add(self.follow(published))
         if len(known)>1:raise ValueError('Contradictory published identities in Alex registry')
         if existing:
-            anchors=[json.loads(self.value['anchors'][x]) for x in existing if x in self.value['anchors']]
-            sofa={row[2] for row in anchors if row[1]=='sofascore'}
-            if len(sofa)>1 and not known:
+            sofa=set().union(*(self.baselines.get(x,set()) for x in existing))
+            introduced=len(existing)>1 or ('sofascore' in peers and peers['sofascore'] not in sofa)
+            if 'sofascore' in peers:sofa.add(peers['sofascore'])
+            if len(sofa)>1 and introduced and not published:
                 raise ValueError('Peer ID would merge distinct baseline entities without an approved bridge')
-            alex=min(existing)
+            primary=self.value['aliases'].get(f'{kind}|{anchor[0]}|{anchor[1]}')
+            alex=self.follow(primary) if primary else min(existing)
             for old in existing-{alex}:
                 self.value['redirects'][old]=alex
                 if old in self.value['published']:self.value['published'][alex]=self.value['published'][old]
@@ -53,11 +69,37 @@ class Registry:
             if alex in self.value['anchors'] and self.value['anchors'][alex]!=seed:
                 raise ValueError('Alex ID hash collision')
             self.value['anchors'][alex]=seed
+        baseline=set().union(*(self.baselines.get(x,set()) for x in existing))
+        if 'sofascore' in peers:baseline.add(peers['sofascore'])
+        self.baselines[alex]=baseline
         for token in tokens:self.value['aliases'][token]=alex
         reep=next(iter(known),'')
         if reep:self.value['published'][alex]=reep
         return {'entity_id':reep or alex,'reep_id':reep,'alex_id':alex,
                 'id_source':'reep' if reep else 'alex'}
+
+    def validate_rows(self,kind,rows,*,prefix=''):
+        """Check provider-to-canonical joins; disputed peers are not evidence."""
+        checked=0
+        for row in rows:
+            entity=row.get(prefix+'entity_id','')
+            peers=[(p,str(row.get(prefix+p+'_id') or '')) for p in PROVIDERS]
+            peers=[(p,v) for p,v in peers if v]
+            safe=str(row.get(prefix+'safe_for_cross_provider_joins',False)).lower()=='true'
+            published=row.get(prefix+'reep_id','')
+            if safe and published and self.canonical(published)!=entity:
+                raise ValueError('Published Reep/canonical ID disagreement')
+            for provider,native in peers if safe else peers[:1]:
+                if self.lookup(kind,provider,native)!=entity:
+                    raise ValueError('Provider/canonical ID disagreement: '+str((kind,provider,native,entity)))
+                checked+=1
+            if safe and row.get(prefix+'provider_aliases'):
+                aliases=json.loads(row[prefix+'provider_aliases'])
+                for p in PROVIDERS:
+                    for native in aliases.get(p+'_id',[]):
+                        if self.lookup(kind,p,native)!=entity:
+                            raise ValueError('Provider alias/canonical ID disagreement: '+str((kind,p,native)))
+        return checked
 
     def save(self):atomic_json(self.path,self.value,sort_keys=True)
 

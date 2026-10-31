@@ -204,6 +204,17 @@ def validate_bundle(folder):
                     raise ValueError('Invalid Alex ID namespace')
             keys.append(row['relationship_id'] if relative=='full/entities.csv' else row['entity_id'])
         if len(keys)!=len(set(keys)):raise ValueError('Duplicate canonical key: '+relative)
+    registry=Registry(folder/'alex_registry.json')
+    checked=0
+    for relative,kind in (('full/fixtures.csv','match'),('full/teams.csv','team'),
+                          ('scraped/matches.csv','match'),('scraped/teams.csv','team'),('scraped/players.csv','player')):
+        checked+=registry.validate_rows(kind,frames[relative])
+    for prefix in ('from_','to_'):checked+=registry.validate_rows('team',frames['full/entities.csv'],prefix=prefix)
+    for side in ('home','away'):
+        references=[{'entity_id':r[side+'_entity_id'],
+            'safe_for_cross_provider_joins':r.get(side+'_safe_for_cross_provider_joins',False),
+            **{p+'_id':r.get(p+'_'+side+'_team_id','') for p in PROVIDERS}} for r in frames['full/fixtures.csv']]
+        checked+=registry.validate_rows('team',references)
     team_ids={r['entity_id'] for r in frames['full/teams.csv']}
     for row in frames['full/fixtures.csv']:
         if row['home_entity_id'] not in team_ids or row['away_entity_id'] not in team_ids:
@@ -220,7 +231,8 @@ def validate_bundle(folder):
                 value=row.get(p+'_'+side+'_team_id')
                 if value and value not in known_aliases[p]:raise ValueError('Fixture native team ID is absent from the full team aliases')
     return {'rows':{k:len(v) for k,v in frames.items()},'id_requirements_met':True,
-            'integration_confirmed':manifest['integration_confirmed'],'ready_for_R':manifest['ready_for_R']}
+            'integration_confirmed':manifest['integration_confirmed'],'ready_for_R':manifest['ready_for_R'],
+            'provider_id_alignment':{'checked_provider_keys':checked,'inconsistent_keys':0}}
 
 
 def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed=False,report=print):
@@ -238,7 +250,10 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
         registry_path=state_root/'_system/identity/alex_ids.json';registry_path.parent.mkdir(parents=True,exist_ok=True)
         stack.enter_context(FileLock(str(registry_path)+'.lock',timeout=0))
         before=source_signature(root,dataset)
-        registry=Registry(registry_path,seed=output/'alex_registry.json');bridges=index(root)
+        seed=output/'alex_registry.json'
+        if not seed.exists():seed=root/'_system/identity/alex_ids.json'
+        if not seed.exists():seed=dataset/'fixture_concordance/alex_registry.json'
+        registry=Registry(registry_path,seed=seed);bridges=index(root)
         registry.value['redirects'].update(bridges.metadata.get('redirects',{}))
         fixtures=table(dataset/'fixtures.csv')
         if not fixtures:raise ValueError('The full 2010+ fixture export is required')
@@ -333,6 +348,18 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
                 for field,value in assigned.items():row[side+'_'+field]=value
             entities.append(row)
         outputs=dict(zip(TABLES,[full_fixtures,entities,full_teams,scraped_match_rows,scraped_teams.finish(),player_rows]))
+        # Later observations may upgrade an earlier alias. Publish every
+        # reference using the final registry, including fixture foreign keys.
+        for rows in outputs.values():
+            for row in rows:
+                for field in ('entity_id','home_entity_id','away_entity_id','from_entity_id','to_entity_id'):
+                    if row.get(field):row[field]=registry.canonical(row[field])
+                for prefix in ('','from_','to_'):
+                    if row.get(prefix+'alex_id'):
+                        row[prefix+'alex_id']=registry.follow(row[prefix+'alex_id'])
+                        entity=registry.canonical(row[prefix+'alex_id'])
+                        row[prefix+'reep_id']=entity if entity!=row[prefix+'alex_id'] else ''
+                        row[prefix+'id_source']='reep' if row[prefix+'reep_id'] else 'alex'
         if source_signature(root,dataset)!=before:raise ValueError('Collection inputs changed during rebuild; previous bundle preserved; pause writes and retry')
         if confirmed:verified_integration(root,integration_report)
         with tempfile.TemporaryDirectory(prefix='.concordance-',dir=output.parent) as temp:

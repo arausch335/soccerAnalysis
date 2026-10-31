@@ -37,6 +37,35 @@ class RegistryTests(unittest.TestCase):
             self.assertNotEqual(a['entity_id'],b['entity_id'])
             with self.assertRaises(ValueError):registry.assign('match',{})
 
+    def test_new_baseline_cannot_reuse_another_baselines_peer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry=Registry(Path(tmp)/'ids.json')
+            registry.assign('team',{'fotmob_id':'2'})
+            registry.assign('team',{'sofascore_id':'1','fotmob_id':'2'},'rt-known')
+            before=json.dumps(registry.value,sort_keys=True)
+            with self.assertRaisesRegex(ValueError,'baseline entities'):
+                registry.assign('team',{'sofascore_id':'3','fotmob_id':'2'})
+            self.assertEqual(before,json.dumps(registry.value,sort_keys=True))
+
+    def test_existing_approved_multi_profile_identity_remains_readable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry=Registry(Path(tmp)/'ids.json')
+            registry.assign('player',{'sofascore_id':'1','fotmob_id':'2'},'rp-known')
+            registry.assign('player',{'sofascore_id':'3','fotmob_id':'2'},'rp-known')
+            self.assertEqual(registry.assign('player',{'sofascore_id':'1'})['entity_id'],'rp-known')
+            registry.save();registry=Registry(registry.path)
+            self.assertEqual(registry.assign('player',{'fotmob_id':'2'})['entity_id'],'rp-known')
+
+    def test_merging_provider_only_alias_preserves_existing_baseline_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry=Registry(Path(tmp)/'ids.json')
+            baseline=registry.assign('match',{'sofascore_id':'1'})
+            peer=registry.assign('match',{'fotmob_id':'2'})
+            joined=registry.assign('match',{'sofascore_id':'1','fotmob_id':'2'})
+            self.assertEqual(joined['entity_id'],baseline['entity_id'])
+            self.assertEqual(registry.lookup('match','fotmob','2'),baseline['entity_id'])
+            self.assertIn({'from_id':peer['entity_id'],'to_id':baseline['entity_id']},registry.redirects())
+
 
 class IntegrationTests(unittest.TestCase):
     def test_queue_empty_does_not_imply_all_data_integrated(self):
@@ -92,6 +121,26 @@ class BundleTests(unittest.TestCase):
         with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
         path=self.data/'concordance/scraped/players.csv';path.write_text(path.read_text()+'\n')
         with self.assertRaisesRegex(ValueError,'checksum'):validate_bundle(self.data/'concordance')
+
+    def test_bundle_rejects_provider_key_with_wrong_canonical_even_with_valid_checksum(self):
+        from concordance.build import digest
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        folder=self.data/'concordance';path=folder/'scraped/matches.csv'
+        frame=pd.read_csv(path,dtype=str,keep_default_na=False);frame['entity_id']='am-wrong'
+        frame.to_csv(path,index=False)
+        manifest=json.loads((folder/'bundle.json').read_text())
+        manifest['files']['scraped/matches.csv']['sha256']=digest(path)
+        atomic_json(folder/'bundle.json',manifest)
+        with self.assertRaisesRegex(ValueError,'Provider/canonical ID disagreement'):validate_bundle(folder)
+
+    def test_preview_uses_the_same_registry_as_the_fixture_export(self):
+        from fixtures.sharedIds import assign_ids
+        fixtures=pd.read_csv(self.data/'fixtures.csv',dtype=str,keep_default_na=False).to_dict('records')
+        assign_ids(self.root,fixtures)
+        expected={r['sofascore_match_id']:r['entity_id'] for r in fixtures}
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        rows=pd.read_csv(self.data/'concordance/full/fixtures.csv',dtype=str).to_dict('records')
+        self.assertEqual(expected,{r['sofascore_id']:r['entity_id'] for r in rows})
 
     def test_failed_build_preserves_previous_bundle_and_registry(self):
         with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)

@@ -149,6 +149,36 @@ class FixtureDatasetTests(unittest.TestCase):
         self.assertIn({'from_id':old,'to_id':'rm-published'},redirects)
         self.assertIn({'from_id':home,'to_id':'rt-published'},redirects)
 
+    def test_fixture_and_legacy_concordances_share_provider_aliases(self):
+        from fixtures.identityRefresh import reconcile_exports
+        from providers.reep import path_for
+        path_for(self.root).unlink();self.build()
+        folder=self.output.parent/'concordance';folder.mkdir(exist_ok=True)
+        tables={'match':[{'fotmob_id':'200'}], 'team':[{'fotmob_id':'10'}],
+                'player':[{'sofascore_id':'600','fotmob_id':'700','season':'2010-2011'},
+                          {'fotmob_id':'700','season':'2011-2012'}]}
+        for kind,rows in tables.items():
+            with (folder/(kind+'_ids.csv')).open('w',newline='') as stream:
+                writer=csv.DictWriter(stream,fieldnames=['sofascore_id','fotmob_id','whoscored_id','reep_id','season'])
+                writer.writeheader();writer.writerows(rows)
+        report=reconcile_exports(self.root,self.output.parent)
+        fixture=self.records()[0]
+        def read(kind):
+            with (folder/(kind+'_ids.csv')).open() as stream:return list(csv.DictReader(stream))
+        self.assertEqual(read('match')[0]['entity_id'],fixture['entity_id'])
+        self.assertEqual(read('team')[0]['entity_id'],fixture['home_entity_id'])
+        players=read('player');self.assertEqual(players[0]['entity_id'],players[1]['entity_id'])
+        self.assertTrue(players[0]['entity_id'].startswith('ap'))
+        self.assertEqual(report['canonical_ids']['provider_id_alignment']['inconsistent_keys'],0)
+
+    def test_ambiguous_peer_cannot_merge_fixture_baselines(self):
+        from fixtures.sharedIds import assign_ids
+        rows=[{'sofascore_id':'1','fotmob_id':'2'}, {'sofascore_id':'3','fotmob_id':'2'}]
+        result=assign_ids(self.root,[],matches=rows)
+        self.assertNotEqual(rows[0]['entity_id'],rows[1]['entity_id'])
+        self.assertFalse(any(r['safe_for_cross_provider_joins'] for r in rows))
+        self.assertEqual(result['provider_id_alignment']['excluded_ambiguous_observations'],2)
+
     def test_output_filter_is_independent_of_checkpoint(self):
         self.clients['sofascore'].iter_season_events = lambda *a, **k: iter([
             {**event(), 'status': {'type': 'notstarted'}}])

@@ -202,17 +202,20 @@ def _reconcile(root,dataset,*,dry_run):
     identity_summary={}
     if fixture_rows and all(r.get('sofascore_'+side+'_team_id') for r in fixture_rows for side in ('home','away')):
         reference_tables={}
-        for kind in ('match','team'):
-            path=dataset/'fixture_concordance'/(kind+'_ids.csv')
-            if path in pending:reference_tables[kind]=pending[path]
-            elif path.exists():reference_tables[kind]=read_table(path)
+        for folder in ('fixture_concordance','concordance'):
+            for kind in ('match','team','player'):
+                path=dataset/folder/(kind+'_ids.csv')
+                if path in pending:reference_tables[folder,kind]=pending[path]
+                elif path.exists():reference_tables[folder,kind]=read_table(path)
+        references={kind:[r for (folder,k),(_,rows) in reference_tables.items() if k==kind for r in rows]
+                    for kind in ('match','team','player')}
         identity_summary=assign_ids(root,fixture_rows,
-            reference_tables.get('match',([],[]))[1],reference_tables.get('team',([],[]))[1],
+            references['match'],references['team'],references['player'],
             folder=dataset/'fixture_concordance',save=not dry_run)
         path=dataset/'fixtures.csv';columns=read_table(path)[0]
         pending[path]=(list(dict.fromkeys([*columns,*FIXTURE_KEYS])),fixture_rows)
-        for kind,(columns,records) in reference_tables.items():
-            pending[dataset/'fixture_concordance'/(kind+'_ids.csv')]=(list(dict.fromkeys([*columns,*REFERENCE_KEYS])),records)
+        for (folder,kind),(columns,records) in reference_tables.items():
+            pending[dataset/folder/(kind+'_ids.csv')]=(list(dict.fromkeys([*columns,*REFERENCE_KEYS])),records)
         report['canonical_ids']=identity_summary
     manifests={}
     for folder in ('concordance','fixture_concordance'):

@@ -55,6 +55,8 @@ into the corresponding paths under MSI's `dataset` directory:
 - `fixtures.csv`
 - `fixture_concordance/team_ids.csv`
 - `fixture_concordance/attempts.csv`
+- `fixture_concordance/alex_registry.json`
+- `fixture_concordance/id_redirects.csv`
 
 This supplies the full 2010+ schedule and reviewed team/replacement references.
 Raw scraped data continues to go to MSI; the rebuild makes no provider requests.
@@ -102,7 +104,8 @@ ready bundle and MSI's own identity. `--validate-only` checks an existing bundle
 
 For an explicitly incomplete local test, `--allow-unconfirmed --output <folder>`
 creates a preview with `ready_for_R: false` and a separate preview registry. It
-does not change the production ID registry. The R loader rejects previews by
+starts from the available production/fixture registry, then keeps preview changes separate.
+It does not change the production ID registry. The R loader rejects previews by
 default. Do not use this switch to bypass the MSI integration step for production.
 
 ## File layout
@@ -174,6 +177,16 @@ provider does not mint a different ID. A later published Reep bridge becomes the
 preferred `entity_id`, while `id_redirects.csv` records the old Alex alias.
 Keep/back up `data/_system/identity/alex_ids.json`. The compiled registry copy
 can restore it if absent. Published Reep redirects are retained too.
+
+`python -m tools.reconcile_match_ids` aligns the root fixture table, fixture
+references, and existing legacy match/team/player concordances using that same
+registry, without scraping. Confirmed provider links reuse the existing baseline
+key; provider-only references reuse that key too. Contradictory observations stay
+in the files with `safe_for_cross_provider_joins: false`, and cannot bind disputed
+peers. The reconciliation summary records checked keys and excluded observations.
+The six-table builder and R reader reject inconsistent provider-to-canonical
+joins across the full and scraped tables. This alignment does not certify MSI
+integration or make an older legacy catalog complete.
 
 Every exported canonical record must have an `entity_id` and at least one real
 provider ID. Historical relationships apply this requirement to both endpoints.
