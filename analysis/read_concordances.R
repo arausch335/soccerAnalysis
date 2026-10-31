@@ -11,7 +11,7 @@ read_concordances <- function(dataset_root, require_integration = TRUE) {
     stop("MSI integration is unconfirmed. Run the MSI audit and rebuild first.")
   }
   for (relative in names(manifest$auxiliary_checksums)) {
-    if (!relative %in% c("id_redirects.csv", "quarantine.csv", "alex_registry.json") ||
+    if (!relative %in% c("id_redirects.csv", "quarantine.csv", "alex_registry.json", "registry_conflicts.csv") ||
         !identical(digest::digest(file = file.path(folder, relative), algo = "sha256", serialize = FALSE),
                    manifest$auxiliary_checksums[[relative]])) stop("Identity sidecar checksum mismatch")
   }

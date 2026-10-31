@@ -125,6 +125,16 @@ class Pool:
         return key
 
     def finish(self):
+        from .reconcile import rejected_links,annotate_names
+        observations=[]
+        for key,item in self.rows.items():
+            native={p+'_id':next(iter(item['sets'][p+'_id'])) if len(item['sets'][p+'_id'])==1 else '' for p in PROVIDERS}
+            native[key[0]+'_id']=key[1];observations.append(native)
+            for p in PROVIDERS:
+                if p!=key[0] and len(item['sets'][p+'_id'])>1:
+                    observations.extend({**native,p+'_id':v} for v in item['sets'][p+'_id'])
+        reject,verified=rejected_links(self.kind,observations,self.bridges)
+        for _,p,v in reject:self.registry.withhold(self.kind,p,v,'ambiguous_provider_link')
         result=[]
         for key,item in sorted(self.rows.items()):
             peers={p+'_id':next(iter(item['sets'][p+'_id'])) if len(item['sets'][p+'_id'])==1 else '' for p in PROVIDERS}
@@ -132,7 +142,12 @@ class Pool:
             peers[key[0]+'_id']=key[1]
             conflict=item['conflict'] or len(item['reep'])>1 or any(len(v)>1 for v in item['sets'].values())
             published=next(iter(item['reep'])) if len(item['reep'])==1 and not conflict else ''
-            assigned=self.registry.assign(self.kind,peers,published,conflict=conflict)
+            baseline_links=self.bridges.ids(self.kind,*key)
+            if not published and len(baseline_links)==1:published=self.bridges.canonical_id(next(iter(baseline_links)))
+            assigned=self.registry.reconcile(self.kind,peers,published,conflict=conflict,reject=reject,verified=verified)
+            for p in assigned['rejected_ids']:peers[p+'_id']=''
+            conflict=conflict or not assigned['safe_for_cross_provider_joins']
+            assigned={k:v for k,v in assigned.items() if k!='rejected_ids'}
             row={**item['values'],**peers,**assigned,
                  'identity_status':'conflict' if conflict else ('linked' if item['statuses']=={'linked'} else 'partly_verified') if assigned['reep_id'] else 'local',
                  'safe_for_cross_provider_joins':not conflict,
@@ -153,7 +168,16 @@ class Pool:
             if old is None:unique[row['entity_id']]=row;continue
             for p in PROVIDERS:
                 k=p+'_id'
-                if old.get(k) and row.get(k) and old[k]!=row[k]:raise ValueError('Conflicting native IDs for one canonical '+self.kind)
+                if old.get(k) and row.get(k) and old[k]!=row[k]:
+                    candidates=(old[k],row[k])
+                    links=[{self.bridges.canonical_id(x) for x in self.bridges.ids(self.kind,p,v)} for v in candidates]
+                    if all(values=={row['entity_id']} for values in links):
+                        row[k]=old[k]
+                        continue
+                    if p!='sofascore':old[k]=row[k]=''
+                    old['safe_for_cross_provider_joins']=row['safe_for_cross_provider_joins']=False
+                    old['identity_status']=row['identity_status']='conflict'
+                    for v in candidates:self.registry.note(self.kind,p,v,'multiple_native_ids_for_entity',entity_id=row['entity_id'])
                 if not old.get(k):old[k]=row.get(k,'')
             for k in ('competitions','seasons','teams'):
                 old[k]=json.dumps(sorted(set(json.loads(old[k]))|set(json.loads(row[k]))))
@@ -164,7 +188,9 @@ class Pool:
             elif row['identity_status']=='partly_verified' and old['identity_status']!='conflict':old['identity_status']='partly_verified'
             for k,v in row.items():
                 if (k not in old or old[k] is None or old[k]=='') and v:old[k]=v
-        return list(unique.values())
+        rows=list(unique.values())
+        if self.kind=='player':annotate_names(rows)
+        return rows
 
 
 def verified_integration(root,report):
@@ -186,7 +212,7 @@ def validate_bundle(folder):
     folder=Path(folder);manifest=json.loads((folder/'bundle.json').read_text(encoding='utf-8'))
     if manifest.get('format')!=FORMAT:raise ValueError('Unsupported concordance bundle')
     for relative,sha in manifest.get('auxiliary_checksums',{}).items():
-        if relative not in ('id_redirects.csv','quarantine.csv','alex_registry.json') or digest(folder/relative)!=sha:
+        if relative not in ('id_redirects.csv','quarantine.csv','alex_registry.json','registry_conflicts.csv') or digest(folder/relative)!=sha:
             raise ValueError('Concordance sidecar checksum mismatch')
     frames={}
     for relative in TABLES:
@@ -253,7 +279,8 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
         seed=output/'alex_registry.json'
         if not seed.exists():seed=root/'_system/identity/alex_ids.json'
         if not seed.exists():seed=dataset/'fixture_concordance/alex_registry.json'
-        registry=Registry(registry_path,seed=seed);bridges=index(root)
+        from .sync import load as load_registry
+        registry=load_registry(root,path=registry_path,seeds=[seed]);bridges=index(root)
         registry.value['redirects'].update(bridges.metadata.get('redirects',{}))
         fixtures=table(dataset/'fixtures.csv')
         if not fixtures:raise ValueError('The full 2010+ fixture export is required')
@@ -299,6 +326,11 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
                     'competition':row['competition'],'season':row['season']})
         full_teams=all_teams.finish()
         team_lookup={(p,r[p+'_id']):r for r in full_teams for p in PROVIDERS if r.get(p+'_id')}
+        for row in full_teams:
+            for p,values in json.loads(row['provider_aliases']).items():
+                provider=p.removesuffix('_id')
+                for native in values:
+                    if registry.lookup('team',provider,native)==row['entity_id']:team_lookup[provider,native]=row
         match_seeds.extend(explicit_seeds(raw['match']))
         all_matches=Pool('match',bridges,registry,match_seeds)
         for row in match_seeds:all_matches.add(row)
@@ -343,7 +375,8 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
             for side in ('from','to'):
                 peers={p+'_id':str(row.get(side+'_'+p+'_id') or '') for p in PROVIDERS}
                 # A researched lineage edge is not a provider identity bridge.
-                assigned=registry.assign('team',peers,str(row.get(side+'_reep_id') or ''),conflict=True)
+                assigned=registry.reconcile('team',peers,str(row.get(side+'_reep_id') or ''),conflict=True)
+                assigned.pop('rejected_ids',None)
                 row[side+'_safe_for_cross_provider_joins']=False
                 for field,value in assigned.items():row[side+'_'+field]=value
             entities.append(row)
@@ -373,18 +406,21 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
             redirects=registry.redirects();atomic_csv(pd.DataFrame(redirects,columns=['from_id','to_id']),stage/'id_redirects.csv')
             atomic_csv(pd.DataFrame(quarantine,columns=['table','reason','record']),stage/'quarantine.csv')
             atomic_json(stage/'alex_registry.json',registry.value,sort_keys=True)
-            manifest={'format':FORMAT,'built_at':datetime.now(timezone.utc).isoformat(),'integration_confirmed':confirmed,
+            from fixtures.sharedIds import ISSUE_COLUMNS
+            atomic_csv(pd.DataFrame(registry.issues,columns=ISSUE_COLUMNS).drop_duplicates(),stage/'registry_conflicts.csv')
+            from .sync import version as registry_version,installed_version
+            manifest={'registry_version':registry_version(registry.value),'main_registry_version':installed_version(root),'format':FORMAT,'built_at':datetime.now(timezone.utc).isoformat(),'integration_confirmed':confirmed,
                       'ready_for_R':confirmed,'id_requirements_met':True,'source_signature':before,'files':files,
                       'sources':raw['sources'],'scraped_definition':'Matches with saved player-stat rows or validated checkpoint performance values',
                       'unmatched_provider_ids_are_blank':True,'canonical_id_column':'entity_id',
                       'published_reep_ids_are_not_generated':True,'quarantined_relationships':len(quarantine),
                       'reep_release':bridges.metadata.get('release',''),
-                      'auxiliary_checksums':{name:digest(stage/name) for name in ('id_redirects.csv','quarantine.csv','alex_registry.json')}}
+                      'auxiliary_checksums':{name:digest(stage/name) for name in ('id_redirects.csv','quarantine.csv','alex_registry.json','registry_conflicts.csv')}}
             atomic_json(stage/'bundle.json',manifest,indent=2)
             validate_bundle(stage)
             # Registry first: interrupted exports must never forget minted IDs.
             registry.save()
-            for relative in (*TABLES,'id_redirects.csv','quarantine.csv','alex_registry.json','bundle.json'):
+            for relative in (*TABLES,'id_redirects.csv','quarantine.csv','alex_registry.json','registry_conflicts.csv','bundle.json'):
                 target=output/relative;target.parent.mkdir(parents=True,exist_ok=True)
                 atomic_replace(stage/relative,target)
         return manifest

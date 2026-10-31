@@ -112,6 +112,17 @@ class FixtureDatasetTests(unittest.TestCase):
         state=json.loads(path_for(self.root,'legacy-unidentified').read_text())
         self.assertEqual(state['cached_schedules'],3)
 
+    def test_fixture_export_reconciles_conflicting_local_registry_without_losing_schedule(self):
+        from concordance.registry import Registry
+        from concordance.sync import local_path
+        registry=Registry(local_path(self.root));registry.assign('match',{'sofascore_id':'100'},'rm-existing');registry.save()
+        manifest=self.build();row,=self.records()
+        self.assertEqual(manifest['rows'],1);self.assertEqual(row['entity_id'],'rm-existing')
+        self.assertEqual(row['reep_match_id'],'rm-existing')
+        self.assertEqual(row['safe_for_cross_provider_joins'],'False')
+        self.assertGreater(manifest['registry_conflicts'],0)
+        self.assertTrue((self.output.parent/'fixture_concordance/registry_conflicts.csv').exists())
+
     def test_four_ids_per_entity_and_scores_season_names(self):
         manifest = self.build()
         row, = self.records()

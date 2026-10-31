@@ -127,9 +127,10 @@ def _backfill_unambiguous_ids(rows):
 def _finalize_id_rows(rows, columns, sort_columns):
     result = []
     for row in rows.values():
-        values = {name: _chosen(items) for name, items in row.pop('_ids').items()}
-        result.append({**row, **values})
-    frame = pd.DataFrame(result, columns=columns)
+        candidates={name:sorted({_identifier(v) for v in items}-{''}) for name,items in row.pop('_ids').items()}
+        values={name:items[0] if len(items)==1 else '' for name,items in candidates.items()}
+        result.append({**row,**values,'provider_id_candidates':json.dumps(candidates,sort_keys=True)})
+    frame = pd.DataFrame(result, columns=[*columns,'provider_id_candidates'])
     if not frame.empty: frame = frame.sort_values(sort_columns, kind='stable').reset_index(drop=True)
     return frame
 
@@ -508,7 +509,6 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
         players = _finalize_id_rows(player_rows, PLAYER_ID_COLUMNS,
                                     ['competition', 'season', 'team_name', 'player_name'])
         players=canonical_frame(players)
-        _validate_player_identities(players)
         pending['player IDs'] = (players, output / 'player_ids.csv')
     if build_team_ids:
         from providers.teamProfiles import canonical_team_id,canonical_record
@@ -530,12 +530,20 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
         matches=canonical_frame(matches)
         pending['match IDs'] = (matches, output / 'match_ids.csv')
     output.mkdir(parents=True, exist_ok=True);
+    from fixtures.sharedIds import assign_ids,REFERENCE_KEYS
+    records={kind:pending[kind+' IDs'][0].fillna('').to_dict('records')
+             for kind in ('player','team','match') if kind+' IDs' in pending}
+    assign_ids(data_root,[],records.get('match',[]),records.get('team',[]),records.get('player',[]),folder=output/'concordance')
+    for kind,rows in records.items():
+        frame,path=pending[kind+' IDs']
+        columns=list(dict.fromkeys([*frame.columns,*REFERENCE_KEYS,'reep_id','identity_status']))
+        pending[kind+' IDs']=(pd.DataFrame(rows,columns=columns),path)
     written = {}
     for label, (frame, path) in pending.items():
         atomic_csv(frame, path);
         written[label] = path
         if label == 'team IDs':
-            missing = frame[['sofascore_id', 'whoscored_id']].isna()
+            missing = frame[['sofascore_id', 'whoscored_id']].fillna('').eq('')
             incomplete = int(missing.any(axis=1).sum())
             print(f'Team IDs: {len(frame)} FotMob teams; '
                   f'{len(frame) - incomplete} have all three IDs; '
@@ -557,6 +565,7 @@ def export_concordance(frames, data_root, output, *, source_teams=None):
     concordance = Path(output) / 'concordance'
     written = {}
     manifest = {'format':'soccer-concordance-v1','reep':bridges.metadata,'tables':{}}
+    tables={}
     for kind in ('player','team','match'):
         if kind not in frames:
             continue
@@ -580,7 +589,13 @@ def export_concordance(frames, data_root, output, *, source_teams=None):
                     continue
                 seen.add(key)
             records.append(resolved)
-        exported = pd.DataFrame(records, columns=[*columns,'reep_id','identity_status'])
+        tables[kind]=(columns,records)
+    from fixtures.sharedIds import assign_ids,REFERENCE_KEYS
+    detail=assign_ids(data_root,[],tables.get('match',([],[]))[1],tables.get('team',([],[]))[1],
+        tables.get('player',([],[]))[1],folder=concordance)
+    manifest.update(detail)
+    for kind,(columns,records) in tables.items():
+        exported = pd.DataFrame(records, columns=list(dict.fromkeys([*columns,'reep_id','identity_status',*REFERENCE_KEYS])))
         path = concordance / (kind + '_ids.csv')
         atomic_csv(exported, path)
         written[kind + ' concordance'] = path

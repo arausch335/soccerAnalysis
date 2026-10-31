@@ -171,6 +171,18 @@ class BundleTests(unittest.TestCase):
         self.assertTrue(invalidate_bundle(self.data,'new statistics arrived'))
         self.assertFalse(validate_bundle(self.data/'concordance')['ready_for_R'])
 
+    def test_published_historical_team_aliases_keep_both_fixture_foreign_keys(self):
+        from providers import reep
+        fixtures=pd.read_csv(self.data/'fixtures.csv',dtype=str)
+        fixtures.loc[1,'home_team_id']='3';fixtures.loc[1,'sofascore_home_team_id']='3'
+        fixtures.to_csv(self.data/'fixtures.csv',index=False)
+        rows=[['team','sofascore','1','rt-shared'],['team','sofascore','3','rt-shared'],['team','fotmob','10','rt-shared']]
+        reep.install(self.root,{'format':reep.FORMAT,'version':reep._digest(rows),'rows':rows})
+        with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
+        full=pd.read_csv(self.data/'concordance/full/fixtures.csv',dtype=str)
+        self.assertEqual(set(full.home_entity_id),{'rt-shared'})
+        self.assertTrue(validate_bundle(self.data/'concordance')['id_requirements_met'])
+
     def test_project_ids_survive_registry_restore_from_compiled_bundle(self):
         with patch('concordance.build.observations',return_value=self.raw):rebuild(self.root,self.data,allow_unconfirmed=True)
         folder=self.data/'concordance';first=pd.read_csv(folder/'scraped/players.csv',dtype=str).entity_id.tolist()

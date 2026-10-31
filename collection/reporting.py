@@ -367,6 +367,13 @@ class ReportingServer:
                     self.reply(401, {'error': 'Worker authentication required'}); return
                 if self.path.startswith('/v1/compiled/'):
                     compiled.dispatch(self, worker, store); return
+                if self.path=='/v1/identity-registry':
+                    try:
+                        from concordance.sync import snapshot
+                        value=snapshot(root)
+                        self.reply(200,{'snapshot':value if value and value['version']!=self.headers.get('X-Registry-Version','') else None})
+                    except (OSError,ValueError):self.reply(503,{'error':'Identity registry temporarily unavailable'})
+                    return
                 if self.path=='/v1/health':
                     with store.lock,store.connect() as db:
                         row=db.execute('SELECT instance,stream FROM workers WHERE worker=?',(worker,)).fetchone()
@@ -608,6 +615,17 @@ class Reporter:
                 ReviewStore(self.root).replace_decisions(value['identity_decisions'])
                 print('[Identity review] Shared decisions updated; incomplete matches will be revalidated in a saved-checkpoint pass.',flush=True)
         self.versions = value['versions']
+        self.pull_registry()
+
+    def pull_registry(self):
+        from concordance.sync import installed_version,install
+        local=load_local(self.root)
+        if local and local.get('mode')=='server':return
+        try:value=self.request('/v1/identity-registry',headers={'X-Registry-Version':installed_version(self.root)})
+        except HTTPError as exc:
+            if exc.code==404:return  # Backward-compatible with an older Main.
+            raise
+        if value.get('snapshot'):install(self.root,value['snapshot'])
 
     def start(self,*,snapshot=None):
         enqueue=snapshot or self.enqueue

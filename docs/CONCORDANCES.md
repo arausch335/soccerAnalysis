@@ -209,3 +209,55 @@ For cross-provider joins, filter `safe_for_cross_provider_joins`, exclude missin
 join IDs, and use an explicit many-to-one relationship. Use the directed team
 history layer with relationship/date rules rather than treating ancestry as
 identity equivalence.
+
+
+## Registry authority and disagreements
+
+Main's `data/_system/identity/alex_ids.json` is the authoritative shared registry.
+The authenticated reporting connection distributes a versioned, checksummed
+snapshot to each worker's `data/_system/identity/main_registry.json`. Stats workers
+refresh this alongside their usual reporting downloads; fixture runs fetch it
+before collecting schedules. Offline runs use the installed snapshot and never
+contact Main. Registry synchronization transfers identity metadata, not raw data.
+
+Builders start from the Main snapshot and merge existing local observations and
+received compiled registries. Receiving a snapshot does not discard a worker's
+unrelated identities. When the same entity already has different project aliases,
+the Main key wins and `id_redirects.csv` retains the older alias. Published Reep
+IDs are not redirected to a different published ID without a published redirect.
+Conflicting proposed published IDs remain in the audit while existing shared
+keys are retained. A provider observation cannot merge distinct Sofascore
+baselines merely because it reuses another provider ID.
+
+These rules apply to root fixtures, fixture match/home/away references, legacy
+match/team/player concordances, and full/scraped six-table builds. A genuine
+mapping disagreement withholds that provider join rather than failing all
+exports. The disputed native ID is kept in `registry_conflicts.csv`; source raw
+files and checkpoints are unchanged. The shared `entity_id` and at least one
+native provider anchor remain available. Rows with unresolved mappings have
+`safe_for_cross_provider_joins: false`. Independently verified remaining IDs are
+retained. Persisted withheld links cannot silently reappear in a later partial
+season rebuild. A current published bridge can verify a previously withheld link.
+
+Player names are display aliases, not identity keys. Identical ID evidence keeps
+one shared player key and records spellings in `name_aliases`. Competing provider
+IDs, including alternatives observed within one club/season stint, are retained
+as candidate evidence and withheld until verified rather than selected by vote.
+`player_ids.csv` can therefore be published with unresolved links excluded; one
+player conflict does not stop all other seasons from being published.
+
+Fixtures publish their review file at `fixture_concordance/registry_conflicts.csv`;
+legacy and six-table concordances use `concordance/registry_conflicts.csv`.
+Six-table manifests checksum that sidecar. If a received bundle disagrees with
+Main's canonical keys, it is marked not ready for R until rebuilt; MSI integration
+must still pass its audit. Shared-ID repair never certifies missing raw data.
+
+Update/restart Main first, then MSI. On Headless, update and resume the fixture
+command with its existing settings; completed checkpoints are reused. Fixture
+reporting now includes exceptions raised during export, so an unexpected failure
+has its reason in Main's worker logs. To align already-compiled Main exports
+without provider requests, run:
+
+```sh
+python -m tools.reconcile_match_ids
+```

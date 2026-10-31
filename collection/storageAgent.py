@@ -213,6 +213,8 @@ class StorageAgent:
                 # Direct worker fixture publications supersede an MSI copy.
                 excluded=FIXTURE_DATASET_PATHS if receipt_path(self.root).exists() else ()
                 mid=install_dataset(peer,manifest,self.output,self.directory/'downloads',exclude=excluded)
+                from fixtures.identityRefresh import reconcile_exports
+                reconcile_exports(self.root,self.output)
                 self.receipt={'id':mid,'received_at':now()};atomic_json(self.directory/'dataset-receipt.json',self.receipt)
                 self.log('[Storage] Updated datasets and concordance received from MSI.')
             self.status={'state':'up_to_date' if manifest else 'awaiting_dataset','role':role,'last_dataset':self.receipt.get('received_at')}

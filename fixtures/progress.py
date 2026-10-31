@@ -58,6 +58,11 @@ class Progress:
                          'token':options['tokens'][self.worker]}
             if not self.network:options={**options,'url':None}
             self.reporter=Reporter(self.root,self.ensemble,self.worker,options,self.heartbeat)
+            if self.network and self.reporter.url:
+                try:self.reporter.pull_registry()
+                except (OSError,ValueError):self.reporter.log('[Fixtures] Main registry unavailable; using the cached registry.','WARNING')
+            from concordance.sync import installed_version
+            self.value['main_registry_version']=installed_version(self.root)
             self.stack.callback(lambda:self.reporter.close(grace=1))
             self.stack.enter_context(capture_logs(self.reporter))
             self.reporter.start(snapshot=self.publish)
@@ -107,7 +112,10 @@ class Progress:
             if event!='provider_progress' or time.monotonic()-self.last_saved>=1:self.publish()
 
     def __exit__(self,kind,error,tb):
-        if kind:self('stopped' if issubclass(kind,KeyboardInterrupt) else 'failed')
+        if kind:
+            self('stopped' if issubclass(kind,KeyboardInterrupt) else 'failed')
+            if self.reporter and not issubclass(kind,KeyboardInterrupt):
+                self.reporter.log('[Fixtures] '+kind.__name__+': '+str(error),'ERROR')
         self.stop.set()
         if self.thread:self.thread.join(timeout=1)
         self.publish()

@@ -19,7 +19,7 @@ MAX_MANIFEST=32*1024**2
 FIXTURE_REQUIRED_PATHS = frozenset({'fixtures.csv', *(f'fixture_concordance/{name}' for name in (
     'match_ids.csv', 'team_ids.csv', 'team_aliases.csv', 'issues.csv', 'coverage.csv', 'manifest.json'))})
 FIXTURE_DATASET_PATHS = FIXTURE_REQUIRED_PATHS | {'fixture_concordance/attempts.csv','concordance/team_history.csv',
-    'fixture_concordance/alex_registry.json','fixture_concordance/id_redirects.csv'}
+    'fixture_concordance/alex_registry.json','fixture_concordance/id_redirects.csv','fixture_concordance/registry_conflicts.csv'}
 
 
 def digest(path):

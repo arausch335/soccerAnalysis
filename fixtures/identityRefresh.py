@@ -200,7 +200,7 @@ def _reconcile(root,dataset,*,dry_run):
             columns=list(dict.fromkeys([*columns,'canonical_fixtures','finished_fixtures','matched_fixtures','unmatched_fixtures']))
             if new!=records:pending[path]=(columns,new)
     identity_summary={}
-    if fixture_rows and all(r.get('sofascore_'+side+'_team_id') for r in fixture_rows for side in ('home','away')):
+    if fixture_rows is None or all(r.get('sofascore_'+side+'_team_id') for r in fixture_rows for side in ('home','away')):
         reference_tables={}
         for folder in ('fixture_concordance','concordance'):
             for kind in ('match','team','player'):
@@ -209,13 +209,16 @@ def _reconcile(root,dataset,*,dry_run):
                 elif path.exists():reference_tables[folder,kind]=read_table(path)
         references={kind:[r for (folder,k),(_,rows) in reference_tables.items() if k==kind for r in rows]
                     for kind in ('match','team','player')}
-        identity_summary=assign_ids(root,fixture_rows,
+        identity_summary=assign_ids(root,fixture_rows or [],
             references['match'],references['team'],references['player'],
-            folder=dataset/'fixture_concordance',save=not dry_run)
-        path=dataset/'fixtures.csv';columns=read_table(path)[0]
-        pending[path]=(list(dict.fromkeys([*columns,*FIXTURE_KEYS])),fixture_rows)
+            folder=dataset/('fixture_concordance' if fixture_rows is not None else 'concordance'),save=not dry_run)
+        if fixture_rows is not None:
+            path=dataset/'fixtures.csv';columns=read_table(path)[0]
+            pending[path]=(list(dict.fromkeys([*columns,*FIXTURE_KEYS])),fixture_rows)
+            report['tables']['fixtures']['after']=coverage(fixture_rows,'_match_id')
         for (folder,kind),(columns,records) in reference_tables.items():
             pending[dataset/folder/(kind+'_ids.csv')]=(list(dict.fromkeys([*columns,*REFERENCE_KEYS])),records)
+            if folder+'/'+kind in report['tables']:report['tables'][folder+'/'+kind]['after']=coverage(records)
         report['canonical_ids']=identity_summary
     manifests={}
     for folder in ('concordance','fixture_concordance'):
@@ -284,4 +287,6 @@ def _reconcile(root,dataset,*,dry_run):
         atomic_csv(pd.DataFrame(links,columns=['sofascore_match_id','date','home_team','away_team','home_score','away_score','sofascore_url','fotmob_url','whoscored_url']),destination/'match_urls.csv')
     if score_repairs:
         atomic_csv(pd.DataFrame(score_repairs),destination/'score_repairs.csv')
+    from concordance.sync import check_bundle
+    report['bundle_alignment']=check_bundle(root,dataset)
     return report

@@ -40,6 +40,18 @@ class ReportingTests(unittest.TestCase):
         self.options['url'] = 'http://127.0.0.1:'+str(server.server.server_port)
         return server
 
+    def test_worker_downloads_versioned_main_registry_without_overwriting_local_ids(self):
+        from concordance.registry import Registry
+        from concordance.sync import local_path,load,installed_version,snapshot
+        registry=Registry(local_path(self.main));expected=registry.assign('match',{'sofascore_id':'1','fotmob_id':'2'});registry.save()
+        local=Registry(local_path(self.root));old=local.assign('match',{'fotmob_id':'2'});local.save()
+        self.receiver();client=self.reporter();client.pull()
+        self.assertEqual(installed_version(self.root),snapshot(self.main)['version'])
+        merged=load(self.root)
+        self.assertEqual(merged.lookup('match','sofascore','1'),expected['entity_id'])
+        self.assertEqual(merged.canonical(old['entity_id']),expected['entity_id'])
+        self.assertIsNone(client.request('/v1/identity-registry',headers={'X-Registry-Version':installed_version(self.root)})['snapshot'])
+
     def test_delta_queue_survives_restart_and_sends_only_changed_records(self):
         first=self.reporter();first.enqueue(reset=True)
         second=self.reporter();self.assertEqual(first.stream,second.stream)

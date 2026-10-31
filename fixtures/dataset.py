@@ -758,7 +758,8 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
             manifest['delivery'] = deliver(root, output.parent, fixture_csv=output, attempt=not offline, report=report)
         notify('finished' if manifest['schedule_coverage_complete'] and manifest['count_checks_passed'] else 'needs_attention',
             baseline_fixtures=manifest['rows'],delivery=manifest.get('delivery',{'state':'disabled'}),
-            schedule_coverage_complete=manifest['schedule_coverage_complete'],count_checks_passed=manifest['count_checks_passed'])
+            schedule_coverage_complete=manifest['schedule_coverage_complete'],count_checks_passed=manifest['count_checks_passed'],
+            registry_version=manifest['registry_version'],registry_conflicts=manifest['registry_conflicts'])
     report(f"Wrote {manifest['rows']} fixtures to {output}. Coverage complete: {manifest['schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
     return manifest
 
