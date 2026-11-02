@@ -343,3 +343,21 @@ fixture process must finish or use the separate queue command after updating.
 
 Integration proof requires fresh inventories and scraping-runtime reports;
 a fixture heartbeat alone cannot make an old inventory or upload count current.
+# MSI recovery and local error evidence
+
+`python -m tools.review_imports --retry-builds` on MSI requeues only blocked
+season exports with saved `job.json` collection jobs. Historical metadata-only
+folders and removed seasons stay set aside. Restart the MSI worker after pulling
+code changes to load the Windows sharing-conflict retry used during packaging.
+Every retried export goes through the ordinary builder and validation.
+
+For a fresh local comparison, copy Main's expected-holdings export to MSI and run:
+
+```sh
+python -m tools.audit_integration --expected-inventory expected-holdings.json --include-errors --output msi-local-review.json
+```
+
+The report includes saved collection-attempt and provider-discovery errors without
+raw payloads. Attempt errors can predate later successful supplements; compare
+them with validated resource states before retrying or accepting unavailability.
+Pending or blocked season exports now prevent an audit from claiming readiness.

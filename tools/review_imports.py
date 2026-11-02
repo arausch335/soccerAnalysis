@@ -27,6 +27,21 @@ def retry_identity_matches(root,archive):
             'note':'Retried uploads undergo the full import validation again; no team checks are bypassed.'}
 
 
+def retry_builds(root,archive):
+    """Requeue blocked exports with real saved jobs; retain metadata-only folders."""
+    from collection.storageTransfer import safe_path
+    root=Path(root);retried=[];held=[]
+    for row in archive.diagnostics()['builds']:
+        if row['state']!='blocked':continue
+        season=row['season'];safe_path(season+'/config.json','raw')
+        job=root/season/'job.json'
+        if job.is_file() and not job.is_symlink():
+            archive.schedule_build(season);retried.append(season)
+        else:held.append(season)
+    return {'retried_builds':retried,'still_blocked':held,
+            'note':'Queued exports run the normal builder again. Raw data and identity decisions are unchanged.'}
+
+
 def main(argv=None):
     import config
     from collection.storageServer import Archive
@@ -37,9 +52,12 @@ def main(argv=None):
     action.add_argument('--show',metavar='UPLOAD_ID',help='Show preserved file locations for one upload')
     action.add_argument('--retry',metavar='UPLOAD_ID',help='Return a reviewed upload to the import queue')
     action.add_argument('--retry-matching-identities',action='store_true',help='Retry held team errors only when current Reep IDs verify both teams and the fixture date agrees')
+    action.add_argument('--retry-builds',action='store_true',help='Retry blocked season exports that have a saved collection job')
     args=parser.parse_args(argv)
     if read_worker_id(args.data_root)!='msi':parser.error('Run this command on MSI')
     archive=Archive(args.data_root)
+    if args.retry_builds:
+        print(json.dumps(retry_builds(args.data_root,archive),indent=2));return 0
     if args.retry_matching_identities:
         print(json.dumps(retry_identity_matches(args.data_root,archive),indent=2));return 0
     if args.retry:

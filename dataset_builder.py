@@ -24,7 +24,7 @@ from providers.identity import (IdentityError, REJECTED_PLAYER_ID_LINKS,
                                 REVIEWED_PROVIDER_PLAYER_ID_ALIASES, REVIEWED_TEAM_IDS,
                                 canonical_player_name, match_fixture, name_key)
 from providers.team_crosswalk import VERIFIED_TEAM_ID_OVERRIDES
-from storage.pandasStore import PandasStore
+from storage.pandasStore import PandasStore, atomic_replace
 
 SEASON_TABLES = {
     'events': ('events.csv', 'events.csv'),
@@ -733,12 +733,12 @@ def package_collection(source, output_root, *, replace=False, tables=None):
                              baseline=config.get('id_namespace',config.get('baseline_provider','sofascore')))
         if replace:
             backup = destination.with_name(destination.name + '.' + uuid4().hex + '.backup')
-            if destination.exists(): os.replace(destination, backup)
+            if destination.exists(): atomic_replace(destination, backup)
             try:
-                os.replace(staging, destination);
+                atomic_replace(staging, destination);
                 staging = None
             except Exception:
-                if backup.exists(): os.replace(backup, destination)
+                if backup.exists(): atomic_replace(backup, destination)
                 raise
             if backup.exists(): shutil.rmtree(backup)
     finally:

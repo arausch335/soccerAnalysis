@@ -1,5 +1,6 @@
 """Prove MSI holds the scraped resources reported by the other workers, offline."""
 import argparse
+import csv
 from datetime import datetime,timezone,timedelta
 import json
 from pathlib import Path
@@ -40,9 +41,14 @@ def inspect_queues(root,ensemble):
     else:
         with sqlite3.connect(readonly_uri(path),uri=True) as db:
             counts=dict(db.execute('SELECT state,count(*) FROM uploads GROUP BY state'))
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='builds'").fetchone():
+                builds=dict(db.execute('SELECT state,count(*) FROM builds GROUP BY state'))
+                counts.update(pending_builds=builds.get('pending',0),blocked_builds=builds.get('blocked',0))
         if counts.get('pending',0):problems.append('Uploads are still incomplete')
         if counts.get('received',0):problems.append('Received uploads have not been incorporated')
         if counts.get('quarantined',0):problems.append('Uploads set aside for review have not been incorporated')
+        if counts.get('pending_builds',0):problems.append('Season exports are still pending')
+        if counts.get('blocked_builds',0):problems.append('Season exports are set aside for review')
     staged=list(Path(ensemble).rglob('transfer-manifest.json')) if Path(ensemble).exists() else []
     if staged:problems.append('Portable imports remain staged')
     # An unfinished portable copy may only have the marker, not its final manifest.
@@ -51,7 +57,24 @@ def inspect_queues(root,ensemble):
     return counts,problems
 
 
-def audit(root,ensemble,expected_path,*,max_age_hours=24,scan=None):
+def saved_errors(root):
+    """Export attempt/discovery evidence, never saved provider payloads."""
+    attempts=[];discovery=[]
+    for path in sorted(Path(root).glob('*/*/collection.csv')):
+        with path.open(encoding='utf-8-sig',newline='') as stream:
+            for row in csv.DictReader(stream):
+                if row.get('error'):
+                    attempts.append({'season':path.parent.relative_to(root).as_posix(),
+                        **{k:row.get(k,'') for k in ('match_id','status','attempts','updated_at','error')}})
+    for path in sorted(Path(root).glob('*/*/provider_discovery.json')):
+        value=json.loads(path.read_text(encoding='utf-8'))
+        if value.get('errors'):discovery.append({'season':path.parent.relative_to(root).as_posix(),
+            'errors':value['errors'],'counts':value.get('counts',{})})
+    return {'collection_attempts':attempts,'provider_discovery':discovery,
+            'note':'Saved attempt errors can predate later successful supplements; compare with current resource validation.'}
+
+
+def audit(root,ensemble,expected_path,*,max_age_hours=24,scan=None,include_errors=False):
     from collection.workerIdentity import read_worker_id
     root=Path(root).resolve();counts,problems=inspect_queues(root,ensemble)
     if read_worker_id(root)!='msi':problems.append('Run the integration proof on MSI')
@@ -91,11 +114,13 @@ def audit(root,ensemble,expected_path,*,max_age_hours=24,scan=None):
         if key not in local or capabilities or resources:
             missing.append({'key':key,'capabilities':sorted(capabilities),'resources':sorted(resources)})
     if missing:problems.append('MSI lacks some independently validated reported resources')
-    return {'format':FORMAT,'checked_at':now().isoformat(),'data_root':str(root),'ensemble_root':str(Path(ensemble).resolve()),
+    result={'format':FORMAT,'checked_at':now().isoformat(),'data_root':str(root),'ensemble_root':str(Path(ensemble).resolve()),
             'state':'ready' if not problems else 'not_ready','expected_workers':sources,
             'expected_records':len(wanted),'validated_local_records':len(local),'archive':counts,
             'problems':problems,'missing':missing,
             'scope':'All reported scraped holdings; not proof that every scheduled match was scraped'}
+    if include_errors:result['saved_errors']=saved_errors(root)
+    return result
 
 
 def main(argv=None):
@@ -107,13 +132,14 @@ def main(argv=None):
     parser.add_argument('--expected-inventory',type=Path)
     parser.add_argument('--output',type=Path,default=Path('integration-audit.json'))
     parser.add_argument('--max-age-hours',type=int,default=24)
+    parser.add_argument('--include-errors',action='store_true',help='Include saved collection/discovery errors to distinguish missing IDs, parsing and request failures')
     args=parser.parse_args(argv)
     if args.export_expected:
         result=export_expected(args.data_root,args.export_expected,max_age_hours=args.max_age_hours)
         print('Exported expected holdings for',len(result['workers']),'workers');return 0
-    result=audit(args.data_root,args.ensemble_root,args.expected_inventory,max_age_hours=args.max_age_hours)
+    result=audit(args.data_root,args.ensemble_root,args.expected_inventory,max_age_hours=args.max_age_hours,include_errors=args.include_errors)
     atomic_json(args.output,result,indent=2)
-    print(json.dumps({k:v for k,v in result.items() if k!='missing'},indent=2))
+    print(json.dumps({k:v for k,v in result.items() if k not in ('missing','saved_errors')},indent=2))
     return 0 if result['state']=='ready' else 2
 
 
