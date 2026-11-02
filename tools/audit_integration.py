@@ -100,14 +100,18 @@ def audit(root,ensemble,expected_path,*,max_age_hours=24,scan=None,include_error
             entry=wanted.setdefault(key,{'capabilities':set(),'resources':set()})
             entry['capabilities'].update(row.get('capabilities',[]))
             entry['resources'].update(k for k,v in row.get('resources',{}).items() if v=='complete')
-    if not wanted:problems.append('No expected holdings supplied; completeness is unproven')
+    # Failed attempt rows record that a collector tried, not that it holds
+    # collected resources MSI must receive. Merge workers first so a success
+    # elsewhere still requires the resource even if another worker failed.
+    collected={k:r for k,r in wanted.items() if r['capabilities'] or r['resources']}
+    if not collected:problems.append('No validated expected holdings supplied; completeness is unproven')
     if scan is None:
         from collection.ensembleProgress import PortableProgress
         inventory=PortableProgress(None,root);inventory.scan(full=True,cache=False)
         local=inventory.local_records
     else:local=scan(root)
     missing=[]
-    for key,required in wanted.items():
+    for key,required in collected.items():
         row=local.get(key,{})
         capabilities=required['capabilities']-set(row.get('capabilities',[]))
         resources=required['resources']-{k for k,v in row.get('resources',{}).items() if v=='complete'}
@@ -117,6 +121,7 @@ def audit(root,ensemble,expected_path,*,max_age_hours=24,scan=None,include_error
     result={'format':FORMAT,'checked_at':now().isoformat(),'data_root':str(root),'ensemble_root':str(Path(ensemble).resolve()),
             'state':'ready' if not problems else 'not_ready','expected_workers':sources,
             'expected_records':len(wanted),'validated_local_records':len(local),'archive':counts,
+            'expected_resource_records':len(collected),'expected_attempt_only_records':len(wanted)-len(collected),
             'problems':problems,'missing':missing,
             'scope':'All reported scraped holdings; not proof that every scheduled match was scraped'}
     if include_errors:result['saved_errors']=saved_errors(root)

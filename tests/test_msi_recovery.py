@@ -9,11 +9,31 @@ from unittest.mock import Mock,patch
 import pandas as pd
 from collection.storageServer import Archive
 from dataset_builder import package_collection
-from tools.audit_integration import inspect_queues,saved_errors
+from tools.audit_integration import inspect_queues,saved_errors,audit,EXPECTED,now
 from tools.review_imports import retry_builds
 
 
 class MSIRecoveryTests(unittest.TestCase):
+    def test_failed_attempts_do_not_claim_missing_collected_data_but_success_elsewhere_does(self):
+        from collection.workerIdentity import ensure_identity
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/'data';root.mkdir();ensure_identity(root,'msi');Archive(root)
+            complete={'capabilities':['provider:sofascore'],'resources':{'sofascore_stats':'complete'}}
+            failed={'capabilities':[],'resources':{'sofascore_stats':'failed'}}
+            worker={'worker':'main','last_seen':now().isoformat(),'inventory_updated_at':now().isoformat(),
+                'runtime_updated_at':now().isoformat(),'records':{'good':complete,'failed':failed}}
+            expected=Path(tmp)/'expected.json'
+            def check(workers):
+                expected.write_text(json.dumps({'format':EXPECTED,'generated_at':now().isoformat(),'workers':workers}))
+                return audit(root,root/'ensemble',expected,scan=lambda r:{'good':complete})
+            result=check([worker]);self.assertEqual(result['state'],'ready')
+            self.assertEqual(result['missing'],[]);self.assertEqual(result['expected_attempt_only_records'],1)
+            peer={**worker,'worker':'headless','records':{'failed':complete}}
+            result=check([worker,peer]);self.assertEqual(result['state'],'not_ready')
+            self.assertEqual(result['missing'][0]['key'],'failed')
+            result=check([{**worker,'records':{'failed':failed}}])
+            self.assertEqual(result['state'],'not_ready');self.assertEqual(result['expected_resource_records'],0)
+
     def test_transient_windows_directory_lock_is_retried_and_permanent_lock_rolls_back(self):
         for permanent in (False,True):
             with self.subTest(permanent=permanent),tempfile.TemporaryDirectory() as tmp:
