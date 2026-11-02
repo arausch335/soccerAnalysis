@@ -2,7 +2,7 @@
 from datetime import date,timedelta
 from functools import lru_cache
 
-VERSION=3
+VERSION=4
 THRESHOLD=80
 DATE_TOLERANCE=30
 

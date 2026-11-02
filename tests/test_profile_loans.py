@@ -83,6 +83,8 @@ class LoanHistoryTests(unittest.TestCase):
     def test_numeric_transfer_codes_are_preserved_without_guessing_their_meaning(self):
         self.assertIsNone(loan_status({'type':1}));self.assertIsNone(loan_status({'transferType':2}))
         self.assertTrue(loan_status({'transferType':'Loan'}));self.assertFalse(loan_status({'transferType':'Permanent'}))
+        self.assertTrue(loan_status({'transferType':{'text':'on loan','localizationKey':'on_loan'}}))
+        self.assertFalse(loan_status({'transferType':{'text':'back from loan','localizationKey':'transfer_type_back_from_loan'}}))
 
     def test_normalizers_retain_loan_flags_origins_and_uninterpreted_transfer_types(self):
         sofa=sofa_profile(7,{'player':{'id':7}}, {'transferHistory':[
@@ -92,6 +94,10 @@ class LoanHistoryTests(unittest.TestCase):
         fot=fotmob_profile(77,{'id':77,'careerHistory':{'careerItems':{'senior':{'teamEntries':[
             {'team':'Borrower','teamId':2,'transferType':'Loan','startDate':'2021-01-01','endDate':'2022-01-01'}]}}}})
         self.assertTrue(fot['career'][0]['is_loan']);self.assertEqual(fot['career'][0]['transfer_type'],'Loan')
+        payload={'id':77,'careerHistory':{'careerItems':{'senior':{'teamEntries':[
+            {'team':'Borrower','teamId':2,'transferType':{'text':'on loan','localizationKey':'on_loan'},'startDate':'2021-01-01','endDate':'2022-01-01'}]}}}}
+        value=fotmob_profile(77,payload);checked_profile(value,'fotmob',77)
+        self.assertTrue(value['career'][0]['is_loan']);self.assertEqual(value['career'][0]['transfer_type'],payload['careerHistory']['careerItems']['senior']['teamEntries'][0]['transferType'])
         bad=deepcopy(fot);bad['career'][0]['is_loan']='probably'
         with self.assertRaises(ValueError):checked_profile(bad,'fotmob',77)
 

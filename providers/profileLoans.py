@@ -5,11 +5,13 @@ def loan_status(value):
     for key in ('isLoan','onLoan'):
         if type(value.get(key)) is bool:return value[key]
     for key in ('transferType','type'):
-        text=value.get(key)
-        if not isinstance(text,str):continue  # Numeric provider enums stay uninterpreted.
-        text=''.join(c for c in text.casefold() if c.isalnum())
-        if text in ('loan','onloan','loantransfer'):return True
-        if text in ('permanent','permanenttransfer','free','loanreturn','returnfromloan'):return False
+        raw=value.get(key)
+        values=[raw.get(k) for k in ('localizationKey','text','name')] if isinstance(raw,dict) else [raw]
+        for text in values:
+            if not isinstance(text,str):continue  # Numeric provider enums stay uninterpreted.
+            text=''.join(c for c in text.casefold() if c.isalnum())
+            if text in ('loan','onloan','loantransfer','transfertypeloan'):return True
+            if text in ('permanent','permanenttransfer','free','freetransfer','loanreturn','returnfromloan','backfromloan','transfertypebackfromloan'):return False
     return None
 
 

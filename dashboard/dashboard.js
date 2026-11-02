@@ -108,7 +108,8 @@ function careerList(v){
  const rows=careerGroups(v);
  return rows.length?`<ol class="profile-career">${rows.map(c=>{
   const period=!c.start&&!c.end?'Dates unavailable':c.precision==='season'&&c.firstSeason?`Seasons ${esc(c.firstSeason)}${c.lastSeason!==c.firstSeason?' — '+esc(c.lastSeason):''}`:`${c.start?reviewDate(c.start):'Start unknown'} — ${c.end?reviewDate(c.end):'Present'}`;
-  return `<li><span>${esc(c.club)}</span><small>${period}</small>${c.coverageGap?'<small>Some seasons are not reported.</small>':''}</li>`;
+  const transfer=typeof c.transfer_type==='object'&&c.transfer_type?c.transfer_type.text:typeof c.transfer_type==='string'?c.transfer_type:c.is_loan===true?'Loan':null;
+  return `<li><span>${esc(c.club)}${transfer?' · '+esc(transfer):''}</span><small>${period}</small>${c.coverageGap?'<small>Some seasons are not reported.</small>':''}</li>`;
  }).join('')}</ol>`:'<p class="review-muted">Career history unavailable</p>';
 }
 function identityComparison(p){

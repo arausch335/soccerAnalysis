@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 from .httpClient import ProviderError
 
 HOSTS={'sofascore':'www.sofascore.com','fotmob':'www.fotmob.com','whoscored':'www.whoscored.com'}
-PROFILE_SCHEMA=3
+PROFILE_SCHEMA=4
 
 
 def _object(value,label):
@@ -57,7 +57,11 @@ def checked_profile(value,provider,pid):
             if row.get(key) is not None and (not isinstance(row[key],str) or len(row[key])>150):raise ValueError('Invalid loan parent club')
         for key in ('from_club_id','loan_parent_club_id'):
             if row.get(key) is not None:club_id({'club_id':row[key]})
-        if row.get('transfer_type') is not None and (type(row['transfer_type']) not in (int,str) or len(str(row['transfer_type']))>100):raise ValueError('Invalid transfer type')
+        transfer_type=row.get('transfer_type')
+        if transfer_type is not None:
+            if isinstance(transfer_type,dict):
+                if len(json.dumps(transfer_type))>1000 or any(not isinstance(k,str) or type(v) not in (str,int,bool,type(None)) for k,v in transfer_type.items()):raise ValueError('Invalid transfer type')
+            elif type(transfer_type) not in (int,str) or len(str(transfer_type))>100:raise ValueError('Invalid transfer type')
         for key in ('start','end'):
             if row.get(key) is not None and day(row[key])!=row[key]:raise ValueError('Invalid career date')
         if row.get('start') and row.get('end') and row['start']>row['end']:raise ValueError('Reversed career dates')
@@ -223,7 +227,7 @@ class ProfileVerifier:
         with self.store.connect() as db:row=db.execute('SELECT payload,expires FROM profiles WHERE provider=? AND id=?',(provider,str(pid))).fetchone()
         if row and row[1]>stamp():
             cached=json.loads(row[0])
-            if cached.get('profile_schema')==PROFILE_SCHEMA or cached.get('error'):return cached
+            if cached.get('profile_schema')==PROFILE_SCHEMA:return cached
         client=self.clients.get(provider)
         if getattr(client,'requires_manual_attention',False) is True:return {'error':provider+' extension needs attention; lookup deferred to review'}
         fetch=getattr(client,'player_profile',None)
@@ -234,7 +238,7 @@ class ProfileVerifier:
             value={**checked_profile(fetch(int(pid)),provider,str(pid)),'fetched_at':stamp(),'profile_schema':PROFILE_SCHEMA}
             ttl=timedelta(days=7) if all(value.get(k) for k in ('birth_date','club','career')) else timedelta(hours=6)
         except (ProviderError,ValueError,KeyError,TypeError,AttributeError,IndexError,OSError) as exc:
-            value={'error':str(exc)[:300]};ttl=timedelta(hours=6)
+            value={'error':str(exc)[:300],'profile_schema':PROFILE_SCHEMA};ttl=timedelta(hours=6)
         with self.store.connect() as db:
             db.execute('INSERT OR REPLACE INTO profiles VALUES(?,?,?,?)',(provider,str(pid),json.dumps(value),(datetime.now(timezone.utc)+ttl).isoformat()))
         return value
@@ -270,6 +274,8 @@ class ProfileVerifier:
 def needs_profile_check(proposal):
     evidence=proposal.get('investigation')
     if not evidence:return True
+    from .profileHistory import VERSION
+    if evidence.get('comparison_version') is not None and evidence['comparison_version']!=VERSION:return True
     if all(evidence.get(side) for side in ('source','baseline')) and any(
             evidence[side].get('profile_schema')!=PROFILE_SCHEMA for side in ('source','baseline')):return True
     if not evidence.get('errors'):return False
