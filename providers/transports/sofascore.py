@@ -62,8 +62,8 @@ class SofaScoreTransport(SofaScoreClient):
         self.responses[(endpoint,urlencode(params or {},doseq=True))]=record
         return payload
     def _cached_response(self,*args,**kwargs):return self.extension._cached_response(*args,**kwargs)
-    def collect_details(self,event,lineups):
-        result,coverage=SofaScoreExtensionPayloads.collect_details(self,event,lineups)
+    def collect_details(self,event,lineups,*,resources=None):
+        result,coverage=SofaScoreExtensionPayloads.collect_details(self,event,lineups,resources=resources)
         methods={entry['transport'] for endpoint,entry in self.audit.items() if endpoint.startswith(f"event/{event['id']}")}
         coverage['transport']='mixed' if len(methods)>1 else self.active
         return result,coverage

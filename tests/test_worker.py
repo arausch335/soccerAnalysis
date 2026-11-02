@@ -21,6 +21,32 @@ class NoSync:
 
 
 class WorkerTests(unittest.TestCase):
+    def test_pending_update_waits_for_saved_match_and_collector_cleanup_before_restart(self):
+        trace=[];syncs=[]
+        class Sync(NoSync):
+            def __init__(self,*args):super().__init__(*args);syncs.append(self)
+            def boundary(self):
+                if self.status.get('state')=='update_pending':
+                    self_test.assertEqual(trace[-1],'collector_closed')
+                    self_test.assertTrue((self_test.root/'saved-match.json').exists())
+                    trace.append('update_applied');return ['collection/missingResources.py']
+                return []
+        self_test=self
+        def runner(args):
+            job=CollectionProgress(enabled=False).job('/private/path','combined','La Liga','2021-2022')
+            try:
+                job.begin();job.schedule([{'id':1},{'id':2}]);job.start_game(1)
+                syncs[0].status={'state':'update_pending'}
+                self.assertNotIn('update_applied',trace)
+                (self.root/'saved-match.json').write_text('{}');trace.append('saved')
+                job.finish_game()
+                self.fail('The second match started before installing the pending update')
+            finally:trace.append('collector_closed')
+        self.assertEqual(run(self.args,runner=runner,session=self.session,sync_factory=Sync),RESTART)
+        self.assertEqual(trace,['saved','collector_closed','update_applied'])
+        state=json.loads((self.root/'_system/workers/main.json').read_text())
+        self.assertFalse(state['jobs']);self.assertEqual(state['state'],'restart_required')
+
     def test_main_done_overrides_old_pause_without_scraping_and_publishes_completed_seasons(self):
         from types import SimpleNamespace
         from unittest.mock import MagicMock

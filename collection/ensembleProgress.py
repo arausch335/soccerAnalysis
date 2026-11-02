@@ -403,7 +403,7 @@ class PortableProgress:
         for provider,name in (('whoscored','whoscored_stats'),('fotmob','fotmob_enrichment')):
             state=match.metadata.get('provider_status',{}).get(provider)
             if state:resources[name]=state
-        if capabilities:
+        if capabilities or any(state!='not_attempted' for state in resources.values()):
             self.record('sofascore',competition,match.season.name,match.id,capabilities,
                         collected_here=collected_here,resources=resources,provider_match_ids=match.metadata.get('provider_match_ids',{}),evidence=evidence)
         self._integrated_events(match,collected_here,competition)

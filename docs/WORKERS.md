@@ -247,8 +247,11 @@ reporting:
   heartbeat_seconds: 30
 ```
 
-Workers fetch code while scraping and apply a fast-forward update only between
-saved season jobs, followed by a controlled restart. Local edits, staged files,
+Workers check Git every 120 seconds while scraping. After a pending update, they
+save the current match, queue its upload and progress report, close the collector,
+then apply a fast-forward update and restart with fresh Main instructions.
+Older versions receive this behavior at their next season-job boundary.
+Local edits, staged files,
 unrelated untracked files, local commits or an unfinished Git operation pause
 updates and preserve your work. Workers need Git fetch access, not Git commit
 identity or push credentials for reporting. Remove a worker’s write access if

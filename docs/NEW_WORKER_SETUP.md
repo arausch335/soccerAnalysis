@@ -160,11 +160,17 @@ by MSI. Main may omit already resolved seasons/matches; this is expected.
 
 Keep all computers plugged in, awake and Tailscale connected during collection.
 Do not run another Dario process or a separate manual season collector. Main
-uses prior inventories and reviews to skip finished work. A partial match may
-need supporting requests on Dario; MSI merges the result without replacing
-existing populated checkpoint values and retains provenance.
+uses prior inventories and reviews to skip finished work. Fast cleanup requests
+only Main's missing resources. Missing player enrichment may need a supporting
+lineup request; a team-statistics/incident supplement needs no player requests.
+MSI merges supplements without replacing populated values and retains provenance.
 
 ## 7. Resume and update safely
+
+While running, workers check Git every 120 seconds. They save the current match,
+queue its upload and progress report, then apply a pending update and restart
+automatically. Older versions receive this behavior at their next season-job
+boundary. No manual fetch is necessary when Git reports a healthy connection.
 
 - Stop normally with Ctrl+C. Run the same worker command to resume. Keep both
   `data/` and `ensemble_data/`, including identity and outbox databases.

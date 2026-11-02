@@ -10,6 +10,7 @@ probes/
 *.jsonl
 *.csv
 .collector.lock
+.concordances.lock
 
 # Python build and local environment files.
 __pycache__/

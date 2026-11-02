@@ -383,14 +383,21 @@ class SeasonRunner:
         events=[e for e in events if in_competition(e,competition)]
         if len({e['id'] for e in events})!=len(events):raise ValueError('Duplicate baseline fixture IDs')
         atomic_json(self.directory/'schedule.json',{'fetched_at':now(),'events':events})
-        from .workInstructions import remaining_targets
+        from .workInstructions import remaining_targets,remaining_resources
         remaining=remaining_targets(competition.name,season_label(canonical)) if not self.refresh else None
+        missing=remaining_resources(competition.name,season_label(canonical)) if not self.refresh else None
         selected=[event for event in events if remaining is None or str(event['id']) in remaining]
         if limit:selected=selected[:limit]
         resolved=[event['id'] for event in events if remaining is not None and str(event['id']) not in remaining]
         if remaining is not None:self.report(f'Main assigned pass: {len(selected)} games to check; {len(resolved)} resolved games bypassed without loading checkpoints.')
         self.report(f'{competition.name} {canonical}: {len(events)} finished matches; collecting {len(selected)}.')
-        fixtures,disabled=self._fixtures(competition,canonical,selected) if selected else ({},{})
+        needed_providers=None
+        if missing is not None:
+            requested={resource for event in selected for resource in missing.get(str(event['id']),[])}
+            needed_providers=set()
+            if 'fotmob_enrichment' in requested:needed_providers.add('fotmob')
+            if requested&{'whoscored_stats','whoscored_events'}:needed_providers.add('whoscored')
+        fixtures,disabled=self._fixtures(competition,canonical,selected,only=needed_providers) if selected else ({},{})
         import time
         discovery_retries={p:0 for p in disabled}
         retry_at={p:time.monotonic()+300 for p in disabled}
@@ -424,6 +431,35 @@ class SeasonRunner:
             self.report(f"{competition.name} {season_label(canonical)} | match {event['id']} | {event['homeTeam']['name']} vs {event['awayTeam']['name']}")
             timing.start_game(event['id'],clients=self.clients.values())
             mid=event['id'];store=PandasStore(self.directory/'match_checkpoints'/str(mid));entry=statuses[mid]
+            wanted=set(missing.get(str(mid),[])) if missing is not None else None
+            from .missingResources import RESOURCES,collect as collect_missing
+            if (wanted and not self.spatial and self.baseline_provider=='sofascore' and wanted<=RESOURCES):
+                from .ensembleProgress import record_match
+                self.report('Main requested only: '+', '.join(sorted(wanted))+'. Completed resources held elsewhere are reused by MSI.')
+                try:
+                    dataset,match,errors=collect_missing(self,event,season,competition,store,wanted,fixtures,disabled)
+                except DATA_ERRORS as exc:
+                    # Supporting lineups can fail before a patch exists. Preserve any saved checkpoint.
+                    entry.update(status='failed',error=str(exc),updated_at=now(),attempts=int(entry.get('attempts',0))+1)
+                    atomic_csv(pd.DataFrame(statuses.values()),status_path)
+                    timing.finish_game(clients=self.clients.values(),status='failed',mode=timing_mode())
+                    if getattr(exc,'status_code',None) in (401,403,429) or getattr(sofa,'requires_manual_attention',False) is True:break
+                    continue
+                from .reporting import redact
+                match.metadata['collection_evidence']={'attempts':int(entry.get('attempts',0))+1,
+                    'label':event['homeTeam']['name']+' vs '+event['awayTeam']['name'],
+                    'date':match.kickoff.date().isoformat(),'error':redact('; '.join(errors))[:2000],
+                    'qualifying':bool(competition.parent)}
+                store.to_csv(dataset)
+                after=network_count(self.clients.values())
+                record_match(match,collected_here=timing.before is None or after is None or after>timing.before)
+                entry.update(status='partial' if errors else 'complete',error='; '.join(errors),
+                             attempts=int(entry.get('attempts',0))+1,updated_at=now())
+                atomic_csv(pd.DataFrame(statuses.values()),status_path)
+                self.report(f'[{index}/{len(selected)}] {event["homeTeam"]["name"]} vs {event["awayTeam"]["name"]}: {entry["status"]} (missing-resource pass)')
+                timing.finish_game(clients=self.clients.values(),status=entry['status'],mode=timing_mode())
+                if self._sofascore_blocked:break
+                continue
             if competition.parent and not store.exists:
                 from .qualifiers import reuse_checkpoint
                 reuse_checkpoint(self.directory.parent.parent,competition,season_label(canonical),mid)
@@ -599,11 +635,12 @@ class SeasonRunner:
         timing.end(0 if len(result) and result.status.isin(('complete','elsewhere','reviewed')).all() else 2)
         return result
 
-    def _browser_match_details(self,sofa,event,match):
+    def _browser_match_details(self,sofa,event,match,*,resources=None):
         mid=event['id']
         try:
             payload=self._fetch('sofascore',f'lineups/{mid}',lambda:sofa.lineups(mid))
-            detailed,coverage=sofa.collect_details(event,payload)
+            detailed,coverage=(sofa.collect_details(event,payload) if resources is None else
+                               sofa.collect_details(event,payload,resources=resources))
             self._apply_browser_details(match,detailed)
             self._fetch('sofascore',f'lineups/{mid}',lambda:detailed,refresh=True)
             if hasattr(sofa,'match_payloads'):
@@ -611,7 +648,10 @@ class SeasonRunner:
                     key=f'{label}/{mid}'
                     self._fetch('sofascore',key,lambda payload=payload:payload,refresh=True)
                     match.metadata.setdefault('raw_response_files',{})['sofascore_'+label]=str(self.cache.path('sofascore',key).relative_to(self.directory))
-            match.metadata['browser_details']={**coverage,'complete':not coverage['errors']}
+            previous=match.metadata.get('browser_details',{})
+            match.metadata['browser_details']={**previous,**coverage,
+                'coverage':{**previous.get('coverage',{}),**coverage.get('coverage',{})},
+                'complete':resources is None and not coverage['errors']}
             from .completion import required_detail_errors
             errors=required_detail_errors(coverage,require_momentum=bool(self.spatial))
             if coverage.get('blocked'):self._sofascore_blocked=True

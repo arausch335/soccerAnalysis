@@ -32,10 +32,12 @@ by earlier collectors. Keep prior data, identities, provenance and human reviews
    Frozen Done seasons stay closed. Unknown schedules still need discovery;
    zero known matches does not establish completion.
 4. Resume Dario's saved checkpoints. Completed local providers are reused.
-   A partially completed match held elsewhere may need supporting data collected
-   locally because inventory evidence is not the original checkpoint. This can
-   repeat a supporting request; it must not replace the earlier authoritative
-   work. Do not copy another computer's identity or mark remote raw files local.
+   For Fast collection, Main's per-match missing-resource list controls the
+   requests. A match needing only team statistics and incidents receives an
+   additive checkpoint with those two resources: no player, FotMob or WhoScored
+   requests. MSI merges the supplement with its prior data. When missing player
+   enrichment needs lineup identities, one supporting lineup request may still
+   be necessary. Remote completed resources remain credited to their holders.
 5. Never use refresh, delete old checkpoints, reset identities, clear ownership
    claims, reopen Done seasons, or withdraw unavailable decisions just to obtain
    a clean run. `--retry` is for unfinished assignments and should only be used
@@ -61,6 +63,12 @@ Keep Dario plugged in, awake, online and Tailscale connected. Leave the paired
 Chrome window available for fallback. Use Ctrl+C for a normal stop. To stop all
 project collectors on Dario, run `python main.py --terminate --worker-id dario`.
 Preserve `data/` and `ensemble_data/` across restarts.
+
+Git is checked every 120 seconds. Pending updates apply after the current match
+is saved and queued for delivery, then the worker restarts and obtains fresh
+instructions. Older workers that predate this behavior still apply their first
+update between season jobs. Git conflicts or local edits pause automatic updates
+without resetting files.
 
 ## Handoff note for the person or assistant operating Dario
 

@@ -159,8 +159,8 @@ class ExtensionSofaScoreClient(SofaScoreExtensionPayloads):
         self.audit[endpoint] = {'transport': 'extension', 'method': method}
         return payload
 
-    def collect_details(self, event, lineups):
-        result, coverage = super().collect_details(event, lineups)
+    def collect_details(self, event, lineups, *, resources=None):
+        result, coverage = super().collect_details(event, lineups, resources=resources)
         coverage['transport'] = 'extension'
         return result, coverage
 

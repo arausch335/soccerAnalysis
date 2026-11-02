@@ -98,6 +98,7 @@ def current_commands(root,worker,revision):
 
 
 _TARGETS=ContextVar('main_remaining_targets',default=None)
+_RESOURCES=ContextVar('main_remaining_resources',default=None)
 
 @contextmanager
 def remaining_scope(job,command):
@@ -106,10 +107,19 @@ def remaining_scope(job,command):
     if command.get('schedule_known') and command.get('configuration'):
         value=(job.competition,job.as_dict()['season'],frozenset(command.get('targets',[]) if command.get('audit_requested') else command.get('remaining',{})))
     token=_TARGETS.set(value)
+    resources=_RESOURCES.set((job.competition,job.as_dict()['season'],command.get('remaining',{}))
+        if value is not None and not command.get('audit_requested') else None)
     try:yield
-    finally:_TARGETS.reset(token)
+    finally:
+        _RESOURCES.reset(resources)
+        _TARGETS.reset(token)
 
 
 def remaining_targets(competition,season):
     value=_TARGETS.get()
+    return value[2] if value and value[:2]==(competition,season) else None
+
+
+def remaining_resources(competition,season):
+    value=_RESOURCES.get()
     return value[2] if value and value[:2]==(competition,season) else None

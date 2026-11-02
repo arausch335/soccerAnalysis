@@ -16,7 +16,7 @@ from .inventoryMonitor import InventoryMonitor
 import config
 from config.workerPlan import load_plan
 from .ensemble import ensemble_session
-from .codeUpdates import CodeUpdates
+from .codeUpdates import CodeUpdates,SavedMatchUpdate
 from .progress import observe_progress
 from .workerIdentity import read_worker_id, ensure_identity
 from .ensembleProgress import shared_progress, read_progress
@@ -251,13 +251,21 @@ def run(argv=None,*,runner=None,session=ensemble_session,sync_factory=CodeUpdate
                         if reporting:
                             if progress is not None and value['event']=='match_started':progress.records=shared_progress(progress.path,local_worker=worker,trusted=control is not None)
                             if value['event'] in ('schedule','match_saved','job_finished','provider_started'):publish(inventory=value['event'] in ('match_saved','job_finished'))
-                            return
+                        if value['event']=='match_saved' and sync.status.get('state')=='update_pending':
+                            raise SavedMatchUpdate()
                     # Capture the revision before running: approvals received mid-job also get a later backfill.
                     attempted_identity_revision=identity_revision
                     from .workInstructions import remaining_scope
                     fresh=current_commands(root,worker,plan.revision).get(job.id,{}) if control else {}
-                    with remaining_scope(job,fresh),observe_progress(observe):
-                        code=runner(job.args(root)+(['--no-build-dataset','--defer-exports'] if storage else []))
+                    try:
+                        with remaining_scope(job,fresh),observe_progress(observe):
+                            code=runner(job.args(root)+(['--no-build-dataset','--defer-exports'] if storage else []))
+                    except SavedMatchUpdate:
+                        # The checkpoint, storage capture and report are durable. Let
+                        # the collector release its locks before updating any code.
+                        state.save(state='between_jobs',job_ended_at=now(),current=None,git=sync.status)
+                        publish()
+                        continue
                     if storage:storage.finished(job,code)
                     if code and extension_bridge is not None and not extension_bridge.ready:
                         retry_extension_job=job.id

@@ -147,18 +147,22 @@ class SofaScoreExtensionPayloads(SofaScoreClient):
         return result
 
 
-    def collect_details(self,event,lineups):
+    def collect_details(self,event,lineups,*,resources=None):
         """Capture every played player's stats plus match-level detail payloads."""
         self.register_event(event);mid=int(event['id']);result=deepcopy(lineups)
         coverage={};errors=[];skipped={};reasons={};blocked=False
+        selected={'sofascore_stats','match_statistics','incidents','momentum'} if resources is None else set(resources)
         for side in ('home','away'):
+            if 'sofascore_stats' not in selected:continue
             for player in result[side]['players']:
                 key=f"player/{player['player']['id']}/statistics"
                 if player.get('substitute',False) and not (player.get('statistics',{}).get('minutesPlayed') or 0)>0:
                     skipped[key]='not_played'
                 else:coverage[key]='not_attempted'
-        coverage.update({key:'not_attempted' for key in ('statistics','incidents','momentum')})
+        labels={'statistics':'match_statistics','incidents':'incidents','momentum':'momentum'}
+        coverage.update({key:'not_attempted' for key,resource in labels.items() if resource in selected})
         for side in ('home','away'):
+            if 'sofascore_stats' not in selected:continue
             for player in result[side]['players']:
                 if blocked:break
                 stats=player.get('statistics',{})
@@ -182,6 +186,7 @@ class SofaScoreExtensionPayloads(SofaScoreClient):
                              getattr(self,'requires_manual_attention',False) is True)
         for key,request in (('statistics',lambda:self.statistics(mid)),('incidents',lambda:self.incidents(mid)),
                             ('momentum',lambda:self.graph(mid))):
+            if labels[key] not in selected:continue
             if blocked:break
             try:request();coverage[key]='complete'
             except (ProviderRequestError,ValueError) as exc:

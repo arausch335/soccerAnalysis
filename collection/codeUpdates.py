@@ -1,4 +1,4 @@
-"""Read-only Git fetches during collection; fast-forward code only between jobs."""
+"""Fetch during collection; fast-forward only after a durable match or job."""
 from pathlib import Path
 import os
 import subprocess
@@ -11,12 +11,16 @@ class UpdatePaused(RuntimeError):
     pass
 
 
+class SavedMatchUpdate(Exception):
+    """Unwind collector locks after a durable match, then apply a pending update."""
+
+
 class CodeUpdates:
     def __init__(self, repository, worker, options):
         self.repository = Path(repository).resolve()
         self.options = options
         self.status = {'state': 'disabled' if not options['enabled'] else 'waiting',
-                       'message': 'Code and assignment updates apply between saved jobs.'}
+                       'message': 'Code and assignment updates apply after a saved match or job.'}
         self.stop = threading.Event(); self.mutex = threading.RLock(); self.thread = None
         self.lock = FileLock(str(self.repository / '.git' / 'scraper-sync.lock'), timeout=0)
 
@@ -42,7 +46,7 @@ class CodeUpdates:
                              '+refs/heads/' + self.options['branch'] + ':refs/remotes/' + self.remote_ref)
                     count = int(self.git('rev-list', '--count', 'HEAD..' + self.remote_ref))
                 self.status = {'state': 'update_pending' if count else 'current', 'pending_commits': count,
-                               'message': 'Code update waiting for a saved job boundary.' if count else 'Code and shared plan are up to date.'}
+                               'message': 'Code update waiting for the current match to save.' if count else 'Code and shared plan are up to date.'}
             except (UpdatePaused, OSError, subprocess.SubprocessError, TimeoutError) as exc:
                 self.status = {'state': 'attention', 'message': str(exc) if isinstance(exc, UpdatePaused) else 'Git check unavailable; collection can continue.'}
 
