@@ -766,8 +766,8 @@ def _build_settings():
     return tables, values
 
 
-def _build_reference_csvs(root, output, settings):
-    if settings['REFRESH_PUBLISHED_TEAM_IDS'] and settings['BUILD_TEAM_IDS']:
+def _build_reference_csvs(root, output, settings, *, offline=False):
+    if settings['REFRESH_PUBLISHED_TEAM_IDS'] and settings['BUILD_TEAM_IDS'] and not offline:
         from providers.reep import refresh
         value = refresh(root, output, config.PROJECT_ROOT / 'ensemble_data')
         print(f"Reep {value['release']}: retained {len(value['rows'])} typed bridges.", flush=True)
@@ -782,7 +782,7 @@ def _build_reference_csvs(root, output, settings):
     return written
 
 
-def build_dataset(data_root=None, dataset_root=None, names=None, *, references_only=False):
+def build_dataset(data_root=None, dataset_root=None, names=None, *, references_only=False, offline=False):
     """Build types enabled in config/settings.yaml from saved local collection data."""
     from collection.cli import main as collect
     tables, settings = _build_settings()
@@ -826,14 +826,37 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
                 failures.append(name)
     if not failures:
         try:
-            _build_reference_csvs(root, output, settings)
+            _build_reference_csvs(root, output, settings, offline=offline)
         except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
             print(f'Failed combined ID tables: {exc}', flush=True)
             failures.append('ID tables')
     return 2 if failures else 0
 
 
-def main(argv=None):
+def package_dataset(data_root, dataset_root, names=None, *, references_only=False):
+    """Package this computer's saved seasons and the existing R Parquet inputs."""
+    from concordance.parquet import refresh, folder, validate
+    root = Path(data_root).expanduser().resolve()
+    output = Path(dataset_root).expanduser().resolve()
+    if root == output or root in output.parents or output in root.parents:
+        raise ValueError('Data and dataset roots must be separate directories')
+    # Local packaging is independent of the worker plan/current season defaults.
+    selected = (list(names) if names is not None else
+                [collection_name(path) for path in discover_collections(root, 'job.json')])
+    if selected or references_only:
+        code = build_dataset(root, output, selected, references_only=references_only, offline=True)
+        if code: return code
+    elif not (output / 'fixtures.csv').is_file() and not (folder(output) / 'manifest.json').is_file():
+        raise ValueError(f'No saved seasons or compiled fixtures found under {root} and {output}')
+    if refresh(root, output, report=print) is None:
+        raise ValueError('No entity-keyed compiled fixture history found; collect or receive fixtures first')
+    validate(folder(output))
+    print(f'Packaged local dataset: {output}', flush=True)
+    print(f'R Parquet concordances: {folder(output)}', flush=True)
+    return 0
+
+
+def main(argv=None, *, package=False):
     # Press Run in PyCharm: no arguments are needed. Optional CLI overrides
     # remain available for existing automated callers.
     import argparse
@@ -844,11 +867,13 @@ def main(argv=None):
     parser.add_argument('--references-only', action='store_true')
     args = parser.parse_args(argv)
     try:
-        return build_dataset(args.data_root, args.dataset_root,
-                             args.name, references_only=args.references_only)
+        build = package_dataset if package else build_dataset
+        return build(args.data_root, args.dataset_root,
+                     args.name, references_only=args.references_only)
     except (OSError, ValueError, KeyError) as exc:
         parser.exit(2, f'Dataset build failed: {exc}\n')
 
 
 if __name__ == '__main__':
     raise SystemExit(main())
+

@@ -5,6 +5,30 @@ This builds a Sofascore-led dataset with FotMob, WhoScored and Reep match/team
 IDs, scores, season/competition context and matching evidence. See
 [fixture dataset instructions](docs/FIXTURES.md) for scope, resume and refresh.
 
+Package the data already saved on this computer for R:
+
+```sh
+python main.py --package
+```
+
+This rebuilds enabled season tables and ID references from all local saved
+seasons, then refreshes the existing [R Parquet layout](docs/R_PARQUET_LAYOUT.md)
+under `dataset/concordances`. It runs without scraping, starting a worker,
+opening the extension, transferring data or downloading new identity mappings.
+Paths and table choices come from `config/settings.yaml`; `--data-root`,
+`--dataset-root`, and repeatable `--name` override them. For example:
+
+```sh
+python main.py --package --dataset-root /path/to/R-project/data
+```
+
+The output uses the same season-export and Parquet-concordance builders as the
+normal dataset, so it can be copied into R without another format conversion.
+Saved entity-keyed compiled fixtures are required for the Parquet export.
+Computers holding only compiled fixtures/concordances can re-export those
+without local raw seasons. Packaging does not certify MSI integration; that
+status remains in the concordance manifest.
+
 Before importing into R, [verify MSI integration and rebuild the full/scraped
 concordances](docs/CONCORDANCES.md). The shared ID uses Reep when available and
 stable `am`/`at`/`ap` project IDs otherwise.
@@ -94,3 +118,4 @@ checkpoints, exported tables or analysis Parquet files.
 Reviewed team-name variants belong in `providers/concordance/teams.json`; matching
 still checks fixture time and home/away sides. The concordance includes
 WhoScored's `Norwich` and Sofascore's `Norwich City`.
+
