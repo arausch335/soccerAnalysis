@@ -29,10 +29,13 @@ class IdentityReviewAgent:
             self.save('update_extension','Reload Soccer Collector in chrome://extensions, then reconnect it to Main. The connected extension does not support player profiles.')
             return False
         from providers.playerProfiles import investigate_queue,retry_legacy_extension_failures
+        from providers.identityReview import ReviewStore
         if not self.extension_checked:
             retry_legacy_extension_failures(self.root);self.extension_checked=True
         self.save('checking','Checking queued player profiles on Main.')
-        changed=investigate_queue(self.root,self.report)
+        # Reuse saved evidence when rules or known club identities change.
+        reassessed=ReviewStore(self.root).auto_confirm()
+        changed=investigate_queue(self.root,self.report) or bool(reassessed)
         if changed:self.on_change()
         else:self.save('idle','Main is connected. No unchecked player profiles are waiting.')
         return changed

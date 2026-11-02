@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock,patch
 
-from providers.playerProfiles import (compare_profiles,sofa_profile,fotmob_profile,whoscored_profile,
+from providers.playerProfiles import (compare_profiles,assess_profiles,sofa_profile,fotmob_profile,whoscored_profile,
                                      checked_profile,ProfileVerifier)
 from providers.identityReview import ReviewStore,identity_scope,player_link,revision
 from providers.identity import IdentityResolver,IdentityError
@@ -53,12 +53,17 @@ class PlayerProfileTests(unittest.TestCase):
                 {'club':'Primeiro de Agosto','start':'2023-01-01','end':None}]
             self.assertEqual(compare_profiles(p)['career'],'conflict')
             p=investigated();p['investigation']['source']['career'].insert(1,{'club':'Unrelated Club','start':'2021-01-01','end':'2022-01-01'})
-            self.assertEqual(compare_profiles(p)['career'],'conflict')
+            score=assess_profiles(p)['career_similarity']
+            self.assertGreater(score['similarity_percent'],80)
+            self.assertLess(score['similarity_percent'],100)
 
-    def test_single_club_and_partial_history_do_not_claim_full_career_agreement(self):
+    def test_partial_history_matches_only_the_shared_coverage_window(self):
         with TemporaryDirectory() as tmp,identity_scope(tmp):
             p=investigated();p['investigation']['source']['career']=p['investigation']['source']['career'][1:]
-            self.assertEqual(compare_profiles(p)['career'],'missing')
+            evidence=assess_profiles(p)
+            self.assertEqual(evidence['checks']['career'],'match')
+            self.assertEqual(evidence['career_similarity']['similarity_percent'],100)
+            self.assertEqual(evidence['career_similarity']['coverage_start'],'2023-01-01')
 
     def test_verified_mapping_is_automatic_shared_and_never_overwrites_manual_rejection(self):
         with TemporaryDirectory() as tmp,identity_scope(tmp):
@@ -97,7 +102,8 @@ class PlayerProfileTests(unittest.TestCase):
     def test_whoscored_rendered_history_parses_header_and_excludes_national_team(self):
         html='''<div class="header"><h1 class="header-name">A Player</h1><img class="player-picture" src="https://cdn.test/img/players/9.jpg"><div><span>Age:</span>24 years old (<i>03-07-2002</i>)</div><a class="team-link" href="/teams/2/show/aek-athens">AEK Athens</a></div><table id="top-player-stats-summary-grid"><tbody><tr><td>2023/2024</td><td><a href="/teams/2/show/aek-athens">AEK Athens</a></td></tr><tr><td>2023</td><td><a href="/teams/3/show/angola">Angola</a></td><td><a href="/regions/1/tournaments/1/international-cup">Cup</a></td></tr></tbody></table>'''
         p=whoscored_profile(9,html);self.assertEqual(p['birth_date'],'2002-07-03');self.assertEqual(p['club'],'AEK Athens')
-        self.assertEqual(p['career'],[{'club':'AEK Athens','start':'2023-07-01','end':'2024-06-30','precision':'season'}])
+        self.assertEqual(p['club_id'],'2')
+        self.assertEqual(p['career'],[{'club':'AEK Athens','club_id':'2','start':'2023-07-01','end':'2024-06-30','precision':'season'}])
         with self.assertRaises(ProviderError):whoscored_profile(10,html)
 
     def test_fotmob_missing_participant_ids_preserve_career_under_verified_profile(self):

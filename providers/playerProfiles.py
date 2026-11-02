@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from .httpClient import ProviderError
 
 HOSTS={'sofascore':'www.sofascore.com','fotmob':'www.fotmob.com','whoscored':'www.whoscored.com'}
+PROFILE_SCHEMA=2
 
 
 def _object(value,label):
@@ -31,6 +32,11 @@ def checked_profile(value,provider,pid):
     if len(json.dumps(value))>30000:raise ValueError('Profile evidence too large')
     if value.get('club') is not None and (not isinstance(value['club'],str) or len(value['club'])>150):
         raise ValueError('Invalid current club')
+    def club_id(row):
+        native=row.get('club_id')
+        if native is not None and (isinstance(native,bool) or not re.fullmatch(r'[1-9][0-9]{0,19}',str(native))):
+            raise ValueError('Invalid club ID')
+    club_id(value)
     sources=value.get('sources',[])
     if not sources or len(sources)>3:raise ValueError('Profile source URLs are required')
     for source in sources:
@@ -45,6 +51,7 @@ def checked_profile(value,provider,pid):
     for row in career:
         if not isinstance(row,dict) or not isinstance(row.get('club'),str) or len(row['club'])>150:
             raise ValueError('Invalid career club')
+        club_id(row)
         for key in ('start','end'):
             if row.get(key) is not None and day(row[key])!=row[key]:raise ValueError('Invalid career date')
         if row.get('start') and row.get('end') and row['start']>row['end']:raise ValueError('Reversed career dates')
@@ -61,13 +68,15 @@ def sofa_profile(pid,payload,history):
     for t in transfers:
         t=_object(t,'Sofascore transfer')
         if str(_object(t.get('player'),'Sofascore transfer player').get('id'))!=str(pid):raise ProviderError('Sofascore transfer belongs to another player')
-        start=day(t.get('transferDateTimestamp'));club=_object(t.get('transferTo'),'Sofascore transfer destination').get('name') or t.get('toTeamName')
-        if start and club:changes.append((start,club))
-    changes=sorted(set(changes))
-    career=[{'club':club,'start':start,'end':changes[i+1][0] if i+1<len(changes) else None}
-            for i,(start,club) in enumerate(changes)]
+        start=day(t.get('transferDateTimestamp'));team=_object(t.get('transferTo'),'Sofascore transfer destination')
+        club=team.get('name') or t.get('toTeamName')
+        if start and club:changes.append((start,club,str(team['id']) if team.get('id') else None))
+    changes=sorted(set(changes),key=lambda row:(row[0],row[1],row[2] or ''))
+    career=[{'club':club,'club_id':native,'start':start,'end':changes[i+1][0] if i+1<len(changes) else None}
+            for i,(start,club,native) in enumerate(changes)]
     return {'provider':'sofascore','id':str(pid),'name':p.get('name',''),'birth_date':day(p.get('dateOfBirthTimestamp')),
-            'club':_object(p.get('team'),'Sofascore current team').get('name'),'career':career,
+            'club':_object(p.get('team'),'Sofascore current team').get('name'),
+            'club_id':str(p['team']['id']) if _object(p.get('team'),'Sofascore current team').get('id') else None,'career':career,
             'sources':[f'https://www.sofascore.com/api/v1/player/{pid}',f'https://www.sofascore.com/api/v1/player/{pid}/transfer-history']}
 
 
@@ -86,11 +95,13 @@ def fotmob_profile(pid,p):
         if participant not in (None,'') and str(participant)!=str(pid):
             raise ProviderError('FotMob career row identifies another player')
         if row.get('team') and not row.get('hasUncertainData'):
-            career.append({'club':row['team'],'start':day(row.get('startDate')),'end':day(row.get('endDate'))})
+            career.append({'club':row['team'],'club_id':str(row['teamId']) if row.get('teamId') else None,
+                           'start':day(row.get('startDate')),'end':day(row.get('endDate'))})
     birthday=day(p.get('birthDate'))
     if birthday=='0001-01-01':birthday=None  # Provider placeholder for an unknown birthday.
     return {'provider':'fotmob','id':str(pid),'name':p.get('name',''),'birth_date':birthday,
-            'club':_object(p.get('primaryTeam'),'FotMob current team').get('teamName'),'career':career,
+            'club':_object(p.get('primaryTeam'),'FotMob current team').get('teamName'),
+            'club_id':str(p['primaryTeam']['teamId']) if _object(p.get('primaryTeam'),'FotMob current team').get('teamId') else None,'career':career,
             'sources':[f'https://www.fotmob.com/players/{pid}']}
 
 
@@ -123,7 +134,9 @@ def whoscored_profile(pid,text):
     if image is None or heading is None:raise ProviderError('WhoScored profile identity unavailable')
     header=heading.parent;body=header.text()
     birthday=re.search(r'Age:.*?\(\s*(\d{2})-(\d{2})-(\d{4})\s*\)',body)
-    club=next((n.text().strip() for n in header.nodes('a') if 'team-link' in n.attrs.get('class','') and n.text().strip()),None)
+    club_link=next((n for n in header.nodes('a') if 'team-link' in n.attrs.get('class','') and n.text().strip()),None)
+    club=club_link.text().strip() if club_link else None
+    current_id=re.match(r'/teams/(\d+)/',club_link.attrs.get('href',''),re.I) if club_link else None
     career=[]
     table=next((n for n in dom.root.nodes('table') if n.attrs.get('id')=='top-player-stats-summary-grid'),None)
     if table:
@@ -135,13 +148,14 @@ def whoscored_profile(pid,text):
             if team is None or season is None:continue
             year=int(season[1]);second=season[2]
             endyear=int(second) if second and len(second)==4 else year+1 if second else year
-            career.append({'club':team.text().strip(),'start':f'{year}-07-01' if second else f'{year}-01-01',
+            career.append({'club':team.text().strip(),'club_id':re.match(r'/teams/(\d+)/',team.attrs['href'],re.I)[1],
+                           'start':f'{year}-07-01' if second else f'{year}-01-01',
                            'end':f'{endyear}-06-30' if second else f'{year}-12-31','precision':'season'})
     # History repeats a club/season for every tournament it covered.
     career=list({(row['club'],row['start'],row['end']):row for row in career}.values())
     return {'provider':'whoscored','id':str(pid),'name':heading.text().strip(),
             'birth_date':day(f'{birthday[3]}-{birthday[2]}-{birthday[1]}') if birthday else None,
-            'club':club,'career':career,'sources':[f'https://www.whoscored.com/players/{pid}/history']}
+            'club':club,'club_id':current_id[1] if current_id else None,'career':career,'sources':[f'https://www.whoscored.com/players/{pid}/history']}
 
 
 def birthday_rejection_reason(proposal):
@@ -163,37 +177,26 @@ def birthday_rejection_reason(proposal):
             f"({(last-first).days} days).")
 
 
-def compare_profiles(proposal,root=None):
-    """Verify exact dates and clubs; inconsistent overlapping career stints veto a link."""
-    from .identity import team_key
+def assess_profiles(proposal,root=None):
+    from .profileHistory import club_matcher,compare_careers,VERSION
     evidence=proposal.get('investigation',{});left=evidence.get('source');right=evidence.get('baseline')
     checks={'birthday':'missing','club':'missing','career':'missing'}
-    if not left or not right:return checks
+    value={'checks':checks,'comparison_version':VERSION,'status':'incomplete'}
+    if not left or not right:return value
     checked_profile(left,proposal['provider'],proposal['source_id']);checked_profile(right,'sofascore',proposal['target_id'])
+    same=club_matcher(root)
     if left.get('birth_date') and right.get('birth_date'):
         checks['birthday']='match' if left['birth_date']==right['birth_date'] else 'conflict'
     if left.get('club') and right.get('club'):
-        checks['club']='match' if team_key(left['club'],root)==team_key(right['club'],root) else 'conflict'
-    a=[r for r in left['career'] if r.get('start')];b=[r for r in right['career'] if r.get('start')]
-    if not a or not b:return checks
-    lo=max(min(r['start'] for r in a),min(r['start'] for r in b));hi=date.today().isoformat()
-    shared=set();conflict=False;missing=False
-    for first,second in ((a,b),(b,a)):
-        for row in first:
-            start=max(row['start'],lo);end=min(row.get('end') or hi,hi)
-            days=(date.fromisoformat(end)-date.fromisoformat(start)).days
-            if days<=7:continue  # Administrative loan-return entries can last one day.
-            matches=[r for r in second if team_key(row['club'],root)==team_key(r['club'],root)
-                     and (date.fromisoformat(min(r.get('end') or hi,end))-date.fromisoformat(max(r['start'],start))).days>=min(30,days-7)]
-            if matches:shared.add(team_key(row['club'],root))
-            else:
-                missing=True
-                # A club outside the other source's coverage is missing evidence.
-                overlapping=[r for r in second if r['start']<=end and (r.get('end') or hi)>=start]
-                if overlapping and row.get('precision')!='season' and all(r.get('precision')!='season' for r in overlapping):conflict=True
-    if conflict:checks['career']='conflict'
-    elif len(shared)>=2 and not missing:checks['career']='match'
-    return checks
+        checks['club']='match' if same(left,right,proposal['provider'],'sofascore') else 'conflict'
+    career=compare_careers(left,right,root=root,same_club=same)
+    checks['career']=career['state'];value['career_similarity']=career
+    value['status']='verified' if all(v=='match' for v in checks.values()) else 'conflict' if 'conflict' in checks.values() else 'incomplete'
+    return value
+
+
+def compare_profiles(proposal,root=None):
+    return assess_profiles(proposal,root)['checks']
 
 
 class ProfileVerifier:
@@ -205,7 +208,9 @@ class ProfileVerifier:
     def profile(self,provider,pid):
         from .identityReview import stamp
         with self.store.connect() as db:row=db.execute('SELECT payload,expires FROM profiles WHERE provider=? AND id=?',(provider,str(pid))).fetchone()
-        if row and row[1]>stamp():return json.loads(row[0])
+        if row and row[1]>stamp():
+            cached=json.loads(row[0])
+            if cached.get('profile_schema')==PROFILE_SCHEMA or cached.get('error'):return cached
         client=self.clients.get(provider)
         if getattr(client,'requires_manual_attention',False) is True:return {'error':provider+' extension needs attention; lookup deferred to review'}
         fetch=getattr(client,'player_profile',None)
@@ -213,7 +218,7 @@ class ProfileVerifier:
         if self.on_provider:self.on_provider(provider)
         self.report(f'[Identity lookup] {provider} player {pid}: checking birthday, club and career.')
         try:
-            value={**checked_profile(fetch(int(pid)),provider,str(pid)),'fetched_at':stamp()}
+            value={**checked_profile(fetch(int(pid)),provider,str(pid)),'fetched_at':stamp(),'profile_schema':PROFILE_SCHEMA}
             ttl=timedelta(days=7) if all(value.get(k) for k in ('birth_date','club','career')) else timedelta(hours=6)
         except (ProviderError,ValueError,KeyError,TypeError,AttributeError,IndexError,OSError) as exc:
             value={'error':str(exc)[:300]};ttl=timedelta(hours=6)
@@ -234,8 +239,8 @@ class ProfileVerifier:
                 if 'error' in value:continue
                 missing=[label for key,label in (('birth_date','birthday'),('club','current club'),('career','career history')) if not value.get(key)]
                 if missing:investigation['errors'].append(name+': '+', '.join(missing)+' unavailable; available profile evidence retained.')
-            p={**p,'investigation':investigation};checks=compare_profiles(p,self.root)
-            p['investigation']['checks']=checks
+            p={**p,'investigation':investigation};assessment=assess_profiles(p,self.root);checks=assessment['checks']
+            p['investigation'].update(assessment)
             p['investigation']['status']='verified' if all(v=='match' for v in checks.values()) else 'conflict' if 'conflict' in checks.values() else 'incomplete'
             completed.append(p)
         if completed:self.store.ingest(completed)
@@ -252,6 +257,8 @@ class ProfileVerifier:
 def needs_profile_check(proposal):
     evidence=proposal.get('investigation')
     if not evidence:return True
+    if all(evidence.get(side) for side in ('source','baseline')) and any(
+            evidence[side].get('profile_schema')!=PROFILE_SCHEMA for side in ('source','baseline')):return True
     if not evidence.get('errors'):return False
     # Revisit failed checks inherited from the former worker workflow once.
     if evidence.get('workflow')!='main-profile-review-v1':return True

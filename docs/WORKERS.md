@@ -412,17 +412,23 @@ public player profiles, transfer history, and career-table reads to its existing
 provider allowlists. Prepare and reload the extension after pulling this update.
 
 An identity is automatically confirmed only when the full birth dates and current
-clubs agree and dated career histories agree across at least two distinct clubs.
-Career comparison uses reviewed club-name concordances, requires overlapping
-dates, rejects substantive conflicting stints, and ignores administrative entries
-lasting no more than seven days. A shared club, matching shirt numbers, or a fuzzy
-name match alone cannot confirm an identity. Sparse WhoScored historical coverage
-stays incomplete; missing history is never interpreted as agreement. Multiple
+clubs agree and dated career histories score at least 80% agreement. Club
+comparison uses the existing project/Reep IDs and reviewed club groups before
+approved display-name aliases. Profiles retain native club IDs so different
+provider names for an identified club count as the same club.
+The score weights matching club-days in the period both providers cover, allows
+30 days of transfer-date variation, folds duplicate entries and ignores stints
+of seven days or less. One matching club is enough when the shared dated window
+is at least 30 days. Earlier missing history and gaps are excluded from the score;
+missing or nonoverlapping histories remain incomplete. This is a history agreement
+percentage, not an identity confidence estimate. A shared club, shirt number or
+fuzzy name alone cannot confirm an identity. Multiple
 qualifying candidates and existing human rejections prevent automatic confirmation.
 Existing same-side, unique-player and starter checks still apply when enriching a
 match.
 
-The dashboard shows birthdays, clubs, dated histories, source links and the result
+The dashboard shows birthdays, clubs, dated histories, the history percentage,
+source links and the result
 of each check. Successful checks appear as **Automatically verified** in decision
 history; unavailable or conflicting evidence goes to manual review. Queued profile
 checks are labelled and cannot be confirmed prematurely. Workers also receive

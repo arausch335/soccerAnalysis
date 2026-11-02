@@ -153,16 +153,22 @@ class ReviewStore:
         if proposals:self.auto_confirm()
 
     def auto_confirm(self):
-        from .playerProfiles import compare_profiles,birthday_rejection_reason
+        from .playerProfiles import compare_profiles,birthday_rejection_reason,assess_profiles
         existing=decisions(self.root);reviewed={d['id'] for d in existing}
         confirmed={(d['kind'],d['provider'],d['source_id']) for d in existing if d['action']=='confirm'}
-        groups={}
+        groups={};changes=0
         for p in self.proposals():
             if p['kind']!='player' or p['id'] in reviewed or (p['kind'],p['provider'],p['source_id']) in confirmed:continue
+            if p.get('investigation'):
+                evidence={**p['investigation'],**assess_profiles(p,self.root)}
+                if evidence!=p['investigation']:
+                    p={**p,'investigation':evidence}
+                    with self.connect() as db:db.execute('UPDATE proposals SET payload=? WHERE id=?',(json.dumps(p),p['id']))
+                    changes+=1
             if birthday_rejection_reason(p):
                 try:self.decide(p['id'],'reject',automatic=True)
                 except ValueError:continue  # A human may have reviewed it in the meantime.
-                reviewed.add(p['id']);continue
+                changes+=1;reviewed.add(p['id']);continue
             groups.setdefault((p['provider'],p['source_id']),[]).append(p)
         for group in groups.values():
             if any(not p.get('investigation') for p in group):continue
@@ -170,6 +176,8 @@ class ReviewStore:
             if len(verified)!=1 or verified[0]['id'] in reviewed:continue
             try:self.decide(verified[0]['id'],'confirm',automatic=True)
             except ValueError:continue  # Preserve human rejections and conflicting reviewed IDs.
+            changes+=1
+        return changes
 
     def proposals(self):
         with self.connect() as db:rows=[json.loads(r[0]) for r in db.execute('SELECT payload FROM proposals')]
