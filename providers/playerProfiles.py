@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 from .httpClient import ProviderError
 
 HOSTS={'sofascore':'www.sofascore.com','fotmob':'www.fotmob.com','whoscored':'www.whoscored.com'}
-PROFILE_SCHEMA=2
+PROFILE_SCHEMA=3
 
 
 def _object(value,label):
@@ -52,6 +52,12 @@ def checked_profile(value,provider,pid):
         if not isinstance(row,dict) or not isinstance(row.get('club'),str) or len(row['club'])>150:
             raise ValueError('Invalid career club')
         club_id(row)
+        if row.get('is_loan') is not None and type(row['is_loan']) is not bool:raise ValueError('Invalid loan flag')
+        for key in ('from_club','loan_parent_club'):
+            if row.get(key) is not None and (not isinstance(row[key],str) or len(row[key])>150):raise ValueError('Invalid loan parent club')
+        for key in ('from_club_id','loan_parent_club_id'):
+            if row.get(key) is not None:club_id({'club_id':row[key]})
+        if row.get('transfer_type') is not None and (type(row['transfer_type']) not in (int,str) or len(str(row['transfer_type']))>100):raise ValueError('Invalid transfer type')
         for key in ('start','end'):
             if row.get(key) is not None and day(row[key])!=row[key]:raise ValueError('Invalid career date')
         if row.get('start') and row.get('end') and row['start']>row['end']:raise ValueError('Reversed career dates')
@@ -64,16 +70,21 @@ def sofa_profile(pid,payload,history):
     if str(p.get('id'))!=str(pid):raise ProviderError('Sofascore profile belongs to another player')
     transfers=_object(history,'Sofascore history').get('transferHistory')
     if not isinstance(transfers,list):raise ProviderError('Sofascore career history unavailable')
+    from .profileLoans import loan_status
     changes=[]
     for t in transfers:
         t=_object(t,'Sofascore transfer')
         if str(_object(t.get('player'),'Sofascore transfer player').get('id'))!=str(pid):raise ProviderError('Sofascore transfer belongs to another player')
         start=day(t.get('transferDateTimestamp'));team=_object(t.get('transferTo'),'Sofascore transfer destination')
+        previous=_object(t.get('transferFrom'),'Sofascore transfer origin')
         club=team.get('name') or t.get('toTeamName')
-        if start and club:changes.append((start,club,str(team['id']) if team.get('id') else None))
-    changes=sorted(set(changes),key=lambda row:(row[0],row[1],row[2] or ''))
-    career=[{'club':club,'club_id':native,'start':start,'end':changes[i+1][0] if i+1<len(changes) else None}
-            for i,(start,club,native) in enumerate(changes)]
+        if start and club:
+            changes.append({'club':club,'club_id':str(team['id']) if team.get('id') else None,'start':start,
+                'from_club':previous.get('name') or t.get('fromTeamName'),
+                'from_club_id':str(previous['id']) if previous.get('id') else None,
+                'is_loan':loan_status(t),'transfer_type':t.get('type')})
+    changes=sorted({json.dumps(r,sort_keys=True):r for r in changes}.values(),key=lambda r:(r['start'],r['club'],r['club_id'] or ''))
+    career=[{**row,'end':changes[i+1]['start'] if i+1<len(changes) else None} for i,row in enumerate(changes)]
     return {'provider':'sofascore','id':str(pid),'name':p.get('name',''),'birth_date':day(p.get('dateOfBirthTimestamp')),
             'club':_object(p.get('team'),'Sofascore current team').get('name'),
             'club_id':str(p['team']['id']) if _object(p.get('team'),'Sofascore current team').get('id') else None,'career':career,
@@ -88,6 +99,7 @@ def fotmob_profile(pid,p):
     senior=_object(items.get('senior'),'FotMob senior career')
     rows=senior.get('teamEntries') or []
     if not isinstance(rows,list):raise ProviderError('FotMob career entries are not a list')
+    from .profileLoans import loan_status
     career=[]
     for row in rows:
         row=_object(row,'FotMob career entry')
@@ -96,7 +108,8 @@ def fotmob_profile(pid,p):
             raise ProviderError('FotMob career row identifies another player')
         if row.get('team') and not row.get('hasUncertainData'):
             career.append({'club':row['team'],'club_id':str(row['teamId']) if row.get('teamId') else None,
-                           'start':day(row.get('startDate')),'end':day(row.get('endDate'))})
+                           'start':day(row.get('startDate')),'end':day(row.get('endDate')),
+                           'is_loan':loan_status(row),'transfer_type':row.get('transferType')})
     birthday=day(p.get('birthDate'))
     if birthday=='0001-01-01':birthday=None  # Provider placeholder for an unknown birthday.
     return {'provider':'fotmob','id':str(pid),'name':p.get('name',''),'birth_date':birthday,

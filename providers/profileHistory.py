@@ -2,7 +2,7 @@
 from datetime import date,timedelta
 from functools import lru_cache
 
-VERSION=2
+VERSION=3
 THRESHOLD=80
 DATE_TOLERANCE=30
 
@@ -62,8 +62,8 @@ def _days(intervals):return sum((end-start).days for start,end in _union(interva
 def compare_careers(left,right,*,root=None,as_of=None,same_club=None):
     """Weighted agreement in the shared coverage window, with 30-day date tolerance.
 
-    Count each club/day once per provider. Concurrent reserve/loan entries count
-    as separate evidence; absent early history and holes aren't contradictions.
+    Count each club/day once per provider. A supported temporary spell omitted
+    by a provider retaining the parent registration is missing coverage.
     This percentage measures history agreement, not probability of identity.
     """
     today=as_of or date.today();same=same_club or club_matcher(root)
@@ -73,18 +73,21 @@ def compare_careers(left,right,*,root=None,as_of=None,same_club=None):
             if not row.get('start'):continue
             start=date.fromisoformat(row['start']);end=min(date.fromisoformat(row['end']) if row.get('end') else today,today)
             token=(row.get('club_id'),row['club'],start,end)
-            if (end-start).days>7 and token not in seen:
+            if end>start and token not in seen:
                 rows.append((row,start,end));seen.add(token)
         return rows
-    a=prepare(left);b=prepare(right)
+    proof_a=prepare(left);proof_b=prepare(right)
+    a=[r for r in proof_a if (r[2]-r[1]).days>7];b=[r for r in proof_b if (r[2]-r[1]).days>7]
     result={'similarity_percent':None,'threshold_percent':THRESHOLD,'compared_days':0,
             'matched_days':0,'date_tolerance_days':DATE_TOLERANCE,'state':'missing',
             'reason':'No comparable dated career history.'}
     if not a or not b:return result
     lo=max(min(s for _,s,_ in a),min(s for _,s,_ in b));hi=min(max(e for _,_,e in a),max(e for _,_,e in b))
     if hi<=lo:return result
-    total=matched=0;pad=timedelta(days=DATE_TOLERANCE)
-    for first,second,p,q in ((a,b,left['provider'],right['provider']),(b,a,right['provider'],left['provider'])):
+    from .profileLoans import loan_adjustments,subtract
+    adjustments,loans,loan_conflicts=loan_adjustments(proof_a,proof_b,left['provider'],right['provider'],same)
+    total=matched=raw_total=raw_matched=0;pad=timedelta(days=DATE_TOLERANCE);compared_periods=[]
+    for side,first,second,p,q in ((0,a,b,left['provider'],right['provider']),(1,b,a,right['provider'],left['provider'])):
         # Fold repeated rows/competition duplicates for the same identified club.
         groups=[]
         for row,start,end in first:
@@ -94,13 +97,24 @@ def compare_careers(left,right,*,root=None,as_of=None,same_club=None):
         for row,intervals in groups:
             for start,end in _union(intervals):
                 covered=[(max(start,s),min(end,e)) for _,s,e in second]
-                comparable=_union(covered);total+=_days(comparable)
+                raw_comparable=_union(covered)
                 agreements=[(max(start,s-pad),min(end,e+pad)) for other,s,e in second if same(row,other,p,q)]
+                raw_total+=_days(raw_comparable)
+                raw_matched+=_days((max(s,x),min(e,y)) for s,e in raw_comparable for x,y in agreements)
+                neutral=[period for other,periods in adjustments[side] if same(row,other,p,p) for period in periods]
+                comparable=subtract(raw_comparable,neutral);total+=_days(comparable);compared_periods.extend(comparable)
                 matched+=_days((max(s,x),min(e,y)) for s,e in comparable for x,y in agreements)
-    result.update(compared_days=total,matched_days=matched,coverage_start=lo.isoformat(),coverage_end=hi.isoformat())
-    if total<60:
+    excluded=raw_total-total
+    result.update(compared_days=total,matched_days=matched,coverage_start=lo.isoformat(),coverage_end=hi.isoformat(),
+        loan_excluded_days=excluded,temporary_spells=loans if excluded else [],loan_conflicts=loan_conflicts,
+        unadjusted_similarity_percent=round(100*raw_matched/raw_total,1) if raw_total else None)
+    if total<60 or _days(compared_periods)<30:
         result['reason']='Less than 30 days of shared dated history.';return result
     score=100*matched/total
     result.update(similarity_percent=round(score,1),state='match' if score>=THRESHOLD else 'conflict',
         reason=f'Dated club history agrees for {score:.1f}% of comparable club-days (minimum {THRESHOLD}%).')
+    if excluded:result['reason']+=f' Supported loan/temporary-registration differences are excluded as missing coverage, not counted as matches. Before adjustment: {result["unadjusted_similarity_percent"]}%.'
+    if loan_conflicts:
+        result['state']='conflict'
+        result['reason']+=' The providers explicitly report different borrowing clubs over the same dates; review is required.'
     return result

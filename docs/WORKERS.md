@@ -422,8 +422,19 @@ of seven days or less. One matching club is enough when the shared dated window
 is at least 30 days. Earlier missing history and gaps are excluded from the score;
 missing or nonoverlapping histories remain incomplete. This is a history agreement
 percentage, not an identity confidence estimate. A shared club, shirt number or
-fuzzy name alone cannot confirm an identity. Multiple
-qualifying candidates and existing human rejections prevent automatic confirmation.
+fuzzy name alone cannot confirm an identity.
+
+Loan flags and transfer origins are retained when supplied by providers. An
+explicit loan, or a dated return to the same club within two years, can explain
+why one provider continues listing the parent club. Only the affected borrower
+and parent registrations are excluded as missing coverage; they add no matching
+evidence. Explicit permanent transfers, unbounded unlabelled moves and unrelated
+parallel registrations are not exempt. Explicitly different borrowing clubs
+over the same dates remain conflicts even when the overall percentage is high.
+The dashboard explains exclusions and shows the score before adjustment.
+Numeric transfer codes are retained without guessing their meanings.
+
+Multiple qualifying candidates and existing human rejections prevent automatic confirmation.
 Existing same-side, unique-player and starter checks still apply when enriching a
 match.
 
