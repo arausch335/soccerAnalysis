@@ -38,10 +38,84 @@ class FixtureCupTests(unittest.TestCase):
         self.assertTrue(in_window(stamped('2024-08-01'),2024))
         self.assertTrue(in_window(stamped('2025-01-06'),2024))
         self.assertFalse(in_window(stamped('2025-08-01'),2024))
-        self.assertEqual(select(comp,2024,['2024','2025','2024/2025']),(['2024/2025'],False))
-        self.assertEqual(select(comp,2024,['24/25','25/26']),(['24/25'],False))
+        self.assertEqual(select(comp,2024,['2024','2025','2024/2025']),(['2024/2025','2024','2025'],True))
+        self.assertEqual(select(comp,2024,['24/25','25/26']),(['24/25','25/26'],True))
         self.assertEqual(select(cup('FA Cup'),2010,['09/10','10/11']),(['10/11'],False))
-        with self.assertRaisesRegex(ValueError,'Ambiguous'):select(comp,2024,['2024','2024'])
+        self.assertEqual(select(comp,2024,['2024','2024']),(['2024'],True))
+        with self.assertRaisesRegex(ValueError,'Ambiguous'):select(cup('FA Cup'),2024,['24/25','2024/2025'])
+
+    def test_decorated_calendar_editions_and_distinct_ids_with_the_same_label(self):
+        editions=[dict(id=1,year='Supercoppa 2025'),dict(id=2,year='25/26'),dict(id=3,year='25/26'),
+                  dict(id=4,year='Supercoppa 2026'),dict(id=5,year='Supercoppa 2023')]
+        chosen,window=select(cup('Supercoppa Italiana'),2025,editions,label=lambda s:s['year'])
+        self.assertTrue(window)
+        self.assertEqual({s['id'] for s in chosen},{1,2,3,4})
+
+    def test_supercup_label_for_preceding_title_season_is_read_by_playing_date(self):
+        comp=cup('Community Shield');client=Who()
+        client.seasons=lambda path:[dict(name='2016/2017',path='s2016')]
+        client.season_stages=lambda path:[2016]
+        client.season_events=lambda stage,month: [dict(id=1,startTimeUtc='2017-08-06T14:00:00Z',
+            homeTeamId=30,homeTeamName='Home',awayTeamId=40,awayTeamName='Away',homeScore=1,awayScore=1,status=6)] if month=='201708' else []
+        with patch('fixtures.dataset._who_paths',return_value=['published-cup']):
+            found=_who_events(client,comp,2017,[])
+        self.assertEqual([e['id'] for e in found],[1])
+
+    def test_scope_problem_does_not_drop_the_rest_of_the_sofascore_schedule(self):
+        for corrected in (True,False):
+            with self.subTest(corrected=corrected),tempfile.TemporaryDirectory() as tmp:
+                sofa=Sofa();bad=event(101);bad['homeTeam']['gender']='F'
+                sofa.iter_season_events=lambda *a,**kw:iter([event(),bad,event(102)])
+                fresh=event(101);fresh['homeTeam']['gender']='M'
+                sofa.event=Mock(return_value={'event':fresh if corrected else bad})
+                with patch('fixtures.dataset._who_paths',return_value=['published-cup']):
+                    feeds,records=schedules(Path(tmp),dict(sofascore=sofa,fotmob=Fot(),whoscored=Who()),cup('Copa del Rey'),2010)
+                self.assertEqual([e['id'] for e in feeds['sofascore']],[100,101,102] if corrected else [100,102])
+                self.assertEqual(records[0]['status'],'complete' if corrected else 'partial')
+                if not corrected:self.assertIn('fixture 101',records[0]['error'])
+                sofa.event.assert_called_once_with(101)
+                self.assertFalse(sofa.refresh_cache)
+
+    def test_event_scope_refresh_cannot_substitute_different_native_team_ids(self):
+        sofa=Sofa();bad=event(101);bad['homeTeam']['gender']='F'
+        sofa.iter_season_events=lambda *a,**kw:iter([bad,event(102)])
+        sofa.event=Mock(return_value={'event':event(101,home=999)})
+        with tempfile.TemporaryDirectory() as tmp,patch('fixtures.dataset._who_paths',return_value=['published-cup']):
+            feeds,records=schedules(Path(tmp),dict(sofascore=sofa,fotmob=Fot(),whoscored=Who()),cup('Copa del Rey'),2010)
+        self.assertEqual([e['id'] for e in feeds['sofascore']],[102])
+        self.assertEqual(records[0]['status'],'partial')
+
+    def test_old_supercup_checkpoint_is_upgraded_but_regular_cup_is_reused(self):
+        import json
+        from fixtures.dataset import _checkpoint,_complete_checkpoint
+        with tempfile.TemporaryDirectory() as tmp,patch('fixtures.dataset._who_paths',return_value=['published-cup']):
+            clients=dict(sofascore=Sofa(),fotmob=Fot(),whoscored=Who())
+            for comp in (cup('Community Shield'),cup('FA Cup')):
+                schedules(Path(tmp),clients,comp,2010)
+                path=_checkpoint(tmp,'sofascore',comp,2010)
+                self.assertTrue(_complete_checkpoint(path))
+                saved=json.loads(path.read_text());saved['scope_details'].pop('edition_mapping_version',None)
+                path.write_text(json.dumps(saved))
+                self.assertEqual(_complete_checkpoint(path),comp.kind!='supercup')
+
+    def test_missing_gender_in_event_refresh_does_not_override_a_scope_conflict(self):
+        sofa=Sofa();bad=event(101);bad['homeTeam']['gender']='F'
+        sofa.iter_season_events=lambda *a,**kw:iter([bad,event(102)])
+        sofa.event=Mock(return_value={'event':event(101)})
+        with tempfile.TemporaryDirectory() as tmp,patch('fixtures.dataset._who_paths',return_value=['published-cup']):
+            feeds,records=schedules(Path(tmp),dict(sofascore=sofa,fotmob=Fot(),whoscored=Who()),cup('Copa del Rey'),2010)
+        self.assertEqual([e['id'] for e in feeds['sofascore']],[102])
+        self.assertIn('explicitly confirm',records[0]['error'])
+
+    def test_event_scope_verification_still_pauses_a_rate_limited_provider(self):
+        from providers.httpClient import ProviderRequestError
+        sofa=Sofa();bad=event(101);bad['homeTeam']['gender']='F'
+        sofa.iter_season_events=lambda *a,**kw:iter([bad])
+        sofa.event=Mock(side_effect=ProviderRequestError('Rate limited',status_code=429))
+        blocked={}
+        with tempfile.TemporaryDirectory() as tmp,patch('fixtures.dataset._who_paths',return_value=['published-cup']):
+            schedules(Path(tmp),dict(sofascore=sofa,fotmob=Fot(),whoscored=Who()),cup('Copa del Rey'),2010,blocked=blocked)
+        self.assertIn('sofascore',blocked)
 
     def test_normal_cup_paired_season_keeps_a_delayed_final(self):
         comp=cup('Copa del Rey')
@@ -71,6 +145,14 @@ class FixtureCupTests(unittest.TestCase):
         client._directory.side_effect=lambda path,ready: found if path=='historical-parent' else empty
         client.seasons.return_value=[dict(name='2019/2020',path='historical-parent')]
         self.assertEqual(_who_paths(client,comp,2019),[route])
+
+    def test_published_cup_title_can_resolve_a_renamed_slug_in_the_same_country(self):
+        comp=cup('DFL-Supercup');parser=_Directory()
+        parser.feed('<select id="tournaments"><option value="/regions/81/tournaments/900/germany-new-supercup-name">DFL-Supercup</option>'
+            '<option value="/regions/1/tournaments/901/other-country">DFL-Supercup</option></select>'
+            '<a href="/regions/81/tournaments/902/germany-women-supercup">DFL-Supercup</a>')
+        client=Mock();client._directory.return_value=parser
+        self.assertEqual(_who_paths(client,comp),['regions/81/tournaments/900/germany-new-supercup-name'])
 
     def test_who_single_year_seasons_keep_january_fixture_in_correct_paired_season(self):
         comp=cup('Supercoppa Italiana');client=Who()

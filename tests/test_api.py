@@ -167,7 +167,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.session.get.call_count, 2)
 
     def test_other_schedule_failures_are_not_treated_as_completion(self):
-        for direction, page, status in [('last', 0, 404), ('last', 1, 404),
+        for direction, page, status in [('last', 1, 404),
                                         ('next', 1, 404), ('next', 0, 403),
                                         ('next', 0, 429), ('next', 0, 500)]:
             with self.subTest(direction=direction, page=page, status=status):

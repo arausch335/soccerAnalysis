@@ -55,7 +55,7 @@ The verified provider tournament pages include [FA Cup](https://www.sofascore.co
 [FotMob French League Cup](https://www.fotmob.com/leagues/150/overview/coupe-de-la-ligue)
 and [FotMob French supercup](https://www.fotmob.com/leagues/207/seasons/trophee-des-champions).
 
-Only schedules are requested: no match details, lineups, statistics or player
+Schedules and event summaries for scope checks are requested: no lineups, statistics or player
 event streams. Existing pacing, response caches, provider cooldowns and Chrome
 extension fallback apply. `--api-only` disables extension fallback. A blocked
 provider is paused for the rest of the run. The existing collector lock prevents
@@ -371,7 +371,24 @@ python main.py --fixtures --start-season 2010 --end-season 2026
 
 Completed cached work is reused and the compiled snapshot is delivered directly
 to Main. This code change does not itself fetch schedules on Headless. Remaining
-provider coverage stays incomplete until those requests succeed. An unpublished
+provider coverage stays incomplete until those requests succeed.
+
+Supercups use kickoff dates within July–June, including published adjacent
+editions and decorated calendar labels such as `Supercoppa 2025`. Distinct
+provider season IDs sharing a label are read separately. Old supercup checkpoints
+are upgraded automatically; completed league and regular-cup checkpoints remain
+reusable. WhoScored discovery also accepts exact published competition titles
+in the same country when their URL slug changes. No provider route or ID is
+invented. Future Sofascore editions with no past feed can use a nonempty upcoming
+feed; two absent feeds remain an error.
+
+An out-of-scope team annotation no longer truncates the remainder of a Sofascore
+schedule. The collector rechecks that event summary, accepting a correction only
+with unchanged match/team IDs and explicit men's-team confirmation. Unresolved
+events stay excluded and appear with native IDs in the partial-coverage report.
+This makes collection resumable without treating unverified coverage as complete.
+
+An unpublished
 future domestic playoff feed is marked `deferred` when the season directory is
 not published yet. It is retried on the next online run, including without an
 explicit refresh, and becomes required at the July 1 season boundary or as soon as a played baseline

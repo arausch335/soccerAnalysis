@@ -377,6 +377,19 @@ class FixtureDatasetTests(unittest.TestCase):
         self.assertTrue(resumed['schedule_coverage_complete'])
         self.assertEqual(resumed['rows'], 1)
 
+    def test_future_edition_with_only_next_page_is_collected_but_both_missing_is_error(self):
+        client=self.clients['sofascore']
+        client.iter_season_events=SofaScoreClient.iter_season_events.__get__(client)
+        def page(cid,sid,index,direction):
+            if direction=='last':raise ProviderRequestError('No past fixtures',status_code=404)
+            return {'events':[{**event(),'status':{'type':'notstarted'}}],'hasNextPage':False}
+        client.season_events=Mock(side_effect=page)
+        self.assertEqual(len(list(client.iter_season_events(17,10,include_upcoming=True))),1)
+        client.season_events=Mock(side_effect=ProviderRequestError('Missing edition',status_code=404))
+        with self.assertRaises(ProviderRequestError):list(client.iter_season_events(17,10,include_upcoming=True))
+        client.season_events=Mock(side_effect=lambda c,s,p,d:page(c,s,p,d) if d=='last' else {'events':[],'hasNextPage':False})
+        with self.assertRaises(ProviderRequestError):list(client.iter_season_events(17,10,include_upcoming=True))
+
     def test_failed_refresh_retains_checkpoint_and_reports_gap(self):
         self.build()
         self.clients['sofascore'].seasons = lambda cid: (_ for _ in ()).throw(ValueError('unavailable'))

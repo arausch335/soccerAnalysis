@@ -27,6 +27,7 @@ def directory_path(path):
 class _Directory(HTMLParser):
     def __init__(self):
         super().__init__(); self.select=None; self.option=None; self.options=[];self.stage_paths=[];self.links=[];self.competition_paths=[];self.stage_names={};self.stage_option=None
+        self.route_names={};self.named_option=None;self.named_link=None
 
     def handle_starttag(self, tag, attrs):
         attrs=dict(attrs)
@@ -36,17 +37,25 @@ class _Directory(HTMLParser):
             self.stage_paths.append(attrs['value']);self.stage_option=[attrs['value'], '']
         if tag=='option' and self.select=='tournaments' and attrs.get('value'):
             self.competition_paths.append(attrs['value'])
-        if tag=='a' and attrs.get('href'): self.links.append(attrs['href'])
+            self.named_option=[attrs['value'],'']
+        if tag=='a' and attrs.get('href'):
+            self.links.append(attrs['href']);self.named_link=[attrs['href'],'']
 
     def handle_data(self, data):
         if self.option is not None: self.option[1]+=data
         if self.stage_option is not None:self.stage_option[1]+=data
+        if self.named_option is not None:self.named_option[1]+=data
+        if self.named_link is not None:self.named_link[1]+=data
 
     def handle_endtag(self, tag):
         if tag=='option' and self.option is not None: self.options.append(self.option); self.option=None
         if tag=='option' and self.stage_option is not None:
             self.stage_names[self.stage_option[0]]=self.stage_option[1].strip();self.stage_option=None
         if tag=='select': self.select=None
+        for field,end in (('named_option','option'),('named_link','a')):
+            named=getattr(self,field)
+            if tag==end and named is not None:
+                self.route_names[named[0]]=named[1].strip();setattr(self,field,None)
 
 
 def published_stages(parser,season_path):

@@ -83,10 +83,13 @@ class SofaScoreClient(HttpClient):
 
         SofaScoreLoader sorts these before loading match details sequentially.
         Stop on hasNextPage=False. After a completed past schedule, a 404 on
-        next/0 means no upcoming fixtures. Other errors and malformed/repeated
+        next/0 means no upcoming fixtures. Future editions may have only next/0;
+        a missing past feed is accepted only when upcoming fixtures are found.
+        Other errors and malformed/repeated
         pages raise instead of treating an incomplete schedule as complete.
         """
         seen = set()
+        missing_past = None
         directions = ("last", "next") if include_upcoming else ("last",)
         for direction in directions:
             direction_seen = set()
@@ -95,10 +98,16 @@ class SofaScoreClient(HttpClient):
                 try:
                     payload = self.season_events(competition_id, season_id, page, direction)
                 except SofaScoreRequestError as exc:
+                    # An entirely future edition can have next/0 but no last/0.
+                    # Require a real upcoming response before accepting this.
+                    if include_upcoming and direction == 'last' and page == 0 and exc.status_code == 404:
+                        missing_past = exc
+                        break
                     # The past direction has already completed before reaching
                     # next/0. SofaScore returns 404 here for historical seasons
                     # without upcoming fixtures, rather than an empty page.
                     if direction == 'next' and page == 0 and exc.status_code == 404:
+                        if missing_past is not None:raise missing_past
                         break
                     raise
                 events = payload.get("events")
@@ -118,6 +127,7 @@ class SofaScoreClient(HttpClient):
                 if not has_next:
                     break
                 page += 1
+        if missing_past is not None and not seen:raise missing_past
 
     def get(self, endpoint: str, params: dict | None = None) -> dict:
         """Request any API-relative endpoint, preserving the raw JSON object."""

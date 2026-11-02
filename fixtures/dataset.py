@@ -1,7 +1,7 @@
 """Sofascore-led fixture history and four-source identity concordance.
 
-Run ``python -m fixtures`` or ``python main.py --fixtures``. This only reads
-schedules: no match details, lineups, events or player statistics are requested.
+Run ``python -m fixtures`` or ``python main.py --fixtures``. This reads schedules
+and event summaries for scope checks: no lineups, incidents or player statistics.
 """
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
+import unicodedata
+from urllib.parse import unquote
 
 from filelock import FileLock
 import pandas as pd
@@ -89,7 +91,7 @@ def _validate(events,provider=''):
                 raise ValueError('Schedule fixture is missing a team ID/name')
             from providers.teamScope import in_mens_scope
             if not in_mens_scope(provider,team['id'],team):
-                raise ValueError('Women\'s team returned in a men\'s fixture schedule')
+                raise ValueError(f"Women's team returned in a men's fixture schedule: {provider} fixture {event['id']}, {side} {team['id']} {team['name']!r}")
     return events
 
 
@@ -113,12 +115,15 @@ def _load(path, provider, competition, start):
             provider, competition.sofascore_id, season_label(start))
             or value.get('format') not in (FORMAT, 'soccer-fixture-schedule-v1')):
         raise ValueError('Schedule checkpoint identity mismatch: ' + str(path))
-    return (_validate_sofa(value['events'], competition) if provider == 'sofascore'
+    events=(_validate_sofa(value['events'], competition) if provider == 'sofascore'
             else _validate(value['events'],provider))
+    return [e for e in events if fixture_seasons.in_window(e,start)] if competition.kind=='supercup' else events
 
 
 def _complete_checkpoint(path, *, at=None, allow_deferred=False):
     value = json.loads(path.read_text(encoding='utf-8'))
+    if (value.get('competition_id') in {c.sofascore_id for c in COMPETITIONS if c.kind=='supercup'}
+            and value.get('scope_details',{}).get('edition_mapping_version')!=fixture_seasons.SUPERCUP_MAPPING):return False
     deferred=value.get('scope_details',{}).get('deferred',[])
     reusable=not deferred or allow_deferred and all(requirements.instant(d['recheck_after'])>requirements.instant(at) for d in deferred)
     return value.get('format') == FORMAT and value.get('scope') == SCHEDULE_SCOPE and reusable
@@ -143,12 +148,18 @@ def _who_paths(client, competition, start=None):
         'Serie B': ('italy-serie-b',), 'Ligue 2': ('france-ligue-2',),
         'Conference League': ('europe-conference-league', 'europe-europa-conference-league'),
     }[competition.name]
+    def title_key(value):
+        return re.sub(r'[^a-z0-9]','',unicodedata.normalize('NFKD',unquote(value)).encode('ascii','ignore').decode().lower())
+    titles={title_key(competition.name),*(title_key(s.split('-',1)[-1]) for s in suffixes)}
     def discovered(parser):
         paths = set()
         for raw in (*parser.competition_paths, *parser.links):
             try: path = directory_path(raw)
             except (ValueError, UnicodeError): continue
-            if any(re.fullmatch(re.escape(suffix)+r'(?:-\d{4}(?:-\d{4})?)?',path.rstrip('/').rsplit('/',1)[-1],re.I) for suffix in suffixes):
+            named=(title_key(parser.route_names.get(raw,'')) in titles
+                and path.split('/')[1]==parent_path.split('/')[1]
+                and not re.search(r'women|female|feminin',unquote(path),re.I))
+            if named or any(re.fullmatch(re.escape(suffix)+r'(?:-\d{4}(?:-\d{4})?)?',path.rstrip('/').rsplit('/',1)[-1],re.I) for suffix in suffixes):
                 paths.add(path)
         return paths
     parent_path=next(c.whoscored_path for c in COLLECTION_COMPETITIONS if c.name==parent)
@@ -164,7 +175,10 @@ def _who_paths(client, competition, start=None):
     if not paths and competition.whoscored_parent and start is not None:
         # A retired/renamed cup may be absent from today's country menu.
         # Follow the published parent-season route to its historical menu.
-        parent_seasons,_=fixture_seasons.select(competition,start,client.seasons(parent_path),label=lambda s:s['name'])
+        # The parent is a league even when the requested competition is a
+        # supercup. Its historical country menu uses the league's season.
+        parent_competition=next(c for c in COMPETITIONS if c.name==parent)
+        parent_seasons,_=fixture_seasons.select(parent_competition,start,client.seasons(parent_path),label=lambda s:s['name'])
         for parent_season in parent_seasons:paths.update(lookup(parent_season['path']))
     # A tournament dropdown gives the stable competition route. Prefer it to
     # links to individual stages of its currently selected season.
@@ -380,16 +394,44 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                             fetched = {}
                             scope_details={'provider_seasons':[dict(id=s['id'],label=s['year']) for s in selected],
                                            'season_mapping':'fixture_date_window' if calendar_window else 'published_season'}
+                            rejected=[]
                             for season in selected:
                                 for event in client.iter_season_events(competition.sofascore_id, season['id'], include_upcoming=True):
-                                    _validate_sofa([event], competition, season['id'])
                                     if calendar_window and not fixture_seasons.in_window(event,start):continue
+                                    try:_validate_sofa([event], competition, season['id'])
+                                    except ValueError as exc:
+                                        # A bad team annotation must not stop pagination and
+                                        # discard every valid fixture on the remaining pages.
+                                        if not str(exc).startswith("Women's team returned"):raise
+                                        try:
+                                            client.refresh_cache=True
+                                            fresh=client.event(event['id'])['event']
+                                            if fresh.get('id')!=event['id'] or any(str(fresh.get(side+'Team',{}).get('id'))!=str(event[side+'Team']['id']) for side in ('home','away')):
+                                                raise ValueError('Event refresh returned different match/team IDs')
+                                            from providers.teamScope import in_mens_scope
+                                            for side in ('home','away'):
+                                                original=event[side+'Team'];replacement=fresh[side+'Team']
+                                                if not in_mens_scope('sofascore',original['id'],original) and str(replacement.get('gender','')).lower() not in ('m','male','men','man'):
+                                                    raise ValueError('Event refresh did not explicitly confirm a men\'s team')
+                                            _validate_sofa([fresh],competition,season['id'])
+                                            if calendar_window and not fixture_seasons.in_window(fresh,start):
+                                                raise ValueError('Event refresh moved outside the requested season')
+                                            event=fresh
+                                            scope_details.setdefault('revalidated_events',[]).append(event['id'])
+                                        except ERRORS as detail:
+                                            if getattr(detail,'status_code',None) in (401,403,429):raise
+                                            rejected.append(f'{exc}; event verification: {detail}')
+                                            continue
+                                        finally:client.refresh_cache=refresh
                                     if event['id'] in fetched and fetched[event['id']] != event:
                                         raise ValueError('Conflicting Sofascore schedule entries')
                                     fetched[event['id']] = event
                                     events = list({e['id']:e for e in (*events,event)}.values())
                                     if progress:progress('provider_progress',current_fixtures=len(fetched))
                             events = list(fetched.values())
+                            if rejected:
+                                scope_details['rejected_events']=rejected
+                                raise _PartialSchedule(events,ValueError('; '.join(rejected)))
                         elif provider == 'fotmob':
                             events, feed_errors = _fotmob_events(client, competition, start,progress=progress,baseline=result['sofascore'],at=at)
                             scope_details=client.fixture_scope
@@ -410,6 +452,7 @@ def schedules(root, clients, competition, start, *, offline=False, refresh=False
                 if phases != {False,True}:
                     raise _PartialSchedule(events,ValueError('Main and qualifying fixtures are not both present'))
             if complete and origin != 'checkpoint':
+                if competition.kind=='supercup':scope_details['edition_mapping_version']=fixture_seasons.SUPERCUP_MAPPING
                 atomic_json(path, {'format': FORMAT, 'provider': provider,
                     'competition_id': competition.sofascore_id, 'season': season_label(start),
                     'scope': SCHEDULE_SCOPE, 'scope_details':scope_details, 'events': events})
