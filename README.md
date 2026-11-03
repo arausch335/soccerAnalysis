@@ -1,5 +1,39 @@
 # Soccer analysis
 
+## Python environment
+
+From the repository root, create and activate the shared collection, packaging,
+and socceraction analysis environment:
+
+```sh
+conda env create -f environment.yml
+conda activate soccer-analysis
+python -m pip check
+python main.py --package
+```
+
+In PyCharm, select the Python interpreter from the `soccer-analysis` Conda
+environment. This is separate from the project's `.venv` and the existing
+`soccerAnalysis` Conda environment.
+
+After dependency-file changes, update this environment from the repository root:
+
+```sh
+conda env update -f environment.yml
+```
+
+`constraints-socceraction.txt` keeps NumPy at 1.26.4, pandas below 3, and
+PyArrow at 25.0.1 so Parquet packaging and socceraction can share one environment.
+The environment installs both requirements files and the project in editable mode.
+Keep these constraints when installing additional packages:
+
+```sh
+python -m pip install -c constraints-socceraction.txt PACKAGE_NAME
+```
+
+`requirements-tested.txt` records a different environment with NumPy 2 and
+pandas 3; do not install it into this socceraction environment.
+
 Historical fixtures from 2010–2011 onward: `python main.py --fixtures`.
 This builds a Sofascore-led dataset with FotMob, WhoScored and Reep match/team
 IDs, scores, season/competition context and matching evidence. See

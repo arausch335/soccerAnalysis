@@ -1,0 +1,13 @@
+# Run from the repository root: conda env create -f environment.yml
+name: soccer-analysis
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -c constraints-socceraction.txt
+      - -r requirements.txt
+      - -r requirements-role-analysis.txt
+      - socceraction==1.5.3
+      - -e .

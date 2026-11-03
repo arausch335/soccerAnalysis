@@ -1,0 +1,7 @@
+# Compatibility constraints for socceraction 1.5.3 and Parquet packaging.
+# Apply alongside requirements files with: pip install -c constraints-socceraction.txt ...
+numpy==1.26.4
+pandas>=2.2,<3
+pyarrow==25.0.1
+# socceraction uses pandera 0.17, which needs the older multimethod API.
+multimethod>=1.9,<2
