@@ -152,7 +152,8 @@ def index(root=None):
 def wanted_ids(root, dataset, ensemble=None):
     """Use small ID/checkpoint files, never traverse the large raw responses."""
     wanted = set()
-    root, dataset = Path(root), Path(dataset)
+    from concordance.layout import compiled_root
+    root, dataset = Path(root), (compiled_root(dataset) if compiled_root(dataset).exists() else Path(dataset))
     # The historical fixture builder discovers IDs before match details exist.
     # Retain their Reep peers on the next refresh as well.
     fixtures = dataset / 'fixtures.csv'

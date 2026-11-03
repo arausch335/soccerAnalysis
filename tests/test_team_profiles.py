@@ -62,7 +62,7 @@ class ReviewedClubProfiles(unittest.TestCase):
         rows=self.rows+[['team','sofascore','3294','rtFarul'],['team','sofascore','37426','rtFarul'],
                         ['team','fotmob','210132','rtFarul'],['team','whoscored','9425','rtFarul']]
         reep.install(self.root,{'format':reep.FORMAT,'version':reep._digest(rows),'rows':rows})
-        out=self.root/'exports';path=out/'fixture_concordance/team_ids.csv';path.parent.mkdir(parents=True)
+        out=self.root/'exports/concordance/metadata/compiled';path=out/'fixture_concordance/team_ids.csv';path.parent.mkdir(parents=True)
         with path.open('w',newline='') as stream:
             writer=csv.DictWriter(stream,fieldnames=['team_name','sofascore_id','fotmob_id','whoscored_id','reep_id','identity_status'])
             writer.writeheader()

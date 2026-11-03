@@ -120,7 +120,7 @@ class TransferTests(unittest.TestCase):
         with patch('providers.httpClient.HttpClient._request',side_effect=AssertionError('Unexpected provider request')):agent.maintenance_once()
         manifest=self.reader.request('/v1/dataset')['manifest'];self.assertIsNotNone(manifest)
         output=self.base/'main-dataset';install_dataset(self.reader,manifest,output,self.base/'downloads')
-        self.assertTrue((output/self.season/'player_match_stats.csv').is_file())
+        self.assertTrue((output/'raw_data'/self.season/'player_match_stats.csv').is_file())
         for kind in ('player','team','match'):self.assertTrue((output/'concordance'/(kind+'_ids.csv')).is_file())
         self.assertFalse(list(output.rglob('raw')));self.assertEqual(self.server.archive.builds(),[])
 

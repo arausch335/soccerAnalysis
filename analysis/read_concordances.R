@@ -1,12 +1,12 @@
-# Chunked Parquet inputs under the R project's data/concordances directory.
-read_concordances <- function(concordance_root = "data/concordances", require_integration = TRUE) {
-  for (package in c("arrow", "jsonlite", "digest")) {
+# CSV fixtures and IDs under dataset/concordance; supporting tables stay in metadata.
+read_concordances <- function(concordance_root = "dataset/concordance", require_integration = TRUE) {
+  for (package in c("jsonlite", "digest")) {
     if (!requireNamespace(package, quietly = TRUE)) stop("Install package: ", package)
   }
   folder <- concordance_root
-  if (!file.exists(file.path(folder, "manifest.json"))) folder <- file.path(folder, "concordances")
-  manifest <- jsonlite::fromJSON(file.path(folder, "manifest.json"), simplifyVector = FALSE)
-  if (!identical(manifest$format, "soccer-concordances-parquet-v1")) stop("Re-export the chunked Parquet concordances")
+  if (!file.exists(file.path(folder, "metadata", "manifest.json"))) folder <- file.path(folder, "concordance")
+  manifest <- jsonlite::fromJSON(file.path(folder, "metadata", "manifest.json"), simplifyVector = FALSE)
+  if (!identical(manifest$format, "soccer-concordance-csv-v1")) stop("Re-export the CSV concordance")
   if (require_integration && !isTRUE(manifest$ready_for_R)) stop("MSI integration is unconfirmed. Audit and rebuild first.")
   expected <- character()
   read_table <- function(name) {
@@ -14,13 +14,25 @@ read_concordances <- function(concordance_root = "data/concordances", require_in
     if (is.null(info) || !length(info$files)) stop("Missing table: ", name)
     paths <- vapply(info$files, function(item) {
       relative <- item$path
-      if (!identical(dirname(relative), name) || !grepl("^part-[0-9]{5}\\.parquet$", basename(relative))) stop("Invalid Parquet path")
+      csv_path <- switch(name, "fixtures/fixtures" = "fixtures.csv",
+        "fixtures/extra" = "metadata/fixture_extra.csv", "fixtures/metadata" = "metadata/fixtures.csv",
+        "entities" = "metadata/entities.csv", paste0(name, ".csv"))
+      if (!identical(relative, csv_path)) stop("Invalid CSV path")
       path <- file.path(folder, relative)
-      if (!identical(digest::digest(file = path, algo = "sha256", serialize = FALSE), item$sha256)) stop("Parquet checksum mismatch: ", relative)
+      if (!identical(digest::digest(file = path, algo = "sha256", serialize = FALSE), item$sha256)) stop("CSV checksum mismatch: ", relative)
       expected <<- c(expected, relative)
       path
     }, character(1))
-    data <- as.data.frame(arrow::open_dataset(paths, format = "parquet"))
+    data <- do.call(rbind, lapply(paths, function(path)
+      read.csv(path, colClasses = "character", na.strings = "", check.names = FALSE)))
+    if (name %in% c("fixtures/fixtures", "fixtures/extra")) {
+      for (column in intersect(c("has_player_stats", "is_scheduled_for_scraping", "awarded"), names(data)))
+        data[[column]] <- as.logical(data[[column]])
+      for (column in intersect(c("matchweek", "home_score", "away_score", "winner_code"), names(data)))
+        data[[column]] <- as.integer(as.numeric(data[[column]]))
+      if ("date" %in% names(data)) data$date <- as.Date(data$date)
+      if ("kickoff_utc" %in% names(data)) data$kickoff_utc <- as.POSIXct(data$kickoff_utc, tz = "UTC")
+    }
     if (nrow(data) != info$rows) stop("Row count mismatch: ", name)
     data
   }
@@ -82,8 +94,8 @@ read_concordances <- function(concordance_root = "data/concordances", require_in
       if (!is.null(alias) && canonical(alias) != data$entity_id[i]) stop("Provider/canonical ID disagreement")
     }
   }
-  found <- list.files(folder, pattern = "\\.parquet$", recursive = TRUE)
-  if (!setequal(found, expected)) stop("Unverified or stale Parquet chunks")
+  found <- list.files(folder, pattern = "\\.csv$", recursive = FALSE)
+  if (!setequal(found, expected[!grepl("/", expected)])) stop("Unverified or stale CSV tables")
   key <- fixtures$match_entity_id
   if (anyNA(key) || anyDuplicated(key) || anyNA(match(key, ids$match_ids$entity_id))) stop("Invalid fixture match key")
   for (data in list(extra, metadata)) {

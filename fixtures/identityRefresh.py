@@ -99,7 +99,8 @@ def reconcile_exports(root, dataset, *, dry_run=False, already_locked=False):
     No provider requests or raw-data scans. The receiver calls this while it
     owns its install lock, so a worker cannot replace files during reconciliation.
     """
-    root,dataset=Path(root),Path(dataset)
+    from concordance.layout import prepare
+    root,dataset=Path(root),prepare(dataset)
     if snapshot(root) is None:
         path=dataset/'fixtures.csv'
         columns=read_table(path)[0] if path.is_file() else []
@@ -300,6 +301,6 @@ def _reconcile(root,dataset,*,dry_run):
     from concordance.sync import check_bundle
     report['bundle_alignment']=check_bundle(root,dataset)
     if fixture_rows is not None:
-        from concordance.parquet import refresh
+        from concordance.publication import refresh
         report['parquet']=refresh(root,dataset,rows=fixture_rows)
     return report

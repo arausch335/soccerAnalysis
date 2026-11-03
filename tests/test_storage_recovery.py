@@ -69,13 +69,15 @@ class StorageRecoveryTests(unittest.TestCase):
             agent.maintenance_once()
         self.assertEqual(calls,['premier-league-2024-25']);self.assertEqual(snapshot.call_count,1)
         self.assertIsNotNone(archive.publication());self.assertEqual(archive.builds(),[])
-        self.assertEqual(archive.status()['blocked_builds'],1)
-        blocked=next(r for r in archive.diagnostics()['builds'] if r['state']=='blocked')
-        self.assertIn('No saved combined job',blocked['error'])
+        self.assertEqual(archive.status()['blocked_builds'],0)
+        self.assertEqual(archive.status()['waiting_input_builds'],1)
+        waiting=next(r for r in archive.diagnostics()['builds'] if r['state']=='waiting_inputs')
+        self.assertIn('job.json',waiting['error'])
 
     def test_season_exports_yield_to_new_imports_between_backlog_jobs(self):
         populate(self.root,limit=1)
-        second='la-liga/2024-2025';atomic_json(self.root/second/'job.json',{})
+        second='la-liga/2024-2025'
+        for name in ('job.json','config.json','schedule.json'):atomic_json(self.root/second/name,{})
         archive=Archive(self.root);archive.schedule_build(GOOD);archive.schedule_build(second)
         agent=StorageAgent(self.root,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.output,log=lambda _:None)
         class Server:pass

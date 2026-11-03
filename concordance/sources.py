@@ -118,12 +118,14 @@ def source_signature(root,dataset):
     import config
     plan=config.PROJECT_ROOT/'config/workers.yaml'
     stat=plan.stat();rows=[(str(plan),stat.st_size,stat.st_mtime_ns)]
+    from .layout import public_root
     for base,patterns in [(Path(root),['*/*/config.json','*/*/schedule.json','*/*/identities.csv',
                                      '*/*/player_match_stats.csv','*/*/match_checkpoints/*/CURRENT.json',
                                      '*/*/dataset/CURRENT.json','*/*/raw/*/*.json',
                                      'fotmob_player_stats/*/*/raw/*/*.json','whoscored/*/*/raw/*/*.json',
                                      'whoscored_events/*/*/raw/*/*.json']),
-                          (Path(dataset),['fixtures.csv','*/*/player_match_stats.csv','*/*/fixtures.csv'])]:
+                          (Path(dataset),['fixtures.csv']),
+                          (public_root(dataset)/'raw_data',['*/*/player_match_stats.csv','*/*/fixtures.csv'])]:
         for pattern in patterns:
             for path in base.glob(pattern):
                 if base==Path(dataset) and pattern!='fixtures.csv' and not re.fullmatch(r'\d{4}-\d{4}',path.parent.name):continue
@@ -181,7 +183,8 @@ def observations(root,dataset,*,report=print):
     # Include all current flat exports, including newer statistics than the old
     # concordances. Reading these does not require provider requests.
     flat=[]
-    for base in (root,dataset):flat.extend(sorted(base.glob('*/*/player_match_stats.csv')))
+    from .layout import public_root
+    for base in (root,public_root(dataset)/'raw_data'):flat.extend(sorted(base.glob('*/*/player_match_stats.csv')))
     for path in flat:
         if not re.fullmatch(r'\d{4}-\d{4}',path.parent.name):continue
         links=defaultdict(list)

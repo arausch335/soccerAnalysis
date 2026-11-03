@@ -185,7 +185,7 @@ class FixtureCupTests(unittest.TestCase):
 
     def test_cup_fixture_uses_shared_team_ids_and_export_scores_without_league_counts(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp)/'data';output=Path(tmp)/'dataset/fixtures.csv'
+            root=Path(tmp)/'data';output=Path(tmp)/'dataset/concordance/metadata/compiled/fixtures.csv'
             options=dict(data_root=root,output_csv=output,clients=dict(sofascore=Sofa(),fotmob=Fot(),whoscored=Who()),
                 start_season=2010,end_season=2010,now=NOW,send_to_main=False,live_reports=False,report=lambda *a,**k:None)
             with patch('fixtures.dataset._who_paths',return_value=['published-cup']):

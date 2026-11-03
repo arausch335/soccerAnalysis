@@ -17,6 +17,7 @@ from .workerRuntime import now
 
 class Archive:
     def __init__(self,root,*,reserve=1024**3,directory=None):
+        self.root=Path(root)
         self.directory=Path(directory) if directory is not None else Path(root)/'_system/storage/hub';self.objects=self.directory/'objects'
         self.objects.mkdir(parents=True,exist_ok=True);self.lock=threading.RLock();self.reserve=reserve;self.publishing=False;self.readers=0
         self.database=self.directory/'archive.sqlite'
@@ -164,6 +165,24 @@ class Archive:
             db.execute('INSERT INTO build_failures(season,revision,at,error) VALUES(?,?,?,?)',
                        (season,revision,now(),(type(error).__name__+': '+str(error))[:4096]));db.commit()
 
+    def refresh_build_inputs(self):
+        """Separate missing saved inputs from buildable jobs, waking jobs when inputs arrive."""
+        with self.connect() as db:
+            rows=db.execute("SELECT season,state,revision FROM builds WHERE state IN ('pending','waiting_inputs','blocked')").fetchall()
+            for season,state,revision in rows:
+                missing=[name for name in ('job.json','config.json','schedule.json')
+                         if not (self.root/season/name).is_file()]
+                if missing and state!='waiting_inputs':
+                    if state=='blocked':
+                        failure=db.execute('SELECT error FROM build_failures WHERE season=? ORDER BY id DESC LIMIT 1',(season,)).fetchone()
+                        if not failure or 'No saved combined job' not in failure[0]:continue
+                    reason='Waiting for saved collection inputs: '+', '.join(missing)
+                    changed=db.execute("UPDATE builds SET state='waiting_inputs' WHERE season=? AND state=? AND revision=?",(season,state,revision)).rowcount
+                    if changed:db.execute('INSERT INTO build_failures(season,revision,at,error) VALUES(?,?,?,?)',(season,revision,now(),reason))
+                elif not missing and state=='waiting_inputs':
+                    db.execute("UPDATE builds SET state='pending' WHERE season=? AND state='waiting_inputs' AND revision=?",(season,revision))
+            db.commit()
+
     def diagnostics(self):
         with self.connect() as db:
             builds=[dict(season=s,state=state,revision=revision,error=error,failed_at=at) for s,state,revision,error,at in db.execute(
@@ -267,7 +286,7 @@ class Archive:
             last=db.execute('SELECT max(received_at) FROM uploads').fetchone()[0]
         publication=self.publication()
         with self.connect() as db:builds=dict(db.execute('SELECT state,count(*) FROM builds GROUP BY state'))
-        return {'pending_builds':builds.get('pending',0),'blocked_builds':builds.get('blocked',0),'removed_builds':builds.get('removed',0),'received':counts.get('received',0),'incorporated':counts.get('imported',0),
+        return {'pending_builds':builds.get('pending',0),'blocked_builds':builds.get('blocked',0),'waiting_input_builds':builds.get('waiting_inputs',0),'removed_builds':builds.get('removed',0),'received':counts.get('received',0),'incorporated':counts.get('imported',0),
                 'quarantined':counts.get('quarantined',0),'last_received':last,
                 'dataset_id':identifier(publication) if publication else None}
 

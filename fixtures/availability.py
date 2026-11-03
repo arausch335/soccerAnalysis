@@ -31,7 +31,8 @@ def scrape_targets():
 def stats_evidence(root,dataset):
     """Use saved validated inventories; an ID bridge or event stream isn't stats."""
     from collection.reporting import inventory_paths
-    root,dataset=Path(root),Path(dataset);observed=set()
+    from concordance.layout import compiled_root
+    root,dataset=Path(root),(compiled_root(dataset) if compiled_root(dataset).exists() else Path(dataset));observed=set()
     for path in inventory_paths(root.parent/'ensemble_data'):
         value=json.loads(path.read_text(encoding='utf-8'))
         for row in value.get('records',{}).values():

@@ -40,12 +40,12 @@ class DatasetBuildTests(unittest.TestCase):
                         BUILD_PLAYER_MATCH_STATS=True, BUILD_TEAM_MATCH_STATS=True,
                         BUILD_FIXTURES=True, BUILD_PLAYER_IDS=True, BUILD_TEAM_IDS=True, BUILD_MATCH_IDS=True):
                 self.assertEqual(dataset_builder.build_dataset(data, root / 'dataset'), 0)
-            packaged = root / 'dataset/premier-league/2024-2025'
+            packaged = root / 'dataset/raw_data/premier-league/2024-2025'
             self.assertEqual({p.name for p in packaged.iterdir()}, {
-                'events.csv', 'player_match_stats.csv', 'team_match_stats.csv', 'fixtures.csv'})
-            self.assertTrue((root / 'dataset/player_ids.csv').is_file())
-            self.assertTrue((root / 'dataset/team_ids.csv').is_file())
-            self.assertTrue((root / 'dataset/match_ids.csv').is_file())
+                'player_match_stats.csv', 'team_match_stats.csv', 'fixtures.csv'})
+            self.assertTrue((root / 'dataset/concordance/player_ids.csv').is_file())
+            self.assertTrue((root / 'dataset/concordance/team_ids.csv').is_file())
+            self.assertTrue((root / 'dataset/concordance/match_ids.csv').is_file())
             self.assertEqual(before, {p: p.read_bytes() for p in before})
             self.assertEqual(set(pd.read_csv(packaged / 'player_match_stats.csv').season), {'2024-2025'})
 

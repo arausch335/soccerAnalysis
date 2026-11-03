@@ -32,7 +32,7 @@ def retry_builds(root,archive):
     from collection.storageTransfer import safe_path
     root=Path(root);retried=[];held=[]
     for row in archive.diagnostics()['builds']:
-        if row['state']!='blocked':continue
+        if row['state'] not in ('blocked','waiting_inputs'):continue
         season=row['season'];safe_path(season+'/config.json','raw')
         job=root/season/'job.json'
         if job.is_file() and not job.is_symlink():

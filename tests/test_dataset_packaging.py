@@ -293,7 +293,7 @@ class DatasetManagerTests(unittest.TestCase):
             dataset_builder.package_collection(source, root/'dataset')
             destination=root/'dataset'/'premier-league'/'2024-2025'
             self.assertEqual({p.name for p in destination.iterdir()},
-                {'events.csv','player_match_stats.csv','team_match_stats.csv','fixtures.csv'})
+                {'player_match_stats.csv','team_match_stats.csv','fixtures.csv'})
             teams=pd.read_csv(destination/'team_match_stats.csv')
             self.assertEqual(len(teams),4)
             self.assertIn('period',teams)
@@ -303,7 +303,7 @@ class DatasetManagerTests(unittest.TestCase):
             fixtures=pd.read_csv(destination/'fixtures.csv')
             self.assertEqual(fixtures.iloc[0]['home_team'],'Home')
             self.assertEqual(fixtures.iloc[0]['matchweek'],1)
-            for name in ('events.csv','player_match_stats.csv','team_match_stats.csv','fixtures.csv'):
+            for name in ('player_match_stats.csv','team_match_stats.csv','fixtures.csv'):
                 self.assertEqual(set(pd.read_csv(destination/name)['season']),{'2024-2025'})
 
     def test_packaged_fixtures_exclude_qualifiers_and_replace_atomically(self):
@@ -317,7 +317,7 @@ class DatasetManagerTests(unittest.TestCase):
             qualifier={**main,'id':2,'tournament':{'qualificationOrPreliminary':True},
                        'homeTeam':{'id':3,'name':'Qualifier Home'}}
             (source/'schedule.json').write_text(json.dumps({'events':[main,qualifier]}))
-            for name in ('events.csv','player_match_stats.csv','fotmob_team_statistics.csv'):
+            for name in ('player_match_stats.csv','fotmob_team_statistics.csv'):
                 pd.DataFrame([{'match_id':1,'season':'2025/2026'}]).to_csv(source/name,index=False)
             destination=dataset_builder.package_collection(source,root/'dataset',replace=True)
             fixtures=pd.read_csv(destination/'fixtures.csv')

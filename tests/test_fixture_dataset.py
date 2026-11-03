@@ -75,7 +75,7 @@ class FixtureDatasetTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.base = Path(self.tmp.name)
         self.root = self.base / 'data'
-        self.output = self.base / 'dataset' / 'fixtures.csv'
+        self.output = self.base / 'dataset/concordance/metadata/compiled' / 'fixtures.csv'
         self.competition = FixtureCompetition('Premier League', 17, fotmob_id=47)
         self.clients = dict(sofascore=Sofa(), fotmob=Fot(), whoscored=Who())
         rows = [
@@ -401,7 +401,7 @@ class FixtureDatasetTests(unittest.TestCase):
         self.assertEqual((sofa['status'], sofa['source']), ('partial', 'stale_checkpoint'))
 
     def test_no_baseline_does_not_replace_existing_dataset(self):
-        self.output.parent.mkdir()
+        self.output.parent.mkdir(parents=True)
         self.output.write_text('existing\n')
         with self.assertRaisesRegex(ValueError, 'preserved'):
             self.build(offline=True)

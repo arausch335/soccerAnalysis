@@ -43,11 +43,12 @@ def inspect_queues(root,ensemble):
             counts=dict(db.execute('SELECT state,count(*) FROM uploads GROUP BY state'))
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='builds'").fetchone():
                 builds=dict(db.execute('SELECT state,count(*) FROM builds GROUP BY state'))
-                counts.update(pending_builds=builds.get('pending',0),blocked_builds=builds.get('blocked',0))
+                counts.update(pending_builds=builds.get('pending',0),blocked_builds=builds.get('blocked',0),waiting_input_builds=builds.get('waiting_inputs',0))
         if counts.get('pending',0):problems.append('Uploads are still incomplete')
         if counts.get('received',0):problems.append('Received uploads have not been incorporated')
         if counts.get('quarantined',0):problems.append('Uploads set aside for review have not been incorporated')
         if counts.get('pending_builds',0):problems.append('Season exports are still pending')
+        if counts.get('waiting_input_builds',0):problems.append('Season exports are waiting for saved collection inputs')
         if counts.get('blocked_builds',0):problems.append('Season exports are set aside for review')
     staged=list(Path(ensemble).rglob('transfer-manifest.json')) if Path(ensemble).exists() else []
     if staged:problems.append('Portable imports remain staged')

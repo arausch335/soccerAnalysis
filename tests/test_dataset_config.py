@@ -35,7 +35,7 @@ class DatasetConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             self.source(root)
-            output = root / 'dataset/bundesliga/2024-2025'
+            output = root / 'dataset/raw_data/bundesliga/2024-2025'
             output.mkdir(parents=True)
             (output / 'events.csv').write_text('existing event data\n')
             with patch.multiple(dataset_config, **{**DISABLED, 'BUILD_FIXTURES': True}), \
@@ -43,7 +43,7 @@ class DatasetConfigTests(unittest.TestCase):
                 self.assertEqual(dataset_builder.build_dataset(root / 'data', root / 'dataset'), 0)
             export.assert_not_called()
             self.assertTrue((output / 'fixtures.csv').is_file())
-            self.assertEqual((output / 'events.csv').read_text(), 'existing event data\n')
+            self.assertFalse((output / 'events.csv').exists())
             self.assertFalse((output / 'player_match_stats.csv').exists())
 
     def test_disabled_events_skip_compilation_and_package_only_requested_types(self):
@@ -60,6 +60,7 @@ class DatasetConfigTests(unittest.TestCase):
     def test_reference_only_config_skips_exports_and_selects_id_tables(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
+            self.source(root)
             with patch.multiple(dataset_config, **{**DISABLED, 'BUILD_PLAYER_IDS': True}), \
                     patch('collection.cli.main') as export, \
                     patch('dataset_builder.build_id_tables', return_value={}) as ids:
@@ -77,7 +78,7 @@ class DatasetConfigTests(unittest.TestCase):
                                 **{**DISABLED, 'BUILD_FIXTURES': True}), \
                     patch('dataset_builder.package_collection') as package:
                 self.assertEqual(dataset_builder.main([]), 0)
-            self.assertEqual(package.call_args.args, (source.resolve(), (root / 'dataset').resolve()))
+            self.assertEqual(package.call_args.args, (source.resolve(), (root / 'dataset/raw_data').resolve()))
 
     def test_invalid_switch_stops_before_writes(self):
         with patch.object(dataset_config, 'BUILD_EVENTS', 'False'), \

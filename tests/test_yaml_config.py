@@ -22,7 +22,7 @@ class YamlConfigTests(unittest.TestCase):
             document['paths'] = {'data': 'saved-input', 'dataset': 'ready-output'}
             document['collection'].update(action='resume', competitions=['Bundesliga'],
                                           seasons=['2024/25'], build_dataset=True)
-            document['dataset']['tables']['events'] = False
+            document['dataset']['tables']['fixtures'] = False
             loaded = self.load_document(root, document)
             self.assertEqual(loaded['DATA_ROOT'], (root / 'saved-input').resolve())
             self.assertEqual(loaded['DATASET_ROOT'], (root / 'ready-output').resolve())
@@ -35,7 +35,7 @@ class YamlConfigTests(unittest.TestCase):
     def test_typo_is_rejected_instead_of_silently_using_defaults(self):
         with tempfile.TemporaryDirectory() as folder:
             document = self.document()
-            document['dataset']['tables']['event'] = document['dataset']['tables'].pop('events')
+            document['dataset']['tables']['fixture'] = document['dataset']['tables'].pop('fixtures')
             with self.assertRaisesRegex(config.ConfigError, 'Unknown setting'):
                 self.load_document(Path(folder), document)
 
@@ -63,7 +63,7 @@ class YamlConfigTests(unittest.TestCase):
     def test_missing_setting_and_invalid_action_are_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             document = self.document()
-            del document['dataset']['tables']['events']
+            del document['dataset']['tables']['fixtures']
             with self.assertRaisesRegex(config.ConfigError, 'Missing setting'):
                 self.load_document(Path(folder), document)
             document = self.document()

@@ -716,6 +716,8 @@ def concord(snapshots, root, *, include_upcoming=True):
 
 
 def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=None, progress=None):
+    from concordance.layout import prepare
+    output=prepare(Path(output).parent)/Path(output).name
     if progress:progress('matching')
     canonical, attempts, counts = [], [], {}
     for competition, start, feeds in snapshots:
@@ -779,8 +781,8 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
     atomic_json(folder / 'manifest.json', manifest)
     from providers.teamHistory import export_history
     export_history(root,output.parent)
-    from concordance.parquet import refresh
-    manifest['parquet']=refresh(root,output.parent,rows=rows)
+    from concordance.publication import refresh
+    manifest['publication']=refresh(root,output.parent,rows=rows)
     return manifest
 
 
@@ -791,7 +793,9 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
           send_to_main=SEND_TO_MAIN, api_only=False, now=None, report=print,
           live_reports=True, ensemble_root=None, progress=None):
     root = Path(config.DATA_ROOT if data_root is None else data_root)
-    output = Path(config.DATASET_ROOT / 'fixtures.csv' if output_csv is None else output_csv)
+    from concordance.layout import prepare
+    requested = Path(config.DATASET_ROOT / 'fixtures.csv' if output_csv is None else output_csv)
+    output = prepare(requested.parent)/requested.name
     current = current_season_start(now)
     end = current if end_season is None else end_season
     if type(start_season) is not int or type(end) is not int or not 2010 <= start_season <= end <= current:
@@ -867,7 +871,8 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
             schedule_coverage_complete=manifest['schedule_coverage_complete'],count_checks_passed=manifest['count_checks_passed'],
             required_schedule_coverage_complete=manifest['required_schedule_coverage_complete'],
             registry_version=manifest['registry_version'],registry_conflicts=manifest['registry_conflicts'])
-    report(f"Wrote {manifest['rows']} fixtures to {output.parent / 'concordances/fixtures/fixtures'} (Parquet chunks). Required schedule coverage complete: {manifest['required_schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
+    from concordance.publication import folder as publication_folder
+    report(f"Wrote {manifest['rows']} fixtures to {publication_folder(output.parent) / 'fixtures.csv'} (CSV). Required schedule coverage complete: {manifest['required_schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
     return manifest
 
 

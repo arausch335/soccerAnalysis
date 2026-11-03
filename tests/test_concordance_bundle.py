@@ -98,8 +98,8 @@ class IntegrationTests(unittest.TestCase):
 class BundleTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
-        self.base=Path(self.temp.name);self.root=self.base/'data';self.data=self.base/'dataset'
-        self.data.mkdir();self.root.mkdir()
+        self.base=Path(self.temp.name);self.root=self.base/'data';self.data=self.base/'dataset/concordance/metadata/compiled'
+        self.data.mkdir(parents=True);self.root.mkdir()
         fixtures=[dict(match_id=str(mid),sofascore_match_id=str(mid),date='2024-08-10',
             competition='Premier League',season='2024-2025',home_team_id='1',away_team_id='2',
             home_team='Home',away_team='Away',sofascore_home_team_id='1',sofascore_away_team_id='2') for mid in (10,11)]

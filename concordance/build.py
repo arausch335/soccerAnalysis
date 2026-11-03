@@ -29,9 +29,11 @@ TABLES=('full/fixtures.csv','full/entities.csv','full/teams.csv',
 
 
 def invalidate_bundle(dataset,reason):
+    from .layout import compiled_root, public_root
+    public=public_root(dataset);dataset=compiled_root(dataset)
     changed=False
     for path,formats in ((Path(dataset)/'concordance/bundle.json',(FORMAT,'soccer-concordance-bundle-v2')),
-                         (Path(dataset)/'concordances/manifest.json',('soccer-concordances-parquet-v1',))):
+                         (public/'concordance/metadata/manifest.json',('soccer-concordance-csv-v1',))):
         if not path.exists():continue
         manifest=json.loads(path.read_text(encoding='utf-8'))
         if manifest.get('format') not in formats:continue
@@ -274,6 +276,8 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
     root,dataset=Path(root).resolve(),Path(dataset).resolve()
     if root==dataset or root in dataset.parents or dataset in root.parents:
         raise ValueError('Raw data and dataset roots must be separate directories')
+    from .layout import prepare
+    dataset=prepare(dataset)
     output=Path(output).resolve() if output else dataset/'concordance'
     confirmed=verified_integration(root,integration_report)
     if not confirmed and not allow_unconfirmed:raise ValueError('Run tools.audit_integration on MSI first; a ready integration report is required')
@@ -300,7 +304,8 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
         excluded={mid for p,mid in excluded_pairs if p=='sofascore'}
         raw['observed']-=excluded_pairs
         raw['match']=[r for r in raw['match'] if not any((p,v) in excluded_pairs for p in PROVIDERS for v in r['_native'].get(p+'_id',[]))]
-        for path in sorted(dataset.glob('*/*/fixtures.csv')):
+        from .layout import public_root
+        for path in sorted((public_root(dataset)/'raw_data').glob('*/*/fixtures.csv')):
             if not re.fullmatch(r'\d{4}-\d{4}',path.parent.name):continue
             for row in read_csv(path):
                 mid=row.get('match_id','')
@@ -480,7 +485,7 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
                 target=output/relative;target.parent.mkdir(parents=True,exist_ok=True)
                 atomic_replace(stage/relative,target)
             (output/'scraped/matches.csv').unlink(missing_ok=True)
-        from .parquet import publish
+        from .publication import publish
         publish(root,dataset,full_fixtures,matches=match_references,teams=full_teams,players=player_rows,
                 entities=entities,registry=registry,confirmed=confirmed)
         return manifest

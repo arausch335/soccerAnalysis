@@ -43,15 +43,15 @@ class CompiledDeliveryTests(unittest.TestCase):
         from concordance.parquet import validate,read_table
         from collection.compiledDelivery import fixture_files
         case=ParquetTests();case.setUp()
-        try:case.write(output=self.source/'concordances',chunk_rows=2)
+        try:case.write(output=self.source/'concordance',chunk_rows=2)
         finally:case.doCleanups()
         files=fixture_files(self.source)
-        self.assertTrue(all(name.endswith(('.parquet','manifest.json')) for name in files))
+        self.assertTrue(all(name.endswith(('.csv','manifest.json')) for name in files))
         result=deliver(self.root,self.source,report=lambda *a,**k:None)
         self.assertEqual(result['state'],'installed_on_main')
-        self.assertEqual(validate(self.output/'concordances')['rows'],3)
-        self.assertEqual(len(read_table(self.output/'concordances','match_ids')),3)
-        self.assertFalse(list((self.output/'concordances').rglob('*.csv')))
+        self.assertEqual(validate(self.output/'concordance')['rows'],3)
+        self.assertEqual(len(read_table(self.output/'concordance','match_ids')),3)
+        self.assertTrue((self.output/'concordance/fixtures.csv').is_file())
         self.assertEqual(json.loads(receipt_path(self.main).read_text())['route'],'worker_to_main')
 
     def test_compiled_bundle_is_installed_on_main_before_ack_without_raw_outbox(self):
@@ -87,10 +87,10 @@ class CompiledDeliveryTests(unittest.TestCase):
         atomic_json(self.source/'fixture_concordance/manifest.json',{'schedule_coverage_complete':False})
         result=deliver(self.root,self.source,report=lambda *a,**k:None)
         self.assertEqual(result['state'],'installed_on_main')
-        _,received=read_table(self.output/'fixtures.csv')
+        _,received=read_table(self.output/'concordance/metadata/compiled/fixtures.csv')
         self.assertEqual(received[0]['whoscored_match_id'],'100')
         self.assertEqual(received[0]['whoscored_fixture_check'],'bridge_only')
-        self.assertFalse(json.loads((self.output/'fixture_concordance/manifest.json').read_text())['schedule_coverage_complete'])
+        self.assertFalse(json.loads((self.output/'concordance/metadata/compiled/fixture_concordance/manifest.json').read_text())['schedule_coverage_complete'])
 
     def test_offline_bundle_remains_queued_and_retries_after_restart(self):
         atomic_json(system_path(self.root, 'reporting.json'), {**self.options, 'url': 'http://127.0.0.1:1'})

@@ -207,13 +207,13 @@ class FixtureAttemptTests(unittest.TestCase):
     def test_export_separates_request_completion_and_count_checks(self):
         with tempfile.TemporaryDirectory() as tmp:
             comp=FixtureCompetition('Premier League',17)
-            root=Path(tmp);path=root/'dataset/fixtures.csv'
+            root=Path(tmp);path=root/'dataset/concordance/metadata/compiled/fixtures.csv'
             coverage=[dict(competition=comp.name,season='2017-2018',provider='sofascore',status='complete',fixtures=2,source='test',error='')]
             old={**event(1),'status':{'type':'postponed'}}
             result=export([(comp,2017,{'sofascore':[old,event(2,day=DAY+86400)]})],coverage,root,path)
             self.assertEqual(result['rows'],1);self.assertEqual(result['fixture_attempts'],1)
             self.assertTrue(result['schedule_coverage_complete']);self.assertFalse(result['count_checks_passed'])
-            with (root/'dataset/fixture_concordance/coverage.csv').open() as f:row=next(csv.DictReader(f))
+            with (root/'dataset/concordance/metadata/compiled/fixture_concordance/coverage.csv').open() as f:row=next(csv.DictReader(f))
             self.assertEqual((row['raw_fixtures'],row['canonical_fixtures'],row['expected_finished']),('2','1','380'))
 
 

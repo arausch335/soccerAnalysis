@@ -84,6 +84,14 @@ class MSIRecoveryTests(unittest.TestCase):
             self.assertTrue(any('pending' in p for p in problems))
             self.assertTrue(any('set aside' in p for p in problems))
 
+    def test_audit_keeps_waiting_input_builds_visible_as_unfinished_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);archive=Archive(root)
+            archive.schedule_build('bundesliga/2019-2020');archive.refresh_build_inputs()
+            counts,problems=inspect_queues(root,root/'ensemble')
+            self.assertEqual(counts['waiting_input_builds'],1)
+            self.assertTrue(any('waiting for saved collection inputs' in p for p in problems))
+
     def test_local_error_report_includes_attempts_and_discovery_but_no_payloads(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);season=root/'champions-league-qualifiers/2021-2022';season.mkdir(parents=True)

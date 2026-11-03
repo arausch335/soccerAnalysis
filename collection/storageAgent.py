@@ -108,14 +108,36 @@ def _install_dataset(peer,manifest,output,staging_root,*,exclude=()):
             if target.is_file() and target.stat().st_size==item['size'] and digest(target)==item['sha256']:link_or_copy(target,incoming)
             else:peer.download(item['sha256'],incoming)
             if incoming.stat().st_size!=item['size'] or digest(incoming)!=item['sha256']:raise ValueError('Dataset file differs from manifest')
+        csv_bundle=stage/'concordance'
+        csv_publication=(csv_bundle/'metadata/manifest.json').is_file()
+        if csv_publication:
+            from concordance.publication import validate
+            validate(csv_bundle)
+            # Keep this computer's private linker inputs out of the transfer contract.
+            for name in ('compiled','legacy'):
+                if (output/'concordance/metadata'/name).is_dir():
+                    shutil.copytree(output/'concordance/metadata'/name,csv_bundle/'metadata'/name,dirs_exist_ok=True,copy_function=link_or_copy)
+            local_state=output/'concordance/metadata/package-state.json'
+            if local_state.is_file():
+                link_or_copy(local_state,csv_bundle/'metadata/package-state.json')
+            target=output/'concordance';previous=output/('.concordance-previous-'+uuid4().hex)
+            if target.exists():atomic_replace(target,previous)
+            try:atomic_replace(csv_bundle,target)
+            except BaseException:
+                if previous.exists():atomic_replace(previous,target)
+                raise
+            if previous.exists():shutil.rmtree(previous)
+            from concordance.layout import compiled_root
+            from concordance.publication import read_registry
+            atomic_json(compiled_root(output)/'fixture_concordance/alex_registry.json',read_registry(target),sort_keys=True)
         parquet=stage/'concordances'
         if (parquet/'manifest.json').is_file():
-            from concordance.parquet import validate
+            from concordance.legacy_parquet import validate
             validate(parquet)
         # The receipt is updated only after every publication file is installed.
         # An interrupted installation is retried from the same verified manifest.
         for item in files:
-            if not item['path'].startswith('concordances/'):atomic_copy(stage/item['path'],output/item['path'])
+            if not item['path'].startswith('concordances/') and not (csv_publication and item['path'].startswith('concordance/')):atomic_copy(stage/item['path'],output/item['path'])
         if (parquet/'manifest.json').is_file():
             previous=output/('.concordances-previous-'+uuid4().hex);target=output/'concordances'
             if target.exists():atomic_replace(target,previous)
@@ -124,7 +146,7 @@ def _install_dataset(peer,manifest,output,staging_root,*,exclude=()):
                 if previous.exists():atomic_replace(previous,target)
                 raise
             if previous.exists():shutil.rmtree(previous)
-            from concordance.parquet import read_registry
+            from concordance.legacy_parquet import read_registry
             atomic_json(output/'fixture_concordance/alex_registry.json',read_registry(target),sort_keys=True)
         bundle=stage/'concordance/bundle.json'
         if bundle.is_file() and json.loads(bundle.read_text(encoding='utf-8')).get('format')=='soccer-concordance-bundle-v3':
@@ -366,6 +388,7 @@ class StorageAgent:
                 changed=True
                 self.log(f'[Storage] Set aside upload {mid} ({manifest["season"]}) for review: {type(exc).__name__}: {exc}')
                 continue
+        archive.refresh_build_inputs()
         for season,build_revision in archive.build_jobs():
             check()
             self.maintenance_status={'state':'building_dataset','season':season}
@@ -380,34 +403,51 @@ class StorageAgent:
                     source=Path(temporary)/'s';output=Path(temporary)/'d';output.mkdir()
                     snapshot_data(self.root,source,check=check)
                     require_space(self.directory,sum(path.stat().st_size for path in (source/season).rglob('*') if path.is_file())*3)
-                    if (self.output/season).exists():shutil.copytree(self.output/season,output/season)
-                    if (self.output/'fixtures.csv').is_file():shutil.copyfile(self.output/'fixtures.csv',output/'fixtures.csv')
-                    if build_dataset(source,output,names=[collection_name(source/season)]):raise ValueError('Season dataset build failed')
-                    # New statistics must not leave an older ID bundle labelled
-                    # ready for R. Publish the invalidation with the new tables.
-                    old_bundle=self.output/'concordance/bundle.json'
-                    if old_bundle.is_file():
-                        target=output/'concordance/bundle.json';target.parent.mkdir(parents=True,exist_ok=True)
-                        shutil.copyfile(old_bundle,target)
-                        from concordance.build import invalidate_bundle
-                        invalidate_bundle(output,'New statistics exported; re-audit integration and rebuild concordances')
-                    public_manifest=self.output/'concordances/manifest.json'
-                    if public_manifest.is_file():
-                        destination=output/'concordances/manifest.json';destination.parent.mkdir(parents=True,exist_ok=True)
-                        shutil.copyfile(public_manifest,destination)
-                        from concordance.build import invalidate_bundle
-                        invalidate_bundle(output,'New statistics exported; re-audit integration and rebuild concordances')
-                    check()
-                    updates=dataset_files(output);files=dataset_files(self.output);files.update(updates)
-                    manifest={'format':FORMAT,'kind':'dataset','worker':self.worker,'files':[
-                        {'path':p,'size':v.stat().st_size,'sha256':digest(v)} for p,v in sorted(files.items())]}
-                    archive.publish(manifest,files,check=check)
-                    from .ensemble import atomic_copy
-                    for relative,path in updates.items():
-                        check();require_space(self.output,path.stat().st_size)
-                        atomic_copy(path,self.output/relative)
+                    from .datasetBuildCache import seed,commit
+                    from concordance import package_state as tracking
+                    seed(self.output,output,season,check=check)
+                    state_path=output/'concordance/metadata/package-state.json'
+                    previous_state=state_path.read_bytes() if state_path.is_file() else None
+                    with tracking.snapshot_inputs(self.root,source):
+                        if build_dataset(source,output,names=[collection_name(source/season)]):
+                            raise ValueError('Season dataset build failed')
+                        current_state=state_path.read_bytes() if state_path.is_file() else None
+                        published=archive.publication()
+                        retained=tracking.load(state_path)
+                        rebuilt=(previous_state is None or previous_state!=current_state or published is None
+                                 or retained.get('archive_publication')!=identifier(published))
+                        if rebuilt:
+                            from concordance.build import invalidate_bundle
+                            invalidate_bundle(output,'New statistics exported; re-audit integration and rebuild concordances')
+                            check()
+                            updates=dataset_files(output);files=dataset_files(self.output)
+                            canonical='concordance/metadata/manifest.json' in updates
+                            if canonical:
+                                from concordance.publication import TABLES,table_path
+                                allowed={'concordance/metadata/manifest.json', *('concordance/'+table_path(name) for name in TABLES)}
+                                files={name:path for name,path in files.items() if name in allowed or name.startswith('raw_data/')}
+                            files.update(updates)
+                            manifest={'format':FORMAT,'kind':'dataset','worker':self.worker,'files':[
+                                {'path':p,'size':v.stat().st_size,'sha256':digest(v)} for p,v in sorted(files.items())]}
+                            archive.publish(manifest,files,check=check)
+                            if canonical:
+                                from concordance.layout import prepare,retire_legacy
+                                prepare(self.output)
+                                class Objects:
+                                    def download(inner,sha,target):
+                                        check();link_or_copy(archive.objects/sha,target)
+                                install_dataset(Objects(),manifest,self.output,self.directory/'local-publication')
+                                retire_legacy(self.output)
+                            else:
+                                from .ensemble import atomic_copy
+                                for relative,path in updates.items():
+                                    check();require_space(self.output,path.stat().st_size)
+                                    atomic_copy(path,self.output/relative)
+                            commit(source,output,self.output,publication_id=identifier(manifest),check=check)
+                        else:
+                            self.log('[Storage] Unchanged saved dataset; reusing publication: '+season)
                 archive.published(season,build_revision)
-                self.log('[Storage] Dataset published for Main: '+season)
+                self.log('[Storage] Dataset '+('published' if rebuilt else 'reused')+' for Main: '+season)
                 # Recheck new raw arrivals between expensive season exports.
                 # An initial backlog must not monopolize incorporation for hours.
                 changed=True
@@ -423,8 +463,10 @@ class StorageAgent:
                 raise
         archive.collected()
         counts=archive.status();held=counts['quarantined'];blocked=counts['blocked_builds']
+        waiting=counts.get('waiting_input_builds',0)
         self.maintenance_status=({'state':'review_needed','message':f'{held} upload(s) and {blocked} dataset build(s) set aside; other work continues'}
-                                 if held or blocked else {'state':'current'})
+                                 if held or blocked else {'state':'waiting_inputs','message':f'{waiting} dataset job(s) need saved collection inputs; ready jobs continue'}
+                                 if waiting else {'state':'current'})
         return changed
 
     def log_report(self,message,**kwargs):self.log(message)

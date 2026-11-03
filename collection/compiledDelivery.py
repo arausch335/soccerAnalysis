@@ -20,10 +20,11 @@ def receipt_path(root):
 
 def fixture_files(output, *, fixture_csv=None):
     output = Path(output)
-    from concordance.parquet import exists,folder,validate
+    from concordance.publication import exists,folder,validate,manifest_path,table_path,TABLES
     if exists(output):
         validate(folder(output))
-        return {p.relative_to(output).as_posix():p for p in folder(output).rglob('*') if p.is_file()}
+        paths=[manifest_path(folder(output)), *(folder(output)/table_path(name) for name in TABLES)]
+        return {'concordance/'+p.relative_to(folder(output)).as_posix():p for p in paths}
     files = {name: output / name for name in FIXTURE_DATASET_PATHS
              if name in FIXTURE_REQUIRED_PATHS or (output / name).is_file()}
     if fixture_csv is not None:
@@ -103,7 +104,10 @@ class CompiledReceiver(Archive):
         validate_manifest(manifest)
         paths = {f['path'] for f in manifest['files']}
         parquet=bool('concordances/manifest.json' in paths and all(p.startswith('concordances/') for p in paths))
-        if manifest['kind'] != 'dataset' or manifest['worker'] != worker or not (parquet or FIXTURE_REQUIRED_PATHS <= paths <= FIXTURE_DATASET_PATHS):
+        from concordance.publication import TABLES, table_path
+        csv_paths={'concordance/metadata/manifest.json', *('concordance/'+table_path(name) for name in TABLES)}
+        csv_bundle=paths==csv_paths
+        if manifest['kind'] != 'dataset' or manifest['worker'] != worker or not (csv_bundle or parquet or FIXTURE_REQUIRED_PATHS <= paths <= FIXTURE_DATASET_PATHS):
             raise PermissionError('Only owned compiled fixture bundles may be delivered to Main')
         mid = identifier(manifest)
         with self.lock, self.connect() as db:
@@ -125,18 +129,33 @@ class CompiledReceiver(Archive):
                     link_or_copy(receiver.objects / check_hash(sha), target)
             from .storageAgent import install_dataset
             install_dataset(Objects(), manifest, self.output, self.directory / 'downloads')
-            if any(f['path']=='concordances/manifest.json' for f in manifest['files']):
-                # Keep the internal linker input aligned with a direct fixture
-                # delivery before reconciling it with Main's existing players.
+            installed = {f['path'] for f in manifest['files']}
+            from concordance.layout import prepare
+            compiled=prepare(self.output)
+            if installed & {'concordances/manifest.json','concordance/metadata/manifest.json'}:
                 import pandas as pd
                 from collection.files import atomic_csv
-                from concordance.parquet import wide_rows
-                atomic_csv(pd.DataFrame(wide_rows(self.output)),self.output/'fixtures.csv')
+                if 'concordances/manifest.json' in installed:
+                    from concordance.legacy_parquet import wide_rows, reference_rows
+                else:
+                    from concordance.publication import wide_rows, reference_rows
+                atomic_csv(pd.DataFrame(wide_rows(self.output)),compiled/'fixtures.csv')
+                for kind in ('match','team','player'):
+                    records=reference_rows(self.output,kind)
+                    if records:atomic_csv(pd.DataFrame(records),compiled/(kind+'_ids.csv'))
+            else:
+                # A newer legacy delivery replaces previous private linker inputs too.
+                import shutil
+                for name in installed:
+                    source=self.output/name;target=compiled/name
+                    target.parent.mkdir(parents=True,exist_ok=True)
+                    shutil.copy2(source,target)
             from concordance.build import invalidate_bundle
             invalidate_bundle(self.output,'New fixture history received; rebuild the full concordance snapshot')
             # A legacy seven-file snapshot must not inherit a newer audit.
             installed = {f['path'] for f in manifest['files']}
             for name in FIXTURE_DATASET_PATHS - FIXTURE_REQUIRED_PATHS - installed - {'concordances/manifest.json'}:
+                (compiled / name).unlink(missing_ok=True)
                 (self.output / name).unlink(missing_ok=True)
             from fixtures.identityRefresh import reconcile_exports
             reconcile_exports(self.root,self.output,already_locked=True)

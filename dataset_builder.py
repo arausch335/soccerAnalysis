@@ -27,7 +27,6 @@ from providers.team_crosswalk import VERIFIED_TEAM_ID_OVERRIDES
 from storage.pandasStore import PandasStore, atomic_replace
 
 SEASON_TABLES = {
-    'events': ('events.csv', 'events.csv'),
     'player_match_stats': ('player_match_stats.csv', 'player_match_stats.csv'),
     'team_match_stats': ('fotmob_team_statistics.csv', 'team_match_stats.csv'),
     'fixtures': ('schedule.json', 'fixtures.csv'),
@@ -497,9 +496,38 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
     player_rows = {};
     team_rows = {};
     match_rows = {}
+    from concordance import package_state as tracking
+    recipe_id=tracking.recipe()
+    context=tracking.identity_context(data_root)
     for number, source in enumerate(sources, 1):
-        print(f'Indexing IDs [{number}/{len(sources)}]: {source.parent.name}/{source.name}', flush=True)
-        _source_id_rows(source, player_rows, team_rows, match_rows, data_root)
+        key=tracking.digest(str(tracking.logical_root(source).resolve()))
+        cache=Path(output_root)/'id_cache'/(key+'.json')
+        signature=tracking.digest([tracking.source_signature(source),recipe_id,context])
+        try:
+            saved=json.loads(cache.read_text(encoding='utf-8'))
+            rows=saved.get('rows')
+            if (saved.get('signature')!=signature or not isinstance(rows,list) or len(rows)!=3
+                    or any(not isinstance(group,list) for group in rows)):
+                saved=None
+        except (OSError,ValueError,AttributeError):
+            saved=None
+        if saved is None:
+            print(f'Indexing IDs [{number}/{len(sources)}]: {source.parent.name}/{source.name}', flush=True)
+            contributions=[{}, {}, {}]
+            _source_id_rows(source, *contributions, data_root)
+            saved={'signature':signature, 'rows':[
+                [[list(key),row] for key,row in rows.items()] for rows in contributions]}
+            from storage.pandasStore import atomic_json
+            atomic_json(cache,saved)
+        else:
+            print(f'Reusing IDs [{number}/{len(sources)}]: {source.parent.name}/{source.name}', flush=True)
+        for destination,records in zip((player_rows,team_rows,match_rows),saved['rows']):
+            for key,row in records:
+                key=tuple(key)
+                if key not in destination: destination[key]=row
+                else:
+                    for column,values in row['_ids'].items():
+                        destination[key]['_ids'][column].extend(values)
     _backfill_unambiguous_ids(player_rows);
     _backfill_unambiguous_ids(team_rows)
     output = Path(output_root);
@@ -756,7 +784,7 @@ def _build_settings():
     if any(type(value) is not bool for value in values.values()):
         raise ValueError('Dataset switches in config/settings.yaml must be True or False')
     tables = tuple(name for name, flag in (
-        ('events', 'BUILD_EVENTS'), ('player_match_stats', 'BUILD_PLAYER_MATCH_STATS'),
+        ('player_match_stats', 'BUILD_PLAYER_MATCH_STATS'),
         ('team_match_stats', 'BUILD_TEAM_MATCH_STATS'), ('fixtures', 'BUILD_FIXTURES'))
         if values[flag])
     if not tables and not any(values[name] for name in ('BUILD_PLAYER_IDS', 'BUILD_TEAM_IDS', 'BUILD_MATCH_IDS')):
@@ -782,9 +810,12 @@ def _build_reference_csvs(root, output, settings, *, offline=False):
     return written
 
 
-def build_dataset(data_root=None, dataset_root=None, names=None, *, references_only=False, offline=False):
+def build_dataset(data_root=None, dataset_root=None, names=None, *, references_only=False, offline=True, mode="incremental"):
     """Build types enabled in config/settings.yaml from saved local collection data."""
     from collection.cli import main as collect
+    from concordance import package_state as tracking
+    if mode not in ('incremental', 'rebuild'):
+        raise ValueError('Packaging mode must be incremental or rebuild')
     tables, settings = _build_settings()
     if references_only:
         tables = ()
@@ -792,68 +823,145 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
     output = Path(config.DATASET_ROOT if dataset_root is None else dataset_root).expanduser().resolve()
     if root == output or root in output.parents or output in root.parents:
         raise ValueError('Data and dataset roots must be separate directories')
-    if settings['STANDARDIZE_FIXTURE_TEAM_NAMES'] and not (output / 'fixtures.csv').is_file():
-        raise ValueError('Standardizing fixture names requires dataset/fixtures.csv from the fixture builder')
+    from concordance.layout import prepare, retire_legacy
+    compiled = prepare(output)
+    state_path = output/'concordance/metadata/package-state.json'
+    state = tracking.load(state_path)
+    recipe_id = tracking.recipe()
+    season_state = dict(state.get('seasons', {}))
+    sources = discover_collections(root, 'config.json')
+    source_inputs = {p.relative_to(root).as_posix():tracking.source_signature(p) for p in sources}
+    context = tracking.identity_context(root)
+    changed_sources = [p for p in sources if mode == 'rebuild' or state.get('recipe') != recipe_id
+                       or state.get('identity_context') != context
+                       or state.get('source_inputs', {}).get(p.relative_to(root).as_posix())
+                          != source_inputs[p.relative_to(root).as_posix()]]
+    before = tracking.global_signature(root, compiled, sources, settings, recipe_id)
+    publication = tracking.publication_outputs(output)
+    needs_references = (mode == 'rebuild' or state.get('global') != before
+                        or state.get('publication') != publication
+                        or any(value is None for value in publication.values()))
+    print(f'Packaging mode: {mode}', flush=True)
+    if settings['STANDARDIZE_FIXTURE_TEAM_NAMES'] and not (compiled / 'fixtures.csv').is_file():
+        raise ValueError('Standardizing fixture names requires compiled fixtures from the fixture builder')
     reference_names = [name.removeprefix('BUILD_').lower() for name in
                        ('BUILD_PLAYER_IDS', 'BUILD_TEAM_IDS', 'BUILD_MATCH_IDS') if settings[name]]
     print('Dataset types: ' + ', '.join([*tables, *reference_names]), flush=True)
     failures = []
     if tables:
-        requested = config.COLLECTION_NAMES if names is None else names
+        requested = names
         selected = (list(requested) if requested else
                     [collection_name(path) for path in discover_collections(root, 'job.json')])
-        if not selected:
-            raise ValueError(f'No saved seasons found under {root}')
+        if not selected and not (compiled/'fixtures.csv').is_file():
+            from concordance.publication import exists
+            if not exists(output): raise ValueError(f'No saved seasons or compiled fixtures found under {root} and {output}')
         selected = list(dict.fromkeys(selected))
         for name in selected:
             if not (collection_directory(root, name) / 'job.json').is_file():
                 raise ValueError(f'Unknown saved season: {name}')
         for index, name in enumerate(selected, 1):
+            source = collection_directory(root, name)
+            previous = season_state.get(name, {})
+            if not isinstance(previous,dict):previous={}
+            inputs = tracking.source_signature(source)
+            exports = tracking.season_outputs(source, output, tables)
+            if (mode == 'incremental' and previous.get('inputs') == inputs
+                    and previous.get('recipe') == recipe_id and previous.get('root') == str(tracking.logical_root(root))
+                    and previous.get('outputs') == exports and all(value is not None for value in exports.values())):
+                print(f'[{index}/{len(selected)}] Unchanged season: {name}', flush=True)
+                continue
+            needs_references = True
             print(f'[{index}/{len(selected)}] Building dataset: {name}', flush=True)
             try:
                 # Fixture-only builds read schedules without exporting other CSVs.
                 if any(name != 'fixtures' for name in tables):
                     code = collect(['export', '--data-root', str(root), '--name', name,
-                                    '--compile-events' if 'events' in tables else '--no-compile-events'])
+                                    '--no-compile-events'])
                     if code:
                         failures.append(name)
                         continue
-                destination = package_collection(collection_directory(root, name), output,
+                destination = package_collection(collection_directory(root, name), output / 'raw_data',
                                                  replace=True, tables=tables)
                 print(f'Packaged dataset: {destination}', flush=True)
+                season_state[name] = {'inputs':tracking.source_signature(source),
+                                      'recipe':recipe_id, 'root':str(tracking.logical_root(root)),
+                                      'outputs':tracking.season_outputs(source, output, tables)}
             except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
                 print(f'Failed dataset for {name}: {exc}', flush=True)
                 failures.append(name)
+    if not failures and not needs_references:
+        print('Dataset is up to date; no new or changed saved inputs.', flush=True)
+        return 0
     if not failures:
         try:
-            _build_reference_csvs(root, output, settings, offline=offline)
+            if mode == 'rebuild' and (compiled/'id_cache').exists():
+                shutil.rmtree(compiled/'id_cache')
+            if discover_collections(root, 'config.json'):
+                _build_reference_csvs(root, compiled, settings, offline=offline)
+            if changed_sources or not (compiled/'fixtures.csv').is_file():
+                _seed_fixture_catalog(root, compiled, sources=changed_sources)
+            from concordance.publication import refresh, folder, validate
+            if refresh(root, compiled, report=print) is None:
+                raise ValueError('No entity-keyed compiled fixtures found')
+            validate(folder(output))
+            retire_legacy(output)
+            tracking.save(state_path, {'seasons':season_state, 'recipe':recipe_id,
+                'identity_context':tracking.identity_context(root),
+                'source_inputs':{p.relative_to(root).as_posix():tracking.source_signature(p) for p in sources},
+                'global':tracking.global_signature(root, compiled, sources, settings, recipe_id),
+                'publication':tracking.publication_outputs(output)})
         except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
             print(f'Failed combined ID tables: {exc}', flush=True)
             failures.append('ID tables')
     return 2 if failures else 0
 
 
-def package_dataset(data_root, dataset_root, names=None, *, references_only=False):
-    """Package this computer's saved seasons and the existing R Parquet inputs."""
-    from concordance.parquet import refresh, folder, validate
-    root = Path(data_root).expanduser().resolve()
-    output = Path(dataset_root).expanduser().resolve()
-    if root == output or root in output.parents or output in root.parents:
-        raise ValueError('Data and dataset roots must be separate directories')
-    # Local packaging is independent of the worker plan/current season defaults.
-    selected = (list(names) if names is not None else
-                [collection_name(path) for path in discover_collections(root, 'job.json')])
-    if selected or references_only:
-        code = build_dataset(root, output, selected, references_only=references_only, offline=True)
-        if code: return code
-    elif not (output / 'fixtures.csv').is_file() and not (folder(output) / 'manifest.json').is_file():
-        raise ValueError(f'No saved seasons or compiled fixtures found under {root} and {output}')
-    if refresh(root, output, report=print) is None:
-        raise ValueError('No entity-keyed compiled fixture history found; collect or receive fixtures first')
-    validate(folder(output))
-    print(f'Packaged local dataset: {output}', flush=True)
-    print(f'R Parquet concordances: {folder(output)}', flush=True)
-    return 0
+def _seed_fixture_catalog(root, compiled, *, sources=None):
+    """Merge saved local schedules into the compiled fixture catalog without losing reviewed links."""
+    from concordance.publication import exists
+    sources=discover_collections(root, 'config.json') if sources is None else sources
+    if not sources:return
+    if (compiled/'fixtures.csv').is_file():
+        rows=pd.read_csv(compiled/'fixtures.csv',dtype=str,keep_default_na=False).to_dict('records')
+    elif exists(compiled):
+        from concordance.publication import wide_rows
+        rows=wide_rows(compiled)
+    else: rows=[]
+    known={(p,str(row[p+'_match_id'])):row for row in rows for p in ('sofascore','fotmob','whoscored') if row.get(p+'_match_id')}
+    observed=set()
+    for source in sources:
+        if not (source/'schedule.json').is_file(): continue
+        settings=json.loads((source/'config.json').read_text(encoding='utf-8'))
+        provider=settings.get('id_namespace',settings.get('baseline_provider','sofascore'))
+        stats=source/'player_match_stats.csv'
+        if stats.is_file():
+            for chunk in pd.read_csv(stats,dtype=str,keep_default_na=False,chunksize=50000):
+                if 'match_id' in chunk: observed.update((provider,str(mid)) for mid in chunk.match_id)
+        for row in _fixtures(source,settings).fillna('').to_dict('records'):
+            row.update(baseline_provider=provider,has_player_stats=False,is_scheduled_for_scraping=False)
+            row[provider+'_match_id']=str(row['match_id'])
+            for side in ('home','away'):row[provider+'_'+side+'_team_id']=str(row[side+'_team_id'])
+            key=(provider,str(row['match_id']))
+            if key in known:
+                # Retain reviewed cross-provider evidence and stable entity IDs.
+                known[key].update({k:v for k,v in row.items() if k not in ('has_player_stats','is_scheduled_for_scraping')})
+            else:
+                rows.append(row);known[key]=row
+    if not rows: return
+    from fixtures.sharedIds import assign_ids
+    from fixtures.availability import annotate, stats_evidence, scrape_targets
+    # The shared registry supplies canonical match/team IDs; keep the catalog compact.
+    assign_ids(root,rows,folder=compiled/'fixture_concordance')
+    observed.update(stats_evidence(root,compiled))
+    observed.update((p,str(row[p+'_match_id'])) for row in rows for p in ('sofascore','fotmob','whoscored')
+                    if str(row.get('has_player_stats','')).lower()=='true' and row.get(p+'_match_id'))
+    annotate(rows,observed=observed,targets=scrape_targets())
+    atomic_csv(pd.DataFrame(rows),compiled/'fixtures.csv')
+
+
+def package_dataset(data_root, dataset_root, names=None, *, references_only=False, mode="incremental"):
+    """Compatibility alias for the single saved-data dataset builder."""
+    return build_dataset(data_root,dataset_root,names,references_only=references_only,offline=True,mode=mode)
 
 
 def main(argv=None, *, package=False):
@@ -865,11 +973,17 @@ def main(argv=None, *, package=False):
     parser.add_argument('--dataset-root', type=Path, default=config.DATASET_ROOT)
     parser.add_argument('--name', action='append')
     parser.add_argument('--references-only', action='store_true')
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--rebuild', action='store_const', const='rebuild', dest='mode',
+                       help='Regenerate every selected saved season and combined concordance; ignore caches')
+    modes.add_argument('--incremental', action='store_const', const='incremental', dest='mode',
+                       help='Process only new/changed seasons and missing/changed outputs (default)')
+    parser.set_defaults(mode='incremental')
     args = parser.parse_args(argv)
     try:
-        build = package_dataset if package else build_dataset
+        build = build_dataset
         return build(args.data_root, args.dataset_root,
-                     args.name, references_only=args.references_only)
+                     args.name, references_only=args.references_only, mode=args.mode)
     except (OSError, ValueError, KeyError) as exc:
         parser.exit(2, f'Dataset build failed: {exc}\n')
 

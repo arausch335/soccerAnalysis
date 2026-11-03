@@ -54,7 +54,6 @@ api_test:
 dataset:
   collections: []
   tables:
-    events: false
     player_match_stats: true
     team_match_stats: true
     fixtures: true

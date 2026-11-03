@@ -1,0 +1,73 @@
+"""Retain machine-local packaging state across isolated MSI snapshot builds."""
+from pathlib import Path
+import shutil
+import re
+from uuid import uuid4
+
+from storage.pandasStore import atomic_replace
+from .storageTransfer import link_or_copy
+
+
+def seed(live, output, season, *, check=lambda: None):
+    live, output = Path(live), Path(output)
+    def copy(source, target):
+        check()
+        return link_or_copy(source,target)
+    if (live/'raw_data'/season).is_dir():
+        shutil.copytree(live/'raw_data'/season,output/'raw_data'/season,copy_function=copy)
+    # Seed previous layouts without keeping their paths in the next public bundle.
+    for path in live.glob('*/*/*.csv'):
+        if (re.fullmatch(r'\d{4}-\d{4}',path.parent.name) and path.parent.parent.name not in ('raw_data','concordance','concordances')
+                and path.name in ('fixtures.csv','player_match_stats.csv','team_match_stats.csv')):
+            target=output/'raw_data'/path.relative_to(live)
+            if not target.exists():
+                target.parent.mkdir(parents=True,exist_ok=True);copy(path,target)
+    if (live/'concordance').is_dir():
+        # Archived old datasets are not needed to compute a new publication.
+        shutil.copytree(live/'concordance',output/'concordance',copy_function=copy,
+                        ignore=lambda directory,names: ['legacy'] if Path(directory).name=='metadata' and 'legacy' in names else [])
+    for name in ('fixtures.csv','player_ids.csv','team_ids.csv','match_ids.csv'):
+        if (live/name).is_file():copy(live/name,output/name)
+    if (live/'fixture_concordance').is_dir():
+        shutil.copytree(live/'fixture_concordance',output/'fixture_concordance',copy_function=copy)
+
+
+def commit(source, output, live, *, publication_id=None, check=lambda: None):
+    """Commit private caches only after publication and public copy-back succeed."""
+    from concordance import package_state as tracking
+    from concordance.layout import compiled_root
+    from collection.paths import collection_directory,discover_collections
+    from dataset_builder import _build_settings
+    source,output,live=Path(source),Path(output),Path(live)
+    state=tracking.load(output/'concordance/metadata/package-state.json')
+    if not state:return
+    state['publication']=tracking.publication_outputs(live)
+    state['archive_publication']=publication_id
+    for name,previous in state['seasons'].items():
+        directory=collection_directory(source,name)
+        if (directory/'config.json').is_file():
+            previous['outputs']=tracking.season_outputs(directory,live,tuple(previous['outputs']))
+    state['global']=tracking.global_signature(source,compiled_root(output),
+        discover_collections(source,'config.json'),_build_settings()[1],state['recipe'])
+    target=compiled_root(live);target.parent.mkdir(parents=True,exist_ok=True)
+    stage=target.with_name('.compiled-'+uuid4().hex)
+    previous=target.with_name('.compiled-previous-'+uuid4().hex)
+    def copy(incoming,outgoing):
+        check()
+        return link_or_copy(incoming,outgoing)
+    installed=False
+    try:
+        shutil.copytree(compiled_root(output),stage,copy_function=copy)
+        check()
+        if target.exists():atomic_replace(target,previous)
+        try:atomic_replace(stage,target)
+        except BaseException:
+            if previous.exists():atomic_replace(previous,target)
+            raise
+        installed=True
+        # An interruption before this final checkpoint causes a safe retry.
+        check()
+        tracking.save(live/'concordance/metadata/package-state.json',state)
+    finally:
+        if stage.exists():shutil.rmtree(stage)
+        if installed and previous.exists():shutil.rmtree(previous)

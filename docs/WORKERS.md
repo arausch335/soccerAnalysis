@@ -957,3 +957,32 @@ time for the large registry snapshot on slower Tailscale links.
 After updating a worker that stopped with `EOFError: Compressed file ended`,
 rerun the fixture command with its original settings. Existing checkpoints and
 registry files can remain in place.
+
+## Incremental MSI dataset jobs
+
+MSI keeps the immutable temporary input snapshots used by background exports,
+but anchors their cache identities to the original MSI data root. Each successful
+job retains its private ID observations and packaging checkpoint under
+`dataset/concordance/metadata`. Subsequent jobs, including jobs after a restart,
+reuse unchanged season observations instead of re-indexing every saved season.
+A repeated job with unchanged inputs reuses the existing publication.
+
+Only a successful publication and public-file installation advance the private
+checkpoint. An interrupted build or publication remains queued for retry. The
+checkpoint describes the pinned inputs actually processed, so data received while
+a job runs remains detectable by the next job. Private cache files stay on MSI
+and are excluded from the dataset transfer contract.
+
+The archive now distinguishes three kinds of outstanding dataset work:
+
+- **Queued:** saved inputs are present and the season is eligible to build.
+- **Waiting for saved inputs:** `job.json`, `config.json` or `schedule.json` is
+  missing. Metadata-only historical folders remain here without repeatedly
+  snapshotting the archive or blocking ready seasons. MSI checks again during
+  maintenance and queues the job when its inputs arrive.
+- **Needs review:** saved inputs exist but building fails validation. The failure
+  history remains available through diagnostics and the import-review tools.
+
+The dashboard shows these counts separately. Integration audits continue to
+report waiting-input jobs as incomplete work; separating the queue does not
+certify missing data as incorporated or ready for analysis.

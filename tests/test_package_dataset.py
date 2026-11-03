@@ -52,12 +52,13 @@ class PackageDatasetTests(unittest.TestCase):
             code = main.entrypoint(['--package', '--data-root', str(self.root),
                                     '--dataset-root', str(self.output)])
         self.assertEqual(code, 0)
-        self.assertEqual((self.output / 'fixtures.csv').read_bytes(), before)
-        fixtures = read_table(self.output / 'concordances', 'fixtures/fixtures')
+        self.assertEqual((self.output / 'concordance/metadata/compiled/fixtures.csv').read_bytes(), before)
+        self.assertEqual({p.name for p in self.output.iterdir()}, {'concordance'})
+        fixtures = read_table(self.output / 'concordance', 'fixtures/fixtures')
         self.assertEqual(tuple(fixtures.columns), CORE_COLUMNS)
         self.assertEqual(fixtures.match_entity_id.tolist(), [self.match_id])
-        self.assertEqual(validate(self.output / 'concordances')['rows'], 1)
-        self.assertFalse(validate(self.output / 'concordances')['ready_for_R'])
+        self.assertEqual(validate(self.output / 'concordance')['rows'], 1)
+        self.assertFalse(validate(self.output / 'concordance')['ready_for_R'])
 
     def test_packages_saved_seasons_outside_config_selection_and_keeps_inputs(self):
         source = collection_directory(self.root, 'premier-league-2024-25')
@@ -75,16 +76,16 @@ class PackageDatasetTests(unittest.TestCase):
                 patch('providers.reep.refresh', side_effect=AssertionError('identity download')), \
                 patch('providers.httpClient.HttpClient._request', side_effect=AssertionError('network')):
             self.assertEqual(dataset_builder.package_dataset(self.root, self.output), 0)
-        packaged = self.output / 'premier-league/2024-2025'
+        packaged = self.output / 'raw_data/premier-league/2024-2025'
         self.assertTrue((packaged / 'player_match_stats.csv').is_file())
-        self.assertTrue((packaged / 'events.csv').is_file())
-        players = read_table(self.output / 'concordances', 'player_ids')
+        self.assertFalse((packaged / 'events.csv').exists())
+        players = read_table(self.output / 'concordance', 'player_ids')
         self.assertEqual(set(players.sofascore_id), {'7', '8'})
         self.assertEqual(before, {p: p.read_bytes() for p in before})
 
     def test_failed_season_does_not_replace_previous_parquet(self):
         dataset_builder.package_dataset(self.root, self.output)
-        manifest = self.output / 'concordances/manifest.json'
+        manifest = self.output / 'concordance/metadata/manifest.json'
         before = manifest.read_bytes()
         with patch('dataset_builder.build_dataset', return_value=2):
             self.assertEqual(dataset_builder.package_dataset(self.root, self.output,
@@ -96,6 +97,64 @@ class PackageDatasetTests(unittest.TestCase):
             dataset_builder.package_dataset(self.base / 'empty', self.base / 'missing')
         with self.assertRaisesRegex(ValueError, 'separate'):
             dataset_builder.package_dataset(self.root, self.root / 'dataset')
+
+    def test_repeated_build_keeps_one_layout_and_stable_ids(self):
+        self.assertEqual(dataset_builder.package_dataset(self.root,self.output),0)
+        ids=pd.read_csv(self.output/'concordance/match_ids.csv',dtype=str).entity_id.tolist()
+        self.assertEqual(dataset_builder.package_dataset(self.root,self.output),0)
+        self.assertEqual(pd.read_csv(self.output/'concordance/match_ids.csv',dtype=str).entity_id.tolist(),ids)
+        self.assertEqual({p.name for p in (self.output/'concordance').iterdir()},
+                         {'fixtures.csv','match_ids.csv','team_ids.csv','player_ids.csv','metadata'})
+        self.assertFalse(list(self.output.glob('raw_data/*/*/events.csv')))
+
+    def test_old_parquet_only_publication_migrates_to_csv_without_losing_ids(self):
+        import json,shutil
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        from concordance.publication import TABLES,read_table,digest
+        self.assertEqual(dataset_builder.package_dataset(self.root,self.output),0)
+        base=self.output/'concordance'
+        manifest=json.loads((base/'metadata/manifest.json').read_text())
+        old=self.output/'concordances';old.mkdir()
+        manifest['format']='soccer-concordances-parquet-v1'
+        for name in TABLES:
+            frame=read_table(base,name)
+            path=old/name/'part-00000.parquet';path.parent.mkdir(parents=True,exist_ok=True)
+            pq.write_table(pa.Table.from_pandas(frame,preserve_index=False),path)
+            manifest['tables'][name]={'rows':len(frame),'files':[{'path':path.relative_to(old).as_posix(),'sha256':digest(path)}]}
+        (old/'manifest.json').write_text(json.dumps(manifest))
+        shutil.rmtree(base)
+        self.assertEqual(dataset_builder.package_dataset(self.root,self.output),0)
+        self.assertEqual(pd.read_csv(base/'fixtures.csv',dtype=str).match_entity_id.tolist(),[self.match_id])
+        self.assertFalse(old.exists())
+        self.assertTrue((base/'metadata/legacy/concordances/manifest.json').is_file())
+
+    def test_failed_directory_swap_keeps_previous_csv_and_private_metadata(self):
+        import concordance.publication as publication
+        self.assertEqual(dataset_builder.package_dataset(self.root,self.output),0)
+        base=self.output/'concordance'
+        before=(base/'metadata/manifest.json').read_bytes()
+        replace=publication.atomic_replace
+        def interrupt(source,target):
+            if Path(source).name=='bundle':raise OSError('interrupted directory swap')
+            return replace(source,target)
+        with patch('concordance.publication.atomic_replace',side_effect=interrupt):
+            self.assertEqual(dataset_builder.package_dataset(self.root,self.output,mode='rebuild'),2)
+        self.assertEqual((base/'metadata/manifest.json').read_bytes(),before)
+        self.assertTrue((base/'metadata/compiled/fixtures.csv').is_file())
+        self.assertEqual(publication.validate(base)['rows'],1)
+
+    def test_compiled_only_migration_retains_old_season_csvs_without_events(self):
+        season=self.output/'premier-league/2024-2025'
+        season.mkdir(parents=True)
+        for name in ('fixtures','player_match_stats','team_match_stats','events'):
+            (season/(name+'.csv')).write_text('match_id,season\n1,2024-2025\n')
+        self.assertEqual(dataset_builder.package_dataset(self.root,self.output),0)
+        new=self.output/'raw_data/premier-league/2024-2025'
+        self.assertEqual({p.name for p in new.iterdir()},
+                         {'fixtures.csv','player_match_stats.csv','team_match_stats.csv'})
+        self.assertFalse(season.exists())
+        self.assertTrue((self.output/'concordance/metadata/legacy/premier-league/2024-2025/events.csv').exists())
 
 
 if __name__ == '__main__':

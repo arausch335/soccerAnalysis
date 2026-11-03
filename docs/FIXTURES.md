@@ -1,7 +1,9 @@
-The R-facing fixture export is now chunked Parquet at
-`dataset/concordances/fixtures/fixtures`, with `extra` and `metadata` next to it.
-ID tables are sibling folders under `concordances`. See
-[R Parquet layout](R_PARQUET_LAYOUT.md) for the schema and R import.
+The public dataset uses CSV files under `dataset/raw_data` and
+`dataset/concordance`. Supporting files stay under `concordance/metadata`.
+See [dataset layout and R import](DATASET_LAYOUT.md).
+
+The historical compiler paths described below are private inputs under
+`dataset/concordance/metadata/compiled`; use the public paths above for analysis.
 
 # Historical fixtures and provider concordance
 

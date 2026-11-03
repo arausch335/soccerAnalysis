@@ -49,6 +49,16 @@ def safe_path(value,kind):
     if kind=='dataset' and (value=='concordances/manifest.json' or re.fullmatch(
             r'concordances/(?:fixtures/(?:fixtures|extra|metadata)|metadata/(?:match_ids|team_ids|player_ids|registry)|match_ids|team_ids|player_ids|entities)/part-\d{5}\.parquet',value)):
         return value
+    if kind=='dataset':
+        from concordance.publication import TABLES, table_path
+        if value in {'concordance/'+table_path(name) for name in TABLES} | {'concordance/metadata/manifest.json'}:
+            return value
+        if path.parts[:2]==('concordance','metadata'):raise ValueError('Private concordance metadata cannot be transferred')
+        if path.parts[0]=='raw_data':
+            if len(path.parts)!=4 or path.name not in ('fixtures.csv','player_match_stats.csv','team_match_stats.csv'):
+                raise ValueError('Invalid dataset season table')
+            safe_path('/'.join(path.parts[1:]),'dataset')
+            return value
     if path.suffix not in ('.csv','.json'):raise ValueError('Only collection/dataset files may be transferred')
     if kind=='dataset':
         if any(p in ('raw','match_checkpoints','snapshots') for p in path.parts):raise ValueError('Raw data cannot be sent to dataset consumers')

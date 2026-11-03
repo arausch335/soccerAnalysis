@@ -44,23 +44,21 @@ class ParquetTests(unittest.TestCase):
 
     def write(self,**kw):return publish(self.root,self.dataset,self.rows,registry=self.registry,**kw)
 
-    def test_chunked_core_has_only_requested_fields_and_native_types(self):
-        manifest=self.write(chunk_rows=2);base=self.dataset/'concordances';validate(base)
-        self.assertEqual(len(manifest['tables']['fixtures/fixtures']['files']),2)
+    def test_fixture_schema_ids_and_csv_serialization(self):
+        manifest=self.write();base=self.dataset/'concordance';validate(base)
+        self.assertEqual(len(manifest['tables']['fixtures/fixtures']['files']),1)
         frame=read_table(base,'fixtures/fixtures');self.assertEqual(tuple(frame.columns),CORE_COLUMNS)
         self.assertEqual(set(c for c in frame if c.endswith('_id')),{'match_entity_id','home_team_entity_id','away_team_entity_id'})
-        schema=pq.read_schema(base/'fixtures/fixtures/part-00000.parquet')
-        self.assertTrue(pa.types.is_date32(schema.field('date').type));self.assertEqual(schema.field('kickoff_utc').type.tz,'UTC')
-        self.assertTrue(pa.types.is_boolean(schema.field('has_player_stats').type))
-        self.assertIsNone(pq.read_table(base/'fixtures/fixtures/part-00001.parquet').to_pylist()[0]['home_score'])
+        self.assertTrue((base/'fixtures.csv').is_file())
+        self.assertTrue(frame.home_score.isna().iloc[2])
         self.assertEqual(frame.home_team.tolist(),['Reep Home']*3)
-        self.assertFalse(list(base.rglob('*.csv')))
+        self.assertFalse(list(base.rglob('*.parquet')))
         self.assertEqual(tuple(read_table(base,'fixtures/extra').columns),EXTRA_COLUMNS)
         self.assertIn('fotmob_fixture_check',read_table(base,'fixtures/metadata'))
         self.assertNotIn('fotmob_fixture_check',frame)
 
     def test_id_tables_have_six_ids_five_names_and_use_published_name_priority(self):
-        self.write();base=self.dataset/'concordances'
+        self.write();base=self.dataset/'concordance'
         teams=read_table(base,'team_ids');self.assertEqual(tuple(teams.columns),(*ID_COLUMNS,*NAME_COLUMNS))
         home=teams[teams.entity_id.eq('rt-home')].iloc[0]
         self.assertEqual(home.entity_name,'Reep Home');self.assertEqual(home.sofascore_name,'Sofascore home')
@@ -74,38 +72,39 @@ class ParquetTests(unittest.TestCase):
         self.assertEqual(rows[0]['sofascore_match_id'],'100');self.assertEqual(rows[0]['entity_id'],self.rows[0]['entity_id'])
 
     def test_rebuild_removes_old_chunks_and_failed_write_keeps_previous_dataset(self):
-        self.write(chunk_rows=1);base=self.dataset/'concordances';original=(base/'manifest.json').read_bytes()
-        with patch('concordance.parquet.pq.write_table',side_effect=OSError('interrupted')):
+        self.write(chunk_rows=1);base=self.dataset/'concordance';original=(base/'metadata/manifest.json').read_bytes()
+        with patch('collection.files.atomic_csv',side_effect=OSError('interrupted')):
             with self.assertRaises(OSError):self.write(chunk_rows=2)
-        self.assertEqual((base/'manifest.json').read_bytes(),original);validate(base)
-        self.write(chunk_rows=100);self.assertFalse((base/'fixtures/fixtures/part-00002.parquet').exists());validate(base)
+        self.assertEqual((base/'metadata/manifest.json').read_bytes(),original);validate(base)
+        self.write(chunk_rows=100);self.assertFalse(list(base.rglob('*.parquet')));validate(base)
 
     def test_corruption_and_unlisted_chunks_are_rejected(self):
-        self.write();base=self.dataset/'concordances';extra=base/'team_ids/part-99999.parquet';extra.write_bytes(b'extra')
+        self.write();base=self.dataset/'concordance';extra=base/'unexpected.csv';extra.write_bytes(b'extra')
         with self.assertRaisesRegex(ValueError,'unverified'):validate(base)
-        extra.unlink();path=base/'match_ids/part-00000.parquet';path.write_bytes(path.read_bytes()+b'changed')
+        extra.unlink();path=base/'match_ids.csv';path.write_bytes(path.read_bytes()+b'changed')
         with self.assertRaisesRegex(ValueError,'checksum'):validate(base)
 
     def test_preview_cannot_be_imported_as_integration_confirmed(self):
         self.write()
-        with self.assertRaisesRegex(ValueError,'unconfirmed'):validate(self.dataset/'concordances',require_integration=True)
+        with self.assertRaisesRegex(ValueError,'unconfirmed'):validate(self.dataset/'concordance',require_integration=True)
 
     def test_new_statistics_invalidate_the_parquet_readiness_flag(self):
         from concordance.build import invalidate_bundle
         self.write(confirmed=True)
-        self.assertTrue(validate(self.dataset/'concordances',require_integration=True)['ready_for_R'])
+        self.assertTrue(validate(self.dataset/'concordance',require_integration=True)['ready_for_R'])
         self.assertTrue(invalidate_bundle(self.dataset,'New player statistics arrived'))
-        with self.assertRaisesRegex(ValueError,'unconfirmed'):validate(self.dataset/'concordances',require_integration=True)
+        with self.assertRaisesRegex(ValueError,'unconfirmed'):validate(self.dataset/'concordance',require_integration=True)
 
-    def test_transfer_paths_allow_only_the_named_parquet_tables(self):
+    def test_transfer_paths_allow_only_public_csv_tables(self):
         from collection.storageTransfer import safe_path
-        self.assertEqual(safe_path('concordances/fixtures/fixtures/part-00000.parquet','dataset'),
-                         'concordances/fixtures/fixtures/part-00000.parquet')
-        for path,kind in [('concordances/raw/part-00000.parquet','dataset'),
-                          ('concordances/fixtures/fixtures/part-00000.parquet','raw'),
-                          ('concordances/match_ids/../../raw.parquet','dataset')]:
-            with self.assertRaises(ValueError):safe_path(path,kind)
+        for path in ('concordance/fixtures.csv','concordance/metadata/manifest.json',
+                     'raw_data/premier-league/2024-2025/player_match_stats.csv'):
+            self.assertEqual(safe_path(path,'dataset'),path)
+        for path in ('concordance/metadata/compiled/fixtures.csv',
+                     'concordance/metadata/../fixtures.csv',
+                     'raw_data/premier-league/2024-2025/events.csv'):
+            with self.assertRaises(ValueError):safe_path(path,'dataset')
 
     def test_external_r_data_directory_is_supported(self):
-        target=self.base/'R/data/concordances';self.write(output=target)
+        target=self.base/'R/data/concordance';self.write(output=target)
         self.assertEqual(validate(target)['rows'],3)

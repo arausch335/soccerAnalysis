@@ -1,7 +1,9 @@
-The public R import format is now chunked Parquet under
-`data/concordances`, with compact fixtures, separate extras/linkage, and
-six-ID/five-name match/team/player tables. See [R Parquet layout](R_PARQUET_LAYOUT.md).
-The CSV layouts below document internal compatibility inputs.
+The public dataset uses CSV files under `dataset/raw_data` and
+`dataset/concordance`. Supporting files stay under `concordance/metadata`.
+See [dataset layout and R import](DATASET_LAYOUT.md).
+
+The historical compiler paths described below are private inputs under
+`dataset/concordance/metadata/compiled`; use the public paths above for analysis.
 
 # Confirm MSI integration, then rebuild the identity tables
 
@@ -214,7 +216,7 @@ Missing provider mappings stay blank, and contradictory profiles stay flagged.
 
 ```r
 source("analysis/read_concordances.R")
-ids <- read_concordances("data/concordances")
+ids <- read_concordances("dataset/concordance")
 fixtures <- ids$fixtures
 players <- ids$player_ids
 ```

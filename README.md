@@ -45,27 +45,54 @@ Package the data already saved on this computer for R:
 python main.py --package
 ```
 
-This rebuilds enabled season tables and ID references from all local saved
-seasons, then refreshes the existing [R Parquet layout](docs/R_PARQUET_LAYOUT.md)
-under `dataset/concordances`. It runs without scraping, starting a worker,
-opening the extension, transferring data or downloading new identity mappings.
-Paths and table choices come from `config/settings.yaml`; `--data-root`,
-`--dataset-root`, and repeatable `--name` override them. For example:
+The default is incremental: only new or changed saved seasons are processed.
+To explicitly select either mode:
+
+```sh
+python main.py --package --incremental
+python main.py --package --rebuild
+```
+
+`--rebuild` ignores packaging and ID-projection caches and regenerates every
+selected saved season plus the combined concordance. Both modes use local
+saved inputs and preserve stable IDs and received fixture history.
+
+This uses one saved-data builder for season CSVs and consolidated fixture/ID CSVs:
+
+```text
+dataset/
+  raw_data/<league>/<season>/
+    fixtures.csv
+    player_match_stats.csv
+    team_match_stats.csv
+  concordance/
+    fixtures.csv
+    match_ids.csv
+    team_ids.csv
+    player_ids.csv
+    metadata/
+```
+
+Flattened events are never exported. All linkage details, registry snapshots,
+checksums, integration status and private compiler inputs stay under
+`concordance/metadata`. Existing exports are archived there after a successful
+replacement. Provider responses and checkpoints remain under `data/`.
+
+The command runs locally without scraping, starting workers, opening the
+extension or downloading identity mappings. Paths and table choices come from
+`config/settings.yaml`; `--data-root`, `--dataset-root`, and repeatable `--name`
+provide overrides. For example:
 
 ```sh
 python main.py --package --dataset-root /path/to/R-project/data
 ```
 
-The output uses the same season-export and Parquet-concordance builders as the
-normal dataset, so it can be copied into R without another format conversion.
-Saved entity-keyed compiled fixtures are required for the Parquet export.
-Computers holding only compiled fixtures/concordances can re-export those
-without local raw seasons. Packaging does not certify MSI integration; that
-status remains in the concordance manifest.
-
-Before importing into R, [verify MSI integration and rebuild the full/scraped
-concordances](docs/CONCORDANCES.md). The shared ID uses Reep when available and
-stable `am`/`at`/`ap` project IDs otherwise.
+`python dataset_builder.py`, `soccer-dataset`, and the older
+`python -m tools.export_concordances` command delegate to the same builder.
+Fixture collection and audited ID rebuilds use the same CSV publisher.
+See [dataset layout and R import](docs/DATASET_LAYOUT.md). Packaging does not
+certify MSI integration; [audit and rebuild concordances](docs/CONCORDANCES.md)
+when an integration-confirmed publication is required.
 
 Collection uses one workflow: **combined**. Each provider starts with its API;
 access or response failures switch that provider to **Soccer Collector**, the

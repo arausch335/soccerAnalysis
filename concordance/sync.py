@@ -66,7 +66,8 @@ def load(root,*,seeds=(),path=None):
 
 
 def check_bundle(root,dataset):
-    folder=Path(dataset)/'concordance'
+    from .layout import compiled_root
+    folder=(compiled_root(dataset) if compiled_root(dataset).exists() else Path(dataset))/'concordance'
     if not (folder/'bundle.json').is_file():return 'absent'
     from .build import table,invalidate_bundle
     manifest=read_json(folder/'bundle.json')

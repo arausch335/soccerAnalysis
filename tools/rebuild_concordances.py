@@ -12,7 +12,8 @@ def publish(root,dataset,*,worker='msi'):
     from concordance.build import validate_bundle
     from collection.workerIdentity import read_worker_id
     if worker!='msi' or read_worker_id(root)!='msi':raise ValueError('Publish this concordance rebuild from MSI')
-    check=validate_bundle(Path(dataset)/'concordance')
+    from concordance.layout import compiled_root
+    check=validate_bundle(compiled_root(dataset)/'concordance')
     if not check['ready_for_R']:raise ValueError('An unconfirmed preview cannot be published as ready for R')
     files=dataset_files(dataset)
     manifest={'format':FORMAT,'kind':'dataset','worker':worker,'files':[
@@ -32,8 +33,9 @@ def main(argv=None):
     parser.add_argument('--validate-only',action='store_true')
     parser.add_argument('--publish',action='store_true',help='Publish ready compiled tables from MSI to Main')
     args=parser.parse_args(argv)
+    from concordance.layout import compiled_root
     if args.validate_only:
-        result=validate_bundle(args.output or args.dataset_root/'concordance')
+        result=validate_bundle(args.output or compiled_root(args.dataset_root)/'concordance')
     else:
         result=rebuild(args.data_root,args.dataset_root,output=args.output,
             integration_report=args.integration_report,allow_unconfirmed=args.allow_unconfirmed)

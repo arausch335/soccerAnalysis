@@ -147,7 +147,7 @@ def load_config(path=None, *, project_root=None):
     paths = _section(document['paths'], ('data', 'dataset'), 'paths')
     dataset = _section(document['dataset'], (
         'collections', 'tables', 'references', 'maintenance'), 'dataset')
-    tables = _section(dataset['tables'], (
+    tables = _section({'events': False, **dataset['tables']}, (
         'events', 'player_match_stats', 'team_match_stats', 'fixtures'), 'dataset.tables')
     references = _section(dataset['references'], (
         'player_ids', 'team_ids', 'match_ids'), 'dataset.references')
@@ -187,6 +187,7 @@ def load_config(path=None, *, project_root=None):
     for section_name, section in (('tables', tables), ('references', references)):
         for name, value in section.items():
             values['BUILD_' + name.upper()] = _boolean(value, f'dataset.{section_name}.{name}')
+    values['BUILD_EVENTS'] = False  # Legacy setting cannot enable flattened dataset events.
     for name, value in maintenance.items():
         values[name.upper()] = _boolean(value, f'dataset.maintenance.{name}')
     if values['STANDARDIZE_FIXTURE_TEAM_NAMES'] and not values['BUILD_TEAM_IDS']:

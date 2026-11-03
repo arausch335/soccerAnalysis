@@ -16,7 +16,7 @@ def bridge(*rows,redirects=None):
 class IdentityRefreshTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
-        self.root=Path(self.tmp.name)/'data';self.output=Path(self.tmp.name)/'dataset'
+        self.root=Path(self.tmp.name)/'data';self.output=Path(self.tmp.name)/'dataset/concordance/metadata/compiled'
         self.value=bridge(('match','sofascore','1','rm1'),('match','fotmob','10','rm1'),
                           ('match','whoscored','100','rm1'),('team','sofascore','2','rt2'),
                           ('team','whoscored','200','rt2'))
