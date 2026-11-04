@@ -15,6 +15,7 @@ def package_saved(root,output,names=None,*,references_only=False,mode='increment
     from concordance import package_state as tracking
     from dataset_builder import build_dataset
     from dataset_review import create_review,print_review,load_review
+    from dataset_handoff import create as create_handoff,current as current_handoff
     root,output=Path(root).resolve(),Path(output).resolve()
     if root==output or root in output.parents or output in root.parents:raise ValueError('Data and dataset roots must be separate directories')
     directory=root/'_system/storage';directory.mkdir(parents=True,exist_ok=True)
@@ -27,7 +28,7 @@ def package_saved(root,output,names=None,*,references_only=False,mode='increment
         with tempfile.TemporaryDirectory(prefix='p-',dir=directory) as temporary:
             source=Path(temporary)/'s';staged=Path(temporary)/'d';staged.mkdir()
             report('Preparing saved inputs for explicit dataset packaging…',flush=True)
-            snapshot_data(root,source);seed(output,staged,archive=archive)
+            snapshot_data(root,source);seed(output,staged,archive=archive,repair=True)
             def acknowledge_selected():
                 if not archive or references_only:return
                 selected={p.relative_to(source).as_posix() for p in discover_collections(source,'job.json')}
@@ -44,12 +45,14 @@ def package_saved(root,output,names=None,*,references_only=False,mode='increment
                 review=load_review(staged)
                 current=archive.publication() if archive else None
                 confirmed=archive is None or bool(current and tracking.load(state_path).get('archive_publication')==identifier(current))
-                if before is not None and state_path.read_bytes()==before and review['state']=='ready' and confirmed:
+                if before is not None and state_path.read_bytes()==before and review['state']=='ready' and confirmed and current_handoff(staged):
                     print_review(review,report);report('Dataset is unchanged; existing package and publication retained.',flush=True)
                     acknowledge_selected()
                     return 0
                 review=create_review(staged)
                 print_review(review,report)
+                handoff=create_handoff(staged,source)
+                report('R handoff verified: copy only the dataset folder, then source its read_dataset.R. Archive integration audited: '+str(handoff['integration_confirmed']),flush=True)
                 files=dataset_files(staged)
                 manifest={'format':FORMAT,'kind':'dataset','worker':worker,'files':[
                     {'path':name,'size':path.stat().st_size,'sha256':digest(path)} for name,path in sorted(files.items())]}

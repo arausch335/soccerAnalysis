@@ -45,6 +45,7 @@ def safe_path(value,kind):
     path=PurePosixPath(value)
     if path.is_absolute() or not path.parts or any(p in ('','.','..') for p in value.split('/')):raise ValueError('Transfer path leaves its root')
     if value=='.soccer-scraper.json' and kind=='raw':return value
+    if kind=='dataset' and value in ('read_dataset.R','read_concordances.R','README.md','dataset-manifest.json'):return value
     if any(p.startswith('.') or p=='_system' for p in path.parts):raise ValueError('Machine state cannot be transferred')
     if kind=='dataset' and (value=='concordances/manifest.json' or re.fullmatch(
             r'concordances/(?:fixtures/(?:fixtures|extra|metadata)|metadata/(?:match_ids|team_ids|player_ids|registry)|match_ids|team_ids|player_ids|entities)/part-\d{5}\.parquet',value)):

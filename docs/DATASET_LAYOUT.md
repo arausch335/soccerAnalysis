@@ -125,20 +125,34 @@ provider identity linkage, row counts and field availability. Fixture flags and
 remote inventory claims are shown separately from actual local statistics.
 See [dataset production](DATASET_PRODUCTION.md).
 
-## R import
+## R import from a copied dataset folder
+
+Packaging includes `read_dataset.R`, `read_concordances.R`, `README.md` and
+`dataset-manifest.json` inside the dataset root. Copy only that folder after the
+package command completes. No Python repository or raw collection files are
+needed on the R computer.
 
 ```r
-source("analysis/read_concordances.R")
-concordance <- read_concordances("dataset/concordance")
-fixtures <- concordance$fixtures
-player_ids <- concordance$player_ids
-stats <- read.csv("dataset/raw_data/premier-league/2024-2025/player_match_stats.csv")
+# Install arrow, jsonlite and digest once on the analysis computer.
+source("dataset/read_dataset.R")
+ds <- read_dataset("dataset")
+fixtures <- ds$concordance$fixtures
+player_ids <- ds$concordance$player_ids
+stats <- read_dataset_table(ds, "player_match_stats",
+                           competition = "Premier League", season = "2023-2024")
 ```
 
-The reader detects the manifest format and requires `jsonlite`, `digest`, plus
-`arrow` for Parquet. It checks checksums and joins, and
-requires integration confirmation by default. For an explicitly unconfirmed
-inspection, pass `require_integration = FALSE`.
+The loader verifies the copy by checksum, reads all manifest-listed chunks and
+checks concordance joins. Season tables load on demand, preserve native IDs as
+strings, and gain canonical ID columns for joins. Team stats are long format
+and use provider-specific team IDs. Native numbers must not be joined across
+provider namespaces. [The bundled R guide](R_DATASET.md) describes these fields.
+
+Ordinary packaging validates local exported files; it does not certify that all
+raw data has been integrated on MSI. The loader warns about unconfirmed archive
+integration. Use `read_dataset("dataset", require_integration = TRUE)` when that
+separate certification is required. The lower-level `read_concordances` function
+keeps its strict default. Neither reader changes the dataset or contacts workers.
 
 ## Updating an existing export
 

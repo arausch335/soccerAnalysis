@@ -108,6 +108,9 @@ def _install_dataset(peer,manifest,output,staging_root,*,exclude=()):
             if target.is_file() and target.stat().st_size==item['size'] and digest(target)==item['sha256']:link_or_copy(target,incoming)
             else:peer.download(item['sha256'],incoming)
             if incoming.stat().st_size!=item['size'] or digest(incoming)!=item['sha256']:raise ValueError('Dataset file differs from manifest')
+        if (stage/'dataset-manifest.json').is_file():
+            from dataset_handoff import verify
+            verify(stage)
         canonical_bundle=stage/'concordance'
         canonical_publication=(canonical_bundle/'metadata/manifest.json').is_file()
         if canonical_publication:
@@ -137,7 +140,10 @@ def _install_dataset(peer,manifest,output,staging_root,*,exclude=()):
         # The receipt is updated only after every publication file is installed.
         # An interrupted installation is retried from the same verified manifest.
         for item in files:
-            if not item['path'].startswith('concordances/') and not (canonical_publication and item['path'].startswith('concordance/')):atomic_copy(stage/item['path'],output/item['path'])
+            if not item['path'].startswith('concordances/') and not (canonical_publication and item['path'].startswith('concordance/')):
+                target=output/item['path']
+                if target.is_file() and target.stat().st_size==item['size'] and digest(target)==item['sha256']:continue
+                atomic_copy(stage/item['path'],target)
         if (parquet/'manifest.json').is_file():
             previous=output/('.concordances-previous-'+uuid4().hex);target=output/'concordances'
             if target.exists():atomic_replace(target,previous)

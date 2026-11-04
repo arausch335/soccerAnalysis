@@ -1019,8 +1019,9 @@ def _seed_fixture_catalog(root, compiled, *, sources=None):
 
 
 def package_dataset(data_root, dataset_root, names=None, *, references_only=False, mode="incremental", concordance_format=None):
-    """Compatibility alias for the single saved-data dataset builder."""
-    return build_dataset(data_root,dataset_root,names,references_only=references_only,offline=True,mode=mode,concordance_format=concordance_format)
+    """Compatibility entrypoint for the complete explicit package and R handoff."""
+    from collection.datasetPackaging import package_saved
+    return package_saved(data_root,dataset_root,names,references_only=references_only,mode=mode,concordance_format=concordance_format)
 
 
 def main(argv=None, *, package=False):

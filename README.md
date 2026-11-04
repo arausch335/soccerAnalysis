@@ -102,7 +102,9 @@ python main.py --package --dataset-root /path/to/R-project/data
 Fixture collection saves inputs for the next explicit package.
 Each Parquet table is a folder with numbered chunks of at most 50,000 rows.
 Packaging prints a coverage review, saves `dataset/coverage.json`, and makes it
-available on the dashboard’s **Dataset** page (`/dataset`). See
+available on the dashboard’s **Dataset** page (`/dataset`). It also includes its
+R readers, usage guide and file-checksum manifest: copy only `dataset/`, then
+`source("dataset/read_dataset.R")` and `ds <- read_dataset("dataset")`. See
 [dataset production and coverage](docs/DATASET_PRODUCTION.md).
 
 See [dataset layout and R import](docs/DATASET_LAYOUT.md). Packaging does not

@@ -1,3 +1,12 @@
+.soccer_parse_utc <- function(value) {
+  normalized <- sub(" ", "T", value, fixed = TRUE)
+  normalized <- sub("Z$", "+0000", normalized)
+  normalized <- sub("([+-][0-9]{2}):([0-9]{2})$", "\\1\\2", normalized)
+  result <- as.POSIXct(normalized, format = "%Y-%m-%dT%H:%M:%OS%z", tz = "UTC")
+  if (any(!is.na(value) & nzchar(value) & is.na(result))) stop("Invalid UTC kickoff timestamp")
+  result
+}
+
 # Parquet (default) or CSV fixtures and IDs under dataset/concordance; supporting tables stay in metadata.
 read_concordances <- function(concordance_root = "dataset/concordance", require_integration = TRUE) {
   for (package in c("jsonlite", "digest")) {
@@ -37,7 +46,7 @@ read_concordances <- function(concordance_root = "dataset/concordance", require_
       for (column in intersect(c("matchweek", "home_score", "away_score", "winner_code"), names(data)))
         data[[column]] <- as.integer(as.numeric(data[[column]]))
       if ("date" %in% names(data)) data$date <- as.Date(data$date)
-      if ("kickoff_utc" %in% names(data)) data$kickoff_utc <- as.POSIXct(data$kickoff_utc, tz = "UTC")
+      if ("kickoff_utc" %in% names(data)) data$kickoff_utc <- .soccer_parse_utc(data$kickoff_utc)
     }
     if (nrow(data) != info$rows) stop("Row count mismatch: ", name)
     data
@@ -116,6 +125,19 @@ read_concordances <- function(concordance_root = "dataset/concordance", require_
     if (anyNA(match(team[!is.na(team)], ids$team_ids$entity_id))) stop("Fixture team is absent from team_ids")
   }
   if (any(fixtures$has_player_stats & extra$is_scheduled_for_scraping[match(key, extra$match_entity_id)])) stop("Scraped fixture marked pending")
+  resolve_provider_ids <- function(kind, provider, native) {
+    if (!kind %in% c("match", "team", "player") || !provider %in% c("sofascore", "fotmob", "whoscored"))
+      stop("Unknown identity kind/provider")
+    allowed <- ids[[paste0(kind, "_ids")]]$entity_id
+    vapply(native, function(number) {
+      if (is.na(number) || !nzchar(number)) return(NA_character_)
+      alias <- registry$aliases[[paste(kind, provider, number, sep = "|")]]
+      if (is.null(alias)) return(NA_character_)
+      entity <- canonical(alias)
+      if (entity %in% allowed) entity else NA_character_
+    }, character(1), USE.NAMES = FALSE)
+  }
   c(list(fixtures = fixtures, extra = extra, metadata = metadata), ids,
-    list(identity_metadata = details, registry = registry_rows, entities = entities, manifest = manifest))
+    list(identity_metadata = details, registry = registry_rows, entities = entities, manifest = manifest,
+         resolve_provider_ids = resolve_provider_ids))
 }

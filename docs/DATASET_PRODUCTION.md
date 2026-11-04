@@ -50,3 +50,11 @@ The review is included in MSI publications, so Main shows the same coverage afte
 receiving the package. It is a packaging review, not certification that all remote
 raw data has been archived or incorporated. A fixture-only historical season can
 legitimately have zero packaged statistic coverage.
+
+## R handoff
+
+A successful explicit package includes `read_dataset.R`, `read_concordances.R`,
+`README.md` and `dataset-manifest.json` in the dataset root. The manifest verifies
+every public file and records native ID namespaces for each season table. Main
+verifies this handoff before installing it. Copying the dataset folder to a new
+R project requires no Python checkout. See [the bundled R guide](R_DATASET.md).

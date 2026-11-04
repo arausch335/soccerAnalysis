@@ -8,7 +8,7 @@ from storage.pandasStore import atomic_replace
 from .storageTransfer import link_or_copy
 
 
-def seed(live, output, season=None, *, check=lambda: None, archive=None):
+def seed(live, output, season=None, *, check=lambda: None, archive=None, repair=False):
     live, output = Path(live), Path(output)
     def copy(source, target):
         check()
@@ -27,8 +27,10 @@ def seed(live, output, season=None, *, check=lambda: None, archive=None):
         # Archived old datasets are not needed to compute a new publication.
         shutil.copytree(live/'concordance',output/'concordance',copy_function=copy,
                         ignore=lambda directory,names: ['legacy'] if Path(directory).name=='metadata' and 'legacy' in names else [])
-    for name in ('fixtures.csv','player_ids.csv','team_ids.csv','match_ids.csv','coverage.json'):
+    for name in ('fixtures.csv','player_ids.csv','team_ids.csv','match_ids.csv','coverage.json','dataset-manifest.json','read_dataset.R','read_concordances.R','README.md'):
         if (live/name).is_file():copy(live/name,output/name)
+    if (live/'concordances').is_dir():
+        shutil.copytree(live/'concordances',output/'concordances',copy_function=copy)
     if (live/'fixture_concordance').is_dir():
         shutil.copytree(live/'fixture_concordance',output/'fixture_concordance',copy_function=copy)
     # The archive is the immutable, acknowledged publication. A partially
@@ -48,7 +50,18 @@ def seed(live, output, season=None, *, check=lambda: None, archive=None):
                     raise ValueError('Archived publication is incomplete or corrupt: '+relative)
                 target.unlink(missing_ok=True);copy(source,target)
     from concordance.publication import exists,folder,validate
-    if exists(output):validate(folder(output))
+    if exists(output):
+        try:validate(folder(output))
+        except (OSError,ValueError):
+            # Repair only the isolated snapshot, using retained compiler inputs.
+            # The live publication remains untouched until the replacement passes.
+            if not repair or not (output/'concordance/metadata/compiled/fixtures.csv').is_file():raise
+            base=folder(output)
+            for path in base.rglob('*'):
+                relative=path.relative_to(base).parts
+                private=len(relative)>1 and relative[0]=='metadata' and relative[1] in ('compiled','legacy','fixture_baselines')
+                if path.is_file() and path.suffix in ('.csv','.parquet') and not private:path.unlink()
+            (base/'metadata/manifest.json').unlink(missing_ok=True)
 
 
 def commit(source, output, live, *, publication_id=None, check=lambda: None):

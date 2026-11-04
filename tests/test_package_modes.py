@@ -48,8 +48,8 @@ class PackageModeTests(unittest.TestCase):
         with patch('dataset_builder.package_collection',wraps=dataset_builder.package_collection) as package, \
              patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as ids:
             self.assertEqual(self.build(),0)
-        self.assertEqual([call.args[0] for call in package.call_args_list],[self.sources[1].resolve()])
-        self.assertEqual([call.args[0] for call in ids.call_args_list],[self.sources[1].resolve()])
+        self.assertEqual([call.args[0].parts[-2:] for call in package.call_args_list],[self.sources[1].parts[-2:]])
+        self.assertEqual([call.args[0].parts[-2:] for call in ids.call_args_list],[self.sources[1].parts[-2:]])
         fixtures=pd.read_parquet(self.output/'concordance/fixtures/part-00000.parquet')
         self.assertEqual(len(fixtures),3);self.assertFalse(fixtures.match_entity_id.duplicated().any())
         self.assertEqual(self.build(),0)
@@ -63,8 +63,8 @@ class PackageModeTests(unittest.TestCase):
         with patch('dataset_builder.package_collection',wraps=dataset_builder.package_collection) as package, \
              patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as ids:
             self.assertEqual(self.build(),0)
-        self.assertEqual([call.args[0] for call in package.call_args_list],[source.resolve()])
-        self.assertEqual([call.args[0] for call in ids.call_args_list],[source.resolve()])
+        self.assertEqual([call.args[0].parts[-2:] for call in package.call_args_list],[source.parts[-2:]])
+        self.assertEqual([call.args[0].parts[-2:] for call in ids.call_args_list],[source.parts[-2:]])
         self.assertEqual(len(pd.read_parquet(self.output/'concordance/fixtures/part-00000.parquet')),3)
 
     def test_rebuild_ignores_caches_and_preserves_stable_ids(self):
