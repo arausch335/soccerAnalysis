@@ -121,7 +121,7 @@ class TransferTests(unittest.TestCase):
         manifest=self.reader.request('/v1/dataset')['manifest'];self.assertIsNotNone(manifest)
         output=self.base/'main-dataset';install_dataset(self.reader,manifest,output,self.base/'downloads')
         self.assertTrue((output/'raw_data'/self.season/'player_match_stats.csv').is_file())
-        for kind in ('player','team','match'):self.assertTrue((output/'concordance'/(kind+'_ids.csv')).is_file())
+        for kind in ('player','team','match'):self.assertTrue((output/'concordance'/(kind+'_ids.parquet')).is_file())
         self.assertFalse(list(output.rglob('raw')));self.assertEqual(self.server.archive.builds(),[])
 
     def test_incomplete_season_match_is_integrated_without_publishing_a_dataset(self):

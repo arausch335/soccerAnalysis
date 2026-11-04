@@ -33,7 +33,7 @@ def invalidate_bundle(dataset,reason):
     public=public_root(dataset);dataset=compiled_root(dataset)
     changed=False
     for path,formats in ((Path(dataset)/'concordance/bundle.json',(FORMAT,'soccer-concordance-bundle-v2')),
-                         (public/'concordance/metadata/manifest.json',('soccer-concordance-csv-v1',))):
+                         (public/'concordance/metadata/manifest.json',('soccer-concordance-csv-v1','soccer-concordance-parquet-v1'))):
         if not path.exists():continue
         manifest=json.loads(path.read_text(encoding='utf-8'))
         if manifest.get('format') not in formats:continue

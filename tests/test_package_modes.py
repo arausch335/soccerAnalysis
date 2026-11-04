@@ -50,7 +50,7 @@ class PackageModeTests(unittest.TestCase):
             self.assertEqual(self.build(),0)
         self.assertEqual([call.args[0] for call in package.call_args_list],[self.sources[1].resolve()])
         self.assertEqual([call.args[0] for call in ids.call_args_list],[self.sources[1].resolve()])
-        fixtures=pd.read_csv(self.output/'concordance/fixtures.csv',dtype=str)
+        fixtures=pd.read_parquet(self.output/'concordance/fixtures.parquet')
         self.assertEqual(len(fixtures),3);self.assertFalse(fixtures.match_entity_id.duplicated().any())
         self.assertEqual(self.build(),0)
 
@@ -65,16 +65,16 @@ class PackageModeTests(unittest.TestCase):
             self.assertEqual(self.build(),0)
         self.assertEqual([call.args[0] for call in package.call_args_list],[source.resolve()])
         self.assertEqual([call.args[0] for call in ids.call_args_list],[source.resolve()])
-        self.assertEqual(len(pd.read_csv(self.output/'concordance/fixtures.csv')),3)
+        self.assertEqual(len(pd.read_parquet(self.output/'concordance/fixtures.parquet')),3)
 
     def test_rebuild_ignores_caches_and_preserves_stable_ids(self):
         self.assertEqual(self.build(),0)
-        ids_before=pd.read_csv(self.output/'concordance/match_ids.csv',dtype=str).entity_id.tolist()
+        ids_before=pd.read_parquet(self.output/'concordance/match_ids.parquet').entity_id.tolist()
         with patch('dataset_builder.package_collection',wraps=dataset_builder.package_collection) as package, \
              patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as ids:
             self.assertEqual(self.build('rebuild'),0)
         self.assertEqual(package.call_count,2);self.assertEqual(ids.call_count,2)
-        self.assertEqual(pd.read_csv(self.output/'concordance/match_ids.csv',dtype=str).entity_id.tolist(),ids_before)
+        self.assertEqual(pd.read_parquet(self.output/'concordance/match_ids.parquet').entity_id.tolist(),ids_before)
 
     def test_missing_output_is_repaired_without_rescanning_unchanged_ids(self):
         self.assertEqual(self.build(),0)

@@ -20,10 +20,10 @@ def receipt_path(root):
 
 def fixture_files(output, *, fixture_csv=None):
     output = Path(output)
-    from concordance.publication import exists,folder,validate,manifest_path,table_path,TABLES
+    from concordance.publication import exists,folder,validate,publication_files
     if exists(output):
         validate(folder(output))
-        paths=[manifest_path(folder(output)), *(folder(output)/table_path(name) for name in TABLES)]
+        paths=publication_files(folder(output))
         return {'concordance/'+p.relative_to(folder(output)).as_posix():p for p in paths}
     files = {name: output / name for name in FIXTURE_DATASET_PATHS
              if name in FIXTURE_REQUIRED_PATHS or (output / name).is_file()}
@@ -104,10 +104,9 @@ class CompiledReceiver(Archive):
         validate_manifest(manifest)
         paths = {f['path'] for f in manifest['files']}
         parquet=bool('concordances/manifest.json' in paths and all(p.startswith('concordances/') for p in paths))
-        from concordance.publication import TABLES, table_path
-        csv_paths={'concordance/metadata/manifest.json', *('concordance/'+table_path(name) for name in TABLES)}
-        csv_bundle=paths==csv_paths
-        if manifest['kind'] != 'dataset' or manifest['worker'] != worker or not (csv_bundle or parquet or FIXTURE_REQUIRED_PATHS <= paths <= FIXTURE_DATASET_PATHS):
+        from concordance.publication import FORMATS,public_paths
+        canonical_bundle=any(paths==public_paths(fmt) for fmt in FORMATS)
+        if manifest['kind'] != 'dataset' or manifest['worker'] != worker or not (canonical_bundle or parquet or FIXTURE_REQUIRED_PATHS <= paths <= FIXTURE_DATASET_PATHS):
             raise PermissionError('Only owned compiled fixture bundles may be delivered to Main')
         mid = identifier(manifest)
         with self.lock, self.connect() as db:

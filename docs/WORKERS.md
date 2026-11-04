@@ -489,22 +489,23 @@ responses remain untouched and report the failed check (match ID, date, teams,
 finished status, or events) alongside the file path.
 
 `python dataset_builder.py --references-only` uses the saved index without
-downloading anything. The four-source exports are:
+downloading anything. The public exports default to:
 
-- `dataset/concordance/match_ids.csv`
-- `dataset/concordance/team_ids.csv`
-- `dataset/concordance/player_ids.csv`
-- `dataset/concordance/manifest.json` (release and coverage counts)
+- `dataset/concordance/fixtures.parquet`
+- `dataset/concordance/match_ids.parquet`
+- `dataset/concordance/team_ids.parquet`
+- `dataset/concordance/player_ids.parquet`
+- `dataset/concordance/metadata/manifest.json` (checksums and integration status)
 
-Each CSV includes `sofascore_id`, `fotmob_id`, `whoscored_id`, `reep_id` and
-`identity_status`. Status is `linked`, `partly_verified` (some observed IDs have
-no published bridge), `unmapped`, or `conflict`. Missing IDs remain blank, and
-conflicting observed IDs are retained for review with no assigned Reep ID.
-Player rows retain each club/season stint. Team exports also retain clubs that
-have no FotMob ID yet. The existing top-level three-provider CSVs remain builder
-references. These tables describe saved local collections: progress reporting
-sends worker match IDs, not workers' complete player/statistics datasets. Import
-those datasets before rebuilding a combined export across all computers.
+Each ID table contains six IDs and five names; see [dataset layout](DATASET_LAYOUT.md)
+for the schema. Matching evidence and registry snapshots stay under metadata.
+Private working inputs remain CSV under `metadata/compiled`.
+`python main.py --package --csv` selects CSV for a run; `--parquet` selects
+Parquet. The shared `dataset.concordance_format` setting controls the default,
+including MSI background exports. Incremental builds recognize format switches
+and republish concordance while reusing unchanged season CSVs and ID observations.
+Progress reporting sends worker match IDs, not complete player/statistics datasets.
+Import those datasets before rebuilding a combined export across all computers.
 
 If a worker reports `Chrome extension not connected` and then pauses, stop that
 worker, pull the latest code, restart with `python main.py --worker-id msi --retry`

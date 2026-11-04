@@ -51,13 +51,19 @@ To explicitly select either mode:
 ```sh
 python main.py --package --incremental
 python main.py --package --rebuild
+python main.py --package --csv       # CSV concordances instead of Parquet
 ```
 
 `--rebuild` ignores packaging and ID-projection caches and regenerates every
 selected saved season plus the combined concordance. Both modes use local
-saved inputs and preserve stable IDs and received fixture history.
+saved inputs and preserve stable IDs and received fixture history. Concordance
+tables default to Parquet. `--csv` selects CSV; `--parquet` explicitly selects
+Parquet. Switching format during an incremental build republishes concordance
+without rebuilding unchanged season CSVs. Set `dataset.concordance_format` in
+`config/settings.yaml` to choose the default for packaging and MSI background
+builds.
 
-This uses one saved-data builder for season CSVs and consolidated fixture/ID CSVs:
+This uses one saved-data builder for season CSVs and consolidated fixture/ID Parquet tables:
 
 ```text
 dataset/
@@ -66,16 +72,18 @@ dataset/
     player_match_stats.csv
     team_match_stats.csv
   concordance/
-    fixtures.csv
-    match_ids.csv
-    team_ids.csv
-    player_ids.csv
+    fixtures.parquet
+    match_ids.parquet
+    team_ids.parquet
+    player_ids.parquet
     metadata/
 ```
 
 Flattened events are never exported. All linkage details, registry snapshots,
 checksums, integration status and private compiler inputs stay under
-`concordance/metadata`. Existing exports are archived there after a successful
+`concordance/metadata`. Its `compiled/fixtures.csv` is the private, full-width
+working input used to regenerate the public tables; it stays CSV for imports.
+Existing exports are archived there after a successful
 replacement. Provider responses and checkpoints remain under `data/`.
 
 The command runs locally without scraping, starting workers, opening the
@@ -89,7 +97,7 @@ python main.py --package --dataset-root /path/to/R-project/data
 
 `python dataset_builder.py`, `soccer-dataset`, and the older
 `python -m tools.export_concordances` command delegate to the same builder.
-Fixture collection and audited ID rebuilds use the same CSV publisher.
+Fixture collection and audited ID rebuilds use the same publisher.
 See [dataset layout and R import](docs/DATASET_LAYOUT.md). Packaging does not
 certify MSI integration; [audit and rebuild concordances](docs/CONCORDANCES.md)
 when an integration-confirmed publication is required.

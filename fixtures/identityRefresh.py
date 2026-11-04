@@ -301,6 +301,10 @@ def _reconcile(root,dataset,*,dry_run):
     from concordance.sync import check_bundle
     report['bundle_alignment']=check_bundle(root,dataset)
     if fixture_rows is not None:
-        from concordance.publication import refresh
-        report['parquet']=refresh(root,dataset,rows=fixture_rows)
+        from concordance.publication import refresh,exists,folder,manifest_path,manifest_format
+        # Identity updates retain the publication's selected encoding, including
+        # a CSV bundle received from another worker. Packaging owns format switches.
+        encoding=(manifest_format(json.loads(manifest_path(folder(dataset)).read_text(encoding='utf-8')))
+                  if exists(dataset) else None)
+        report['parquet']=refresh(root,dataset,rows=fixture_rows,data_format=encoding)
     return report

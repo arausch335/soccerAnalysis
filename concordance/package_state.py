@@ -31,8 +31,15 @@ def recipe():
     for directory in ('collection', 'providers', 'fixtures', 'concordance', 'storage', 'config'):
         paths.extend(p for p in (project/directory).rglob('*')
                      if p.is_file() and p.suffix in ('.py', '.json', '.yaml'))
-    return digest([(str(p.relative_to(project)), hashlib.sha256(p.read_bytes()).hexdigest())
-                   for p in sorted(set(paths))])
+    def content(path):
+        if path==project/'config/settings.yaml':
+            import yaml
+            value=yaml.safe_load(path.read_text())
+            if isinstance(value,dict) and isinstance(value.get('dataset'),dict):
+                value['dataset'].pop('concordance_format',None)
+            return digest(value)
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    return digest([(str(p.relative_to(project)),content(p)) for p in sorted(set(paths))])
 
 
 def source_signature(source):
@@ -91,9 +98,13 @@ def global_signature(root, compiled, sources, settings, recipe_id):
 
 
 def publication_outputs(output):
-    from .publication import TABLES, table_path, manifest_path, folder
+    from .publication import TABLES, table_path, manifest_path, folder, publication_files
     base = folder(output)
-    paths = [manifest_path(base), *(base/table_path(name) for name in TABLES)]
+    try:
+        paths=publication_files(base)
+    except (OSError,ValueError,TypeError,KeyError):
+        # Track a missing/unreadable manifest as changed instead of an unchanged export.
+        paths=[manifest_path(base), *(base/table_path(name) for name in TABLES)]
     return {p.relative_to(base).as_posix():file_stamp(p) for p in paths}
 
 

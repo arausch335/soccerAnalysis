@@ -132,7 +132,7 @@ class MSIIncrementalBuildTests(unittest.TestCase):
                 self.assertTrue(self.agent.maintenance_once())
             self.assertEqual(index.call_count,1)
         import pandas as pd
-        self.assertEqual(len(pd.read_csv(self.output/'concordance/fixtures.csv')),2)
+        self.assertEqual(len(pd.read_parquet(self.output/'concordance/fixtures.parquet')),2)
 
     def test_missing_archive_publication_is_restored_from_retained_outputs(self):
         self.add_season('premier-league-2024-25','Premier League',101)

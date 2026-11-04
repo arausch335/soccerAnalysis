@@ -43,16 +43,21 @@ class CompiledDeliveryTests(unittest.TestCase):
         from concordance.parquet import validate,read_table
         from collection.compiledDelivery import fixture_files
         case=ParquetTests();case.setUp()
-        try:case.write(output=self.source/'concordance',chunk_rows=2)
+        try:
+            for encoding in ('parquet','csv','parquet'):
+                with self.subTest(encoding=encoding):
+                    case.write(output=self.source/'concordance',chunk_rows=2,data_format=encoding)
+                    files=fixture_files(self.source)
+                    self.assertTrue(all(name.endswith(('.'+encoding,'manifest.json')) for name in files))
+                    result=deliver(self.root,self.source,report=lambda *a,**k:None)
+                    self.assertEqual(result['state'],'installed_on_main')
+                    self.assertEqual(validate(self.output/'concordance')['rows'],3)
+                    self.assertEqual(len(read_table(self.output/'concordance','match_ids')),3)
+                    self.assertTrue((self.output/('concordance/fixtures.'+encoding)).is_file())
+                    other='csv' if encoding=='parquet' else 'parquet'
+                    self.assertFalse((self.output/('concordance/fixtures.'+other)).exists())
+                    self.assertEqual(json.loads(receipt_path(self.main).read_text())['route'],'worker_to_main')
         finally:case.doCleanups()
-        files=fixture_files(self.source)
-        self.assertTrue(all(name.endswith(('.csv','manifest.json')) for name in files))
-        result=deliver(self.root,self.source,report=lambda *a,**k:None)
-        self.assertEqual(result['state'],'installed_on_main')
-        self.assertEqual(validate(self.output/'concordance')['rows'],3)
-        self.assertEqual(len(read_table(self.output/'concordance','match_ids')),3)
-        self.assertTrue((self.output/'concordance/fixtures.csv').is_file())
-        self.assertEqual(json.loads(receipt_path(self.main).read_text())['route'],'worker_to_main')
 
     def test_compiled_bundle_is_installed_on_main_before_ack_without_raw_outbox(self):
         raw = self.root / 'premier-league/2010-2011/raw/sofascore/match.json'

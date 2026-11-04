@@ -871,8 +871,8 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
             schedule_coverage_complete=manifest['schedule_coverage_complete'],count_checks_passed=manifest['count_checks_passed'],
             required_schedule_coverage_complete=manifest['required_schedule_coverage_complete'],
             registry_version=manifest['registry_version'],registry_conflicts=manifest['registry_conflicts'])
-    from concordance.publication import folder as publication_folder
-    report(f"Wrote {manifest['rows']} fixtures to {publication_folder(output.parent) / 'fixtures.csv'} (CSV). Required schedule coverage complete: {manifest['required_schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
+    from concordance.publication import folder as publication_folder,output_format,table_path
+    report(f"Wrote {manifest['rows']} fixtures to {publication_folder(output.parent) / table_path('fixtures/fixtures',output_format())} ({output_format()}). Required schedule coverage complete: {manifest['required_schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
     return manifest
 
 

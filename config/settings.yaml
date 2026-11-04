@@ -52,6 +52,7 @@ api_test:
     whoscored: 1821095
     fotmob: 4506485
 dataset:
+  concordance_format: parquet
   collections: []
   tables:
     player_match_stats: true

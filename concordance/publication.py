@@ -1,4 +1,4 @@
-"""Single CSV publisher and validator for dataset fixtures and identity tables."""
+"""Shared Parquet/CSV publisher and validator for dataset fixtures and identity tables."""
 from collections import Counter,defaultdict
 from datetime import datetime,timezone,date
 import hashlib
@@ -12,11 +12,13 @@ from uuid import uuid4
 from filelock import FileLock
 import pandas as pd
 import pyarrow as pa
+import pyarrow.parquet as pq
 
 from providers.reep import PROVIDERS
 from storage.pandasStore import atomic_json,atomic_replace
 
-FORMAT='soccer-concordance-csv-v1'
+FORMATS={'csv':'soccer-concordance-csv-v1','parquet':'soccer-concordance-parquet-v1'}
+FORMAT=FORMATS['parquet']
 CHUNK_ROWS=50_000
 ID_COLUMNS=('entity_id','alex_id','reep_id','sofascore_id','fotmob_id','whoscored_id')
 NAME_COLUMNS=('entity_name','reep_name','sofascore_name','fotmob_name','whoscored_name')
@@ -58,9 +60,38 @@ def folder(dataset):
 def manifest_path(base):return Path(base)/'metadata/manifest.json'
 
 
-def table_path(name):
-    return {'fixtures/fixtures':'fixtures.csv', 'fixtures/extra':'metadata/fixture_extra.csv',
-            'fixtures/metadata':'metadata/fixtures.csv', 'entities':'metadata/entities.csv'}.get(name,name+'.csv')
+def output_format(value=None):
+    if value is None:
+        import config
+        value=getattr(config,'CONCORDANCE_FORMAT','parquet')
+    if not isinstance(value,str) or value not in FORMATS:raise ValueError('Concordance format must be parquet or csv')
+    return value
+
+
+def manifest_format(manifest):
+    for name,version in FORMATS.items():
+        if manifest.get('format')==version:
+            if manifest.get('data_format',name)!=name:raise ValueError('Concordance format fields disagree')
+            return name
+    raise ValueError('Unknown concordance format')
+
+
+def table_path(name,data_format='parquet'):
+    extension=output_format(data_format)
+    stem={'fixtures/fixtures':'fixtures','fixtures/extra':'metadata/fixture_extra',
+          'fixtures/metadata':'metadata/fixtures','entities':'metadata/entities'}.get(name,name)
+    return stem+'.'+extension
+
+
+def public_paths(data_format):
+    return {'concordance/metadata/manifest.json', *('concordance/'+table_path(name,data_format) for name in TABLES)}
+
+
+def publication_files(base):
+    base=Path(base)
+    manifest=json.loads(manifest_path(base).read_text(encoding='utf-8'))
+    encoding=manifest_format(manifest)
+    return [manifest_path(base),*(base/table_path(name,encoding) for name in TABLES)]
 
 
 def exists(dataset):return manifest_path(folder(dataset)).is_file()
@@ -68,6 +99,10 @@ def exists(dataset):return manifest_path(folder(dataset)).is_file()
 
 def read_table(base,name):
     manifest=json.loads(manifest_path(base).read_text(encoding='utf-8'))
+    data_format=manifest_format(manifest)
+    if data_format=='parquet':
+        return pa.concat_tables([pq.ParquetFile(Path(base)/item['path']).read()
+                                 for item in manifest['tables'][name]['files']]).to_pandas()
     frames=[]
     for item in manifest['tables'][name]['files']:
         frame=pd.read_csv(Path(base)/item['path'],dtype=str,keep_default_na=False)
@@ -208,7 +243,7 @@ def arrow_table(rows,columns,*,typed=False):
 
 def validate(base,*,require_integration=False):
     base=Path(base);manifest=json.loads(manifest_path(base).read_text(encoding='utf-8'))
-    if manifest.get('format')!=FORMAT:raise ValueError('Unknown CSV concordance format')
+    data_format=manifest_format(manifest)
     if require_integration and not manifest.get('ready_for_R'):raise ValueError('MSI integration is unconfirmed; audit and rebuild first')
     expected=set()
     for name,info in manifest['tables'].items():
@@ -216,16 +251,20 @@ def validate(base,*,require_integration=False):
         count=0
         for item in info['files']:
             path=Path(item['path'])
-            if path.as_posix()!=table_path(name):raise ValueError('Unsafe CSV table path')
+            if path.as_posix()!=table_path(name,data_format):raise ValueError('Unsafe concordance table path')
             target=base/path;expected.add(path.as_posix())
-            if digest(target)!=item['sha256']:raise ValueError('CSV checksum mismatch: '+str(path))
-            with target.open(encoding='utf-8',newline='') as stream:
-                import csv
-                count+=sum(1 for _ in csv.DictReader(stream))
-        if count!=info['rows']:raise ValueError('CSV row count differs')
-    if set(manifest['tables'])!=set(TABLES):raise ValueError('Incomplete CSV table set')
-    public_csv={p.relative_to(base).as_posix() for p in base.glob('*.csv')}
-    if public_csv != {table_path(name) for name in ('fixtures/fixtures','match_ids','team_ids','player_ids')}:raise ValueError('Stale or unverified public CSV tables')
+            if digest(target)!=item['sha256']:raise ValueError('Concordance checksum mismatch: '+str(path))
+            if data_format=='parquet':count+=pq.read_metadata(target).num_rows
+            else:
+                with target.open(encoding='utf-8',newline='') as stream:
+                    import csv
+                    count+=sum(1 for _ in csv.DictReader(stream))
+        if count!=info['rows']:raise ValueError('Concordance row count differs')
+    if set(manifest['tables'])!=set(TABLES):raise ValueError('Incomplete concordance table set')
+    public={p.relative_to(base).as_posix() for suffix in ('*.csv','*.parquet') for p in base.glob(suffix)}
+    if public != {table_path(name,data_format) for name in ('fixtures/fixtures','match_ids','team_ids','player_ids')}:raise ValueError('Stale or unverified public tables')
+    if any((base/table_path(name,other)).exists() for other in FORMATS if other!=data_format for name in TABLES):
+        raise ValueError('Stale concordance tables from another format')
     core=read_table(base,'fixtures/fixtures');extra=read_table(base,'fixtures/extra');meta=read_table(base,'fixtures/metadata')
     if tuple(core.columns)!=CORE_COLUMNS or tuple(extra.columns)!=EXTRA_COLUMNS:raise ValueError('Incorrect fixture schema')
     keys=set(core.match_entity_id)
@@ -258,11 +297,12 @@ def validate(base,*,require_integration=False):
             facts=meta.set_index('match_entity_id').reindex(core.match_entity_id)
             allowed=core.has_player_stats.to_numpy() & facts.get('fixture_source',pd.Series('',index=facts.index)).eq('stored_player_stats').to_numpy()
             if (missing.to_numpy() & ~allowed).any():raise ValueError('Fixture is missing a team entity ID')
-    return {'format':FORMAT,'rows':len(core),'tables':{k:v['rows'] for k,v in manifest['tables'].items()},'ready_for_R':manifest['ready_for_R']}
+    return {'format':manifest['format'],'rows':len(core),'tables':{k:v['rows'] for k,v in manifest['tables'].items()},'ready_for_R':manifest['ready_for_R']}
 
 
-def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),registry=None,confirmed=False,chunk_rows=CHUNK_ROWS,output=None,check=None):
+def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),registry=None,confirmed=False,chunk_rows=CHUNK_ROWS,output=None,check=None,data_format=None):
     if not 1<=chunk_rows<=1_000_000:raise ValueError('chunk_rows must be between 1 and 1000000')
+    data_format=output_format(data_format)
     from providers.reep import snapshot
     from .sync import version as registry_version
     root,dataset=Path(root),Path(dataset);target=Path(output) if output is not None else folder(dataset);target.parent.mkdir(parents=True,exist_ok=True)
@@ -288,7 +328,7 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
     (root/'_system/identity').mkdir(parents=True,exist_ok=True)
     with FileLock(str(root/'_system/identity/publication.lock'),timeout=25):
         with tempfile.TemporaryDirectory(prefix='.concordances-',dir=target.parent) as temporary:
-            stage=Path(temporary)/'bundle';stage.mkdir();manifest={'format':FORMAT,'built_at':datetime.now(timezone.utc).isoformat(),
+            stage=Path(temporary)/'bundle';stage.mkdir();manifest={'format':FORMATS[data_format],'data_format':data_format,'built_at':datetime.now(timezone.utc).isoformat(),
                 'registry_format':state['format'],'registry_version':registry_version(registry.value) if registry else '',
                 'ready_for_R':bool(confirmed),'integration_confirmed':bool(confirmed),'chunk_rows':chunk_rows,'tables':{},
                 'name_priority':['reep','sofascore','fotmob','whoscored']}
@@ -296,10 +336,15 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
             if (target/'metadata').is_dir():
                 from collection.storageTransfer import link_or_copy
                 shutil.copytree(target/'metadata',stage/'metadata',dirs_exist_ok=True,copy_function=link_or_copy)
+            # Unlink copied table files before writing: copied metadata can be
+            # hard-linked to the previous publication, which must remain intact.
+            for old_format in FORMATS:
+                for name in TABLES:(stage/table_path(name,old_format)).unlink(missing_ok=True)
             from collection.files import atomic_csv
             for name,table in tables.items():
-                path=stage/table_path(name)
-                atomic_csv(table.to_pandas(),path)
+                path=stage/table_path(name,data_format);path.parent.mkdir(parents=True,exist_ok=True)
+                if data_format=='parquet':pq.write_table(table,path,compression='zstd',row_group_size=chunk_rows)
+                else:atomic_csv(table.to_pandas(),path)
                 manifest['tables'][name]={'rows':len(table),'files':[
                     {'path':path.relative_to(stage).as_posix(),'sha256':digest(path)}]}
             manifest.pop('chunk_rows',None)
@@ -325,7 +370,7 @@ def compiled_signature(root,dataset):
     return [(str(p),p.stat().st_size,p.stat().st_mtime_ns) if p.is_file() else (str(p),None,None) for p in paths]
 
 
-def refresh(root,dataset,*,rows=None,confirmed=False,chunk_rows=CHUNK_ROWS,output=None,report=None):
+def refresh(root,dataset,*,rows=None,confirmed=False,chunk_rows=CHUNK_ROWS,output=None,report=None,data_format=None):
     """Publish already compiled fixtures/references; never start a collection scan."""
     import csv
     from .registry import Registry
@@ -360,6 +405,6 @@ def refresh(root,dataset,*,rows=None,confirmed=False,chunk_rows=CHUNK_ROWS,outpu
     if history.is_file():
         with history.open(encoding='utf-8-sig',newline='') as stream:entities=list(csv.DictReader(stream))
     def unchanged():
-        if compiled_signature(root,dataset)!=before:raise ValueError('Compiled fixtures or identities changed during export; previous CSV publication preserved; retry')
+        if compiled_signature(root,dataset)!=before:raise ValueError('Compiled fixtures or identities changed during export; previous concordance publication preserved; retry')
     return publish(root,dataset,rows,matches=references['match'],teams=references['team'],players=references['player'],
-        entities=entities,registry=registry,confirmed=confirmed,chunk_rows=chunk_rows,output=output,check=unchanged)
+        entities=entities,registry=registry,confirmed=confirmed,chunk_rows=chunk_rows,output=output,check=unchanged,data_format=data_format)

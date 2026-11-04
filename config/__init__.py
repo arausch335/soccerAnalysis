@@ -31,10 +31,10 @@ def _mapping(loader, node, deep=False):
 _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
 
 
-def _section(value, keys, label):
+def _section(value, keys, label, optional=()):
     if not isinstance(value, dict):
         raise ConfigError(f'{label} must be a YAML mapping')
-    unknown = set(value) - set(keys)
+    unknown = set(value) - set(keys) - set(optional)
     missing = set(keys) - set(value)
     if unknown:
         raise ConfigError(f'Unknown setting in {label}: {", ".join(sorted(unknown))}')
@@ -146,7 +146,10 @@ def load_config(path=None, *, project_root=None):
         raise ConfigError('whoscored request delays must be finite positive numbers with min <= max')
     paths = _section(document['paths'], ('data', 'dataset'), 'paths')
     dataset = _section(document['dataset'], (
-        'collections', 'tables', 'references', 'maintenance'), 'dataset')
+        'collections', 'tables', 'references', 'maintenance'), 'dataset', optional=('concordance_format',))
+    concordance_format=dataset.get('concordance_format','parquet')
+    if concordance_format not in ('parquet','csv'):
+        raise ConfigError('dataset.concordance_format must be parquet or csv')
     tables = _section({'events': False, **dataset['tables']}, (
         'events', 'player_match_stats', 'team_match_stats', 'fixtures'), 'dataset.tables')
     references = _section(dataset['references'], (
@@ -170,7 +173,7 @@ def load_config(path=None, *, project_root=None):
         'TRANSPORT':transport,
         'COLLECTION_TYPES':kinds,
         'SHOW_TIMING':_boolean(collection['show_timing'],'collection.show_timing'),
-        'DATA_ROOT': data, 'DATASET_ROOT': output,
+        'DATA_ROOT': data, 'DATASET_ROOT': output, 'CONCORDANCE_FORMAT':concordance_format,
         'ACTION': collection['action'],
         'COMPETITIONS': _strings(collection['competitions'], 'collection.competitions'),
         'SEASONS': _strings(collection['seasons'], 'collection.seasons'),

@@ -44,15 +44,15 @@ class ParquetTests(unittest.TestCase):
 
     def write(self,**kw):return publish(self.root,self.dataset,self.rows,registry=self.registry,**kw)
 
-    def test_fixture_schema_ids_and_csv_serialization(self):
+    def test_fixture_schema_ids_and_parquet_serialization(self):
         manifest=self.write();base=self.dataset/'concordance';validate(base)
         self.assertEqual(len(manifest['tables']['fixtures/fixtures']['files']),1)
         frame=read_table(base,'fixtures/fixtures');self.assertEqual(tuple(frame.columns),CORE_COLUMNS)
         self.assertEqual(set(c for c in frame if c.endswith('_id')),{'match_entity_id','home_team_entity_id','away_team_entity_id'})
-        self.assertTrue((base/'fixtures.csv').is_file())
+        self.assertTrue((base/'fixtures.parquet').is_file())
         self.assertTrue(frame.home_score.isna().iloc[2])
         self.assertEqual(frame.home_team.tolist(),['Reep Home']*3)
-        self.assertFalse(list(base.rglob('*.parquet')))
+        self.assertFalse(list(base.glob('*.csv')))
         self.assertEqual(tuple(read_table(base,'fixtures/extra').columns),EXTRA_COLUMNS)
         self.assertIn('fotmob_fixture_check',read_table(base,'fixtures/metadata'))
         self.assertNotIn('fotmob_fixture_check',frame)
@@ -73,15 +73,15 @@ class ParquetTests(unittest.TestCase):
 
     def test_rebuild_removes_old_chunks_and_failed_write_keeps_previous_dataset(self):
         self.write(chunk_rows=1);base=self.dataset/'concordance';original=(base/'metadata/manifest.json').read_bytes()
-        with patch('collection.files.atomic_csv',side_effect=OSError('interrupted')):
+        with patch('concordance.publication.pq.write_table',side_effect=OSError('interrupted')):
             with self.assertRaises(OSError):self.write(chunk_rows=2)
         self.assertEqual((base/'metadata/manifest.json').read_bytes(),original);validate(base)
-        self.write(chunk_rows=100);self.assertFalse(list(base.rglob('*.parquet')));validate(base)
+        self.write(chunk_rows=100);self.assertFalse(list(base.glob('*.csv')));validate(base)
 
     def test_corruption_and_unlisted_chunks_are_rejected(self):
         self.write();base=self.dataset/'concordance';extra=base/'unexpected.csv';extra.write_bytes(b'extra')
         with self.assertRaisesRegex(ValueError,'unverified'):validate(base)
-        extra.unlink();path=base/'match_ids.csv';path.write_bytes(path.read_bytes()+b'changed')
+        extra.unlink();path=base/'match_ids.parquet';path.write_bytes(path.read_bytes()+b'changed')
         with self.assertRaisesRegex(ValueError,'checksum'):validate(base)
 
     def test_preview_cannot_be_imported_as_integration_confirmed(self):
@@ -97,7 +97,7 @@ class ParquetTests(unittest.TestCase):
 
     def test_transfer_paths_allow_only_public_csv_tables(self):
         from collection.storageTransfer import safe_path
-        for path in ('concordance/fixtures.csv','concordance/metadata/manifest.json',
+        for path in ('concordance/fixtures.csv','concordance/fixtures.parquet','concordance/metadata/manifest.json',
                      'raw_data/premier-league/2024-2025/player_match_stats.csv'):
             self.assertEqual(safe_path(path,'dataset'),path)
         for path in ('concordance/metadata/compiled/fixtures.csv',

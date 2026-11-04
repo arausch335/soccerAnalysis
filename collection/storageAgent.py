@@ -108,21 +108,21 @@ def _install_dataset(peer,manifest,output,staging_root,*,exclude=()):
             if target.is_file() and target.stat().st_size==item['size'] and digest(target)==item['sha256']:link_or_copy(target,incoming)
             else:peer.download(item['sha256'],incoming)
             if incoming.stat().st_size!=item['size'] or digest(incoming)!=item['sha256']:raise ValueError('Dataset file differs from manifest')
-        csv_bundle=stage/'concordance'
-        csv_publication=(csv_bundle/'metadata/manifest.json').is_file()
-        if csv_publication:
+        canonical_bundle=stage/'concordance'
+        canonical_publication=(canonical_bundle/'metadata/manifest.json').is_file()
+        if canonical_publication:
             from concordance.publication import validate
-            validate(csv_bundle)
+            validate(canonical_bundle)
             # Keep this computer's private linker inputs out of the transfer contract.
             for name in ('compiled','legacy'):
                 if (output/'concordance/metadata'/name).is_dir():
-                    shutil.copytree(output/'concordance/metadata'/name,csv_bundle/'metadata'/name,dirs_exist_ok=True,copy_function=link_or_copy)
+                    shutil.copytree(output/'concordance/metadata'/name,canonical_bundle/'metadata'/name,dirs_exist_ok=True,copy_function=link_or_copy)
             local_state=output/'concordance/metadata/package-state.json'
             if local_state.is_file():
-                link_or_copy(local_state,csv_bundle/'metadata/package-state.json')
+                link_or_copy(local_state,canonical_bundle/'metadata/package-state.json')
             target=output/'concordance';previous=output/('.concordance-previous-'+uuid4().hex)
             if target.exists():atomic_replace(target,previous)
-            try:atomic_replace(csv_bundle,target)
+            try:atomic_replace(canonical_bundle,target)
             except BaseException:
                 if previous.exists():atomic_replace(previous,target)
                 raise
@@ -137,7 +137,7 @@ def _install_dataset(peer,manifest,output,staging_root,*,exclude=()):
         # The receipt is updated only after every publication file is installed.
         # An interrupted installation is retried from the same verified manifest.
         for item in files:
-            if not item['path'].startswith('concordances/') and not (csv_publication and item['path'].startswith('concordance/')):atomic_copy(stage/item['path'],output/item['path'])
+            if not item['path'].startswith('concordances/') and not (canonical_publication and item['path'].startswith('concordance/')):atomic_copy(stage/item['path'],output/item['path'])
         if (parquet/'manifest.json').is_file():
             previous=output/('.concordances-previous-'+uuid4().hex);target=output/'concordances'
             if target.exists():atomic_replace(target,previous)
@@ -423,8 +423,9 @@ class StorageAgent:
                             updates=dataset_files(output);files=dataset_files(self.output)
                             canonical='concordance/metadata/manifest.json' in updates
                             if canonical:
-                                from concordance.publication import TABLES,table_path
-                                allowed={'concordance/metadata/manifest.json', *('concordance/'+table_path(name) for name in TABLES)}
+                                from concordance.publication import public_paths,manifest_format,manifest_path,folder
+                                encoding=manifest_format(json.loads(manifest_path(folder(output)).read_text()))
+                                allowed=public_paths(encoding)
                                 files={name:path for name,path in files.items() if name in allowed or name.startswith('raw_data/')}
                             files.update(updates)
                             manifest={'format':FORMAT,'kind':'dataset','worker':self.worker,'files':[

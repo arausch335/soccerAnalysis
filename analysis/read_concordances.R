@@ -1,4 +1,4 @@
-# CSV fixtures and IDs under dataset/concordance; supporting tables stay in metadata.
+# Parquet (default) or CSV fixtures and IDs under dataset/concordance; supporting tables stay in metadata.
 read_concordances <- function(concordance_root = "dataset/concordance", require_integration = TRUE) {
   for (package in c("jsonlite", "digest")) {
     if (!requireNamespace(package, quietly = TRUE)) stop("Install package: ", package)
@@ -6,7 +6,10 @@ read_concordances <- function(concordance_root = "dataset/concordance", require_
   folder <- concordance_root
   if (!file.exists(file.path(folder, "metadata", "manifest.json"))) folder <- file.path(folder, "concordance")
   manifest <- jsonlite::fromJSON(file.path(folder, "metadata", "manifest.json"), simplifyVector = FALSE)
-  if (!identical(manifest$format, "soccer-concordance-csv-v1")) stop("Re-export the CSV concordance")
+  encoding <- switch(manifest$format, "soccer-concordance-csv-v1" = "csv",
+    "soccer-concordance-parquet-v1" = "parquet", stop("Unknown concordance format"))
+  if (!is.null(manifest$data_format) && !identical(manifest$data_format, encoding)) stop("Concordance format fields disagree")
+  if (encoding == "parquet" && !requireNamespace("arrow", quietly = TRUE)) stop("Install package: arrow")
   if (require_integration && !isTRUE(manifest$ready_for_R)) stop("MSI integration is unconfirmed. Audit and rebuild first.")
   expected <- character()
   read_table <- function(name) {
@@ -14,18 +17,19 @@ read_concordances <- function(concordance_root = "dataset/concordance", require_
     if (is.null(info) || !length(info$files)) stop("Missing table: ", name)
     paths <- vapply(info$files, function(item) {
       relative <- item$path
-      csv_path <- switch(name, "fixtures/fixtures" = "fixtures.csv",
-        "fixtures/extra" = "metadata/fixture_extra.csv", "fixtures/metadata" = "metadata/fixtures.csv",
-        "entities" = "metadata/entities.csv", paste0(name, ".csv"))
-      if (!identical(relative, csv_path)) stop("Invalid CSV path")
+      stem <- switch(name, "fixtures/fixtures" = "fixtures", "fixtures/extra" = "metadata/fixture_extra",
+        "fixtures/metadata" = "metadata/fixtures", "entities" = "metadata/entities", name)
+      if (!identical(relative, paste0(stem, ".", encoding))) stop("Invalid concordance path")
       path <- file.path(folder, relative)
-      if (!identical(digest::digest(file = path, algo = "sha256", serialize = FALSE), item$sha256)) stop("CSV checksum mismatch: ", relative)
+      if (!identical(digest::digest(file = path, algo = "sha256", serialize = FALSE), item$sha256)) stop("Concordance checksum mismatch: ", relative)
       expected <<- c(expected, relative)
       path
     }, character(1))
-    data <- do.call(rbind, lapply(paths, function(path)
-      read.csv(path, colClasses = "character", na.strings = "", check.names = FALSE)))
-    if (name %in% c("fixtures/fixtures", "fixtures/extra")) {
+    data <- do.call(rbind, lapply(paths, function(path) {
+      if (encoding == "parquet") as.data.frame(arrow::read_parquet(path))
+      else read.csv(path, colClasses = "character", na.strings = "", check.names = FALSE)
+    }))
+    if (encoding == "csv" && name %in% c("fixtures/fixtures", "fixtures/extra")) {
       for (column in intersect(c("has_player_stats", "is_scheduled_for_scraping", "awarded"), names(data)))
         data[[column]] <- as.logical(data[[column]])
       for (column in intersect(c("matchweek", "home_score", "away_score", "winner_code"), names(data)))
@@ -94,8 +98,8 @@ read_concordances <- function(concordance_root = "dataset/concordance", require_
       if (!is.null(alias) && canonical(alias) != data$entity_id[i]) stop("Provider/canonical ID disagreement")
     }
   }
-  found <- list.files(folder, pattern = "\\.csv$", recursive = FALSE)
-  if (!setequal(found, expected[!grepl("/", expected)])) stop("Unverified or stale CSV tables")
+  found <- list.files(folder, pattern = "\\.(csv|parquet)$", recursive = FALSE)
+  if (!setequal(found, expected[!grepl("/", expected)])) stop("Unverified or stale concordance tables")
   key <- fixtures$match_entity_id
   if (anyNA(key) || anyDuplicated(key) || anyNA(match(key, ids$match_ids$entity_id))) stop("Invalid fixture match key")
   for (data in list(extra, metadata)) {

@@ -810,12 +810,14 @@ def _build_reference_csvs(root, output, settings, *, offline=False):
     return written
 
 
-def build_dataset(data_root=None, dataset_root=None, names=None, *, references_only=False, offline=True, mode="incremental"):
+def build_dataset(data_root=None, dataset_root=None, names=None, *, references_only=False, offline=True, mode="incremental", concordance_format=None):
     """Build types enabled in config/settings.yaml from saved local collection data."""
     from collection.cli import main as collect
     from concordance import package_state as tracking
     if mode not in ('incremental', 'rebuild'):
         raise ValueError('Packaging mode must be incremental or rebuild')
+    from concordance.publication import output_format
+    concordance_format=output_format(concordance_format)
     tables, settings = _build_settings()
     if references_only:
         tables = ()
@@ -838,10 +840,11 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
                           != source_inputs[p.relative_to(root).as_posix()]]
     before = tracking.global_signature(root, compiled, sources, settings, recipe_id)
     publication = tracking.publication_outputs(output)
-    needs_references = (mode == 'rebuild' or state.get('global') != before
+    needs_inputs = mode == 'rebuild' or state.get('global') != before
+    needs_references = (needs_inputs or state.get('concordance_format') != concordance_format
                         or state.get('publication') != publication
                         or any(value is None for value in publication.values()))
-    print(f'Packaging mode: {mode}', flush=True)
+    print(f'Packaging mode: {mode}; concordance format: {concordance_format}', flush=True)
     if settings['STANDARDIZE_FIXTURE_TEAM_NAMES'] and not (compiled / 'fixtures.csv').is_file():
         raise ValueError('Standardizing fixture names requires compiled fixtures from the fixture builder')
     reference_names = [name.removeprefix('BUILD_').lower() for name in
@@ -871,6 +874,7 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
                 print(f'[{index}/{len(selected)}] Unchanged season: {name}', flush=True)
                 continue
             needs_references = True
+            needs_inputs = True
             print(f'[{index}/{len(selected)}] Building dataset: {name}', flush=True)
             try:
                 # Fixture-only builds read schedules without exporting other CSVs.
@@ -896,16 +900,17 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
         try:
             if mode == 'rebuild' and (compiled/'id_cache').exists():
                 shutil.rmtree(compiled/'id_cache')
-            if discover_collections(root, 'config.json'):
+            if needs_inputs and discover_collections(root, 'config.json'):
                 _build_reference_csvs(root, compiled, settings, offline=offline)
-            if changed_sources or not (compiled/'fixtures.csv').is_file():
+            if needs_inputs and (changed_sources or not (compiled/'fixtures.csv').is_file()):
                 _seed_fixture_catalog(root, compiled, sources=changed_sources)
             from concordance.publication import refresh, folder, validate
-            if refresh(root, compiled, report=print) is None:
+            if refresh(root, compiled, report=print,data_format=concordance_format) is None:
                 raise ValueError('No entity-keyed compiled fixtures found')
             validate(folder(output))
             retire_legacy(output)
             tracking.save(state_path, {'seasons':season_state, 'recipe':recipe_id,
+                'concordance_format':concordance_format,
                 'identity_context':tracking.identity_context(root),
                 'source_inputs':{p.relative_to(root).as_posix():tracking.source_signature(p) for p in sources},
                 'global':tracking.global_signature(root, compiled, sources, settings, recipe_id),
@@ -959,9 +964,9 @@ def _seed_fixture_catalog(root, compiled, *, sources=None):
     atomic_csv(pd.DataFrame(rows),compiled/'fixtures.csv')
 
 
-def package_dataset(data_root, dataset_root, names=None, *, references_only=False, mode="incremental"):
+def package_dataset(data_root, dataset_root, names=None, *, references_only=False, mode="incremental", concordance_format=None):
     """Compatibility alias for the single saved-data dataset builder."""
-    return build_dataset(data_root,dataset_root,names,references_only=references_only,offline=True,mode=mode)
+    return build_dataset(data_root,dataset_root,names,references_only=references_only,offline=True,mode=mode,concordance_format=concordance_format)
 
 
 def main(argv=None, *, package=False):
@@ -978,12 +983,17 @@ def main(argv=None, *, package=False):
                        help='Regenerate every selected saved season and combined concordance; ignore caches')
     modes.add_argument('--incremental', action='store_const', const='incremental', dest='mode',
                        help='Process only new/changed seasons and missing/changed outputs (default)')
-    parser.set_defaults(mode='incremental')
+    formats=parser.add_mutually_exclusive_group()
+    formats.add_argument('--csv',action='store_const',const='csv',dest='concordance_format',
+                         help='Write public concordance and supporting tables as CSV')
+    formats.add_argument('--parquet',action='store_const',const='parquet',dest='concordance_format',
+                         help='Write public concordance and supporting tables as Parquet (default)')
+    parser.set_defaults(mode='incremental',concordance_format=None)
     args = parser.parse_args(argv)
     try:
         build = build_dataset
         return build(args.data_root, args.dataset_root,
-                     args.name, references_only=args.references_only, mode=args.mode)
+                     args.name, references_only=args.references_only, mode=args.mode,concordance_format=args.concordance_format)
     except (OSError, ValueError, KeyError) as exc:
         parser.exit(2, f'Dataset build failed: {exc}\n')
 

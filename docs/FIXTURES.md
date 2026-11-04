@@ -1,5 +1,6 @@
-The public dataset uses CSV files under `dataset/raw_data` and
-`dataset/concordance`. Supporting files stay under `concordance/metadata`.
+The public dataset uses season CSVs under `dataset/raw_data` and Parquet tables
+under `dataset/concordance` by default. Use `--package --csv` for CSV concordances.
+Supporting tables use the selected format under `concordance/metadata`.
 See [dataset layout and R import](DATASET_LAYOUT.md).
 
 The historical compiler paths described below are private inputs under

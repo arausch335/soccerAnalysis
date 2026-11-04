@@ -50,8 +50,8 @@ def safe_path(value,kind):
             r'concordances/(?:fixtures/(?:fixtures|extra|metadata)|metadata/(?:match_ids|team_ids|player_ids|registry)|match_ids|team_ids|player_ids|entities)/part-\d{5}\.parquet',value)):
         return value
     if kind=='dataset':
-        from concordance.publication import TABLES, table_path
-        if value in {'concordance/'+table_path(name) for name in TABLES} | {'concordance/metadata/manifest.json'}:
+        from concordance.publication import FORMATS,public_paths
+        if any(value in public_paths(fmt) for fmt in FORMATS):
             return value
         if path.parts[:2]==('concordance','metadata'):raise ValueError('Private concordance metadata cannot be transferred')
         if path.parts[0]=='raw_data':
