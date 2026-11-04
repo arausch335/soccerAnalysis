@@ -49,7 +49,7 @@ class ParquetTests(unittest.TestCase):
         self.assertEqual(len(manifest['tables']['fixtures/fixtures']['files']),1)
         frame=read_table(base,'fixtures/fixtures');self.assertEqual(tuple(frame.columns),CORE_COLUMNS)
         self.assertEqual(set(c for c in frame if c.endswith('_id')),{'match_entity_id','home_team_entity_id','away_team_entity_id'})
-        self.assertTrue((base/'fixtures.parquet').is_file())
+        self.assertTrue((base/'fixtures/part-00000.parquet').is_file())
         self.assertTrue(frame.home_score.isna().iloc[2])
         self.assertEqual(frame.home_team.tolist(),['Reep Home']*3)
         self.assertFalse(list(base.glob('*.csv')))
@@ -81,7 +81,7 @@ class ParquetTests(unittest.TestCase):
     def test_corruption_and_unlisted_chunks_are_rejected(self):
         self.write();base=self.dataset/'concordance';extra=base/'unexpected.csv';extra.write_bytes(b'extra')
         with self.assertRaisesRegex(ValueError,'unverified'):validate(base)
-        extra.unlink();path=base/'match_ids.parquet';path.write_bytes(path.read_bytes()+b'changed')
+        extra.unlink();path=base/'match_ids/part-00000.parquet';path.write_bytes(path.read_bytes()+b'changed')
         with self.assertRaisesRegex(ValueError,'checksum'):validate(base)
 
     def test_preview_cannot_be_imported_as_integration_confirmed(self):
@@ -97,7 +97,7 @@ class ParquetTests(unittest.TestCase):
 
     def test_transfer_paths_allow_only_public_csv_tables(self):
         from collection.storageTransfer import safe_path
-        for path in ('concordance/fixtures.csv','concordance/fixtures.parquet','concordance/metadata/manifest.json',
+        for path in ('concordance/fixtures.csv','concordance/fixtures/part-00000.parquet','concordance/metadata/manifest.json',
                      'raw_data/premier-league/2024-2025/player_match_stats.csv'):
             self.assertEqual(safe_path(path,'dataset'),path)
         for path in ('concordance/metadata/compiled/fixtures.csv',

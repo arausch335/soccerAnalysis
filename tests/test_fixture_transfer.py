@@ -45,7 +45,7 @@ class FixtureTransferTests(unittest.TestCase):
         self.assertTrue(bundle.exists())
         self.assertEqual(dataset_builder.build_dataset(root,receiver),0)
         from concordance.publication import validate,folder,wide_rows
-        self.assertEqual(validate(folder(receiver))['format'],'soccer-concordance-parquet-v1')
+        self.assertEqual(validate(folder(receiver))['format'],'soccer-concordance-parquet-v2')
         self.assertEqual({r['sofascore_match_id'] for r in wide_rows(receiver)},{'101','102','201'})
         self.assertEqual(dataset_builder.build_dataset(root,receiver),0)
         self.assertEqual(validate(folder(receiver))['rows'],3)
@@ -53,7 +53,7 @@ class FixtureTransferTests(unittest.TestCase):
     def test_damaged_or_partial_transfer_never_installs(self):
         _,sender=self.build('main',[101])
         bundle=self.base/'bundle';export_bundle(sender,bundle)
-        (bundle/'concordance/match_ids.parquet').write_bytes(b'broken')
+        (bundle/'concordance/match_ids/part-00000.parquet').write_bytes(b'broken')
         output=self.base/'receiver'
         with self.assertRaisesRegex(ValueError,'checksum'):install_bundle(bundle,output)
         self.assertFalse(output.exists())
@@ -62,6 +62,6 @@ class FixtureTransferTests(unittest.TestCase):
         _,sender=self.build('main',[101]);bundle=self.base/'bundle';export_bundle(sender,bundle)
         (bundle/'settings.json').write_text('{}')
         with self.assertRaisesRegex(ValueError,'extra files'):verify(bundle)
-        (bundle/'settings.json').unlink();p=bundle/'concordance/match_ids.parquet';p.unlink()
-        p.symlink_to(sender/'concordance/match_ids.parquet')
+        (bundle/'settings.json').unlink();p=bundle/'concordance/match_ids/part-00000.parquet';p.unlink()
+        p.symlink_to(sender/'concordance/match_ids/part-00000.parquet')
         with self.assertRaisesRegex(ValueError,'symbolic'):verify(bundle)

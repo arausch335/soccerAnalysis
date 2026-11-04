@@ -17,7 +17,7 @@ import pyarrow.parquet as pq
 from providers.reep import PROVIDERS
 from storage.pandasStore import atomic_json,atomic_replace
 
-FORMATS={'csv':'soccer-concordance-csv-v1','parquet':'soccer-concordance-parquet-v1'}
+FORMATS={'csv':'soccer-concordance-csv-v1','parquet':'soccer-concordance-parquet-v2'}
 FORMAT=FORMATS['parquet']
 CHUNK_ROWS=50_000
 ID_COLUMNS=('entity_id','alex_id','reep_id','sofascore_id','fotmob_id','whoscored_id')
@@ -69,6 +69,9 @@ def output_format(value=None):
 
 
 def manifest_format(manifest):
+    if manifest.get('format')=='soccer-concordance-parquet-v1':
+        if manifest.get('data_format','parquet')!='parquet':raise ValueError('Concordance format fields disagree')
+        return 'parquet'
     for name,version in FORMATS.items():
         if manifest.get('format')==version:
             if manifest.get('data_format',name)!=name:raise ValueError('Concordance format fields disagree')
@@ -76,22 +79,53 @@ def manifest_format(manifest):
     raise ValueError('Unknown concordance format')
 
 
-def table_path(name,data_format='parquet'):
+def table_path(name,data_format='parquet',part=0,*,legacy=False):
     extension=output_format(data_format)
     stem={'fixtures/fixtures':'fixtures','fixtures/extra':'metadata/fixture_extra',
           'fixtures/metadata':'metadata/fixtures','entities':'metadata/entities'}.get(name,name)
-    return stem+'.'+extension
+    return stem+'.'+extension if extension=='csv' or legacy else stem+f'/part-{part:05d}.parquet'
 
 
-def public_paths(data_format):
-    return {'concordance/metadata/manifest.json', *('concordance/'+table_path(name,data_format) for name in TABLES)}
+def public_paths(data_format,manifest=None):
+    paths=[item['path'] for info in manifest['tables'].values() for item in info['files']] if manifest else [table_path(name,data_format) for name in TABLES]
+    return {'concordance/metadata/manifest.json',*('concordance/'+path for path in paths)}
+
+
+def is_public_path(path):
+    if path=='concordance/metadata/manifest.json':return True
+    for name in TABLES:
+        for encoding in FORMATS:
+            if path=='concordance/'+table_path(name,encoding,legacy=True):return True
+        stem=table_path(name).rsplit('/',1)[0]
+        if re.fullmatch(re.escape('concordance/'+stem)+r'/part-\d{5}\.parquet',path):return True
+    return False
+
+
+def is_public_bundle(paths):
+    paths=set(paths)
+    marker='concordance/metadata/manifest.json'
+    if marker not in paths:return False
+    for encoding,legacy in (('csv',True),('parquet',True),('parquet',False)):
+        groups={name:[] for name in TABLES}
+        for path in paths-{marker}:
+            matches=[]
+            for name in TABLES:
+                expected='concordance/'+table_path(name,encoding,legacy=legacy)
+                pattern=re.escape(expected.rsplit('/',1)[0])+r'/part-\d{5}\.parquet'
+                if path==expected or (encoding=='parquet' and not legacy and re.fullmatch(pattern,path)):
+                    matches.append(name)
+            if len(matches)!=1:break
+            groups[matches[0]].append(path)
+        else:
+            if all(groups.values()):return True
+    return False
 
 
 def publication_files(base):
     base=Path(base)
     manifest=json.loads(manifest_path(base).read_text(encoding='utf-8'))
-    encoding=manifest_format(manifest)
-    return [manifest_path(base),*(base/table_path(name,encoding) for name in TABLES)]
+    manifest_format(manifest)
+    return [manifest_path(base),*(base/item['path'] for info in manifest['tables'].values() for item in info['files'])]
 
 
 def exists(dataset):return manifest_path(folder(dataset)).is_file()
@@ -249,22 +283,27 @@ def validate(base,*,require_integration=False):
     for name,info in manifest['tables'].items():
         if name not in TABLES:raise ValueError('Unknown concordance table')
         count=0
-        for item in info['files']:
+        legacy=manifest['format']=='soccer-concordance-parquet-v1'
+        if not info.get('files'):raise ValueError('Concordance table has no chunks')
+        for index,item in enumerate(info['files']):
             path=Path(item['path'])
-            if path.as_posix()!=table_path(name,data_format):raise ValueError('Unsafe concordance table path')
+            if path.as_posix()!=table_path(name,data_format,index,legacy=legacy):raise ValueError('Unsafe or noncontiguous concordance table path')
+            if path.as_posix() in expected:raise ValueError('Duplicate concordance chunk')
             target=base/path;expected.add(path.as_posix())
             if digest(target)!=item['sha256']:raise ValueError('Concordance checksum mismatch: '+str(path))
-            if data_format=='parquet':count+=pq.read_metadata(target).num_rows
+            if data_format=='parquet':
+                size=pq.read_metadata(target).num_rows
+                if not legacy and size>manifest.get('chunk_rows',CHUNK_ROWS):raise ValueError('Oversized concordance chunk')
+                count+=size
             else:
                 with target.open(encoding='utf-8',newline='') as stream:
                     import csv
                     count+=sum(1 for _ in csv.DictReader(stream))
         if count!=info['rows']:raise ValueError('Concordance row count differs')
     if set(manifest['tables'])!=set(TABLES):raise ValueError('Incomplete concordance table set')
-    public={p.relative_to(base).as_posix() for suffix in ('*.csv','*.parquet') for p in base.glob(suffix)}
-    if public != {table_path(name,data_format) for name in ('fixtures/fixtures','match_ids','team_ids','player_ids')}:raise ValueError('Stale or unverified public tables')
-    if any((base/table_path(name,other)).exists() for other in FORMATS if other!=data_format for name in TABLES):
-        raise ValueError('Stale concordance tables from another format')
+    public={p.relative_to(base).as_posix() for p in base.rglob('*') if p.is_file()
+            and p.suffix in ('.csv','.parquet') and not (p.relative_to(base).parts[0]=='metadata' and len(p.relative_to(base).parts)>1 and p.relative_to(base).parts[1] in ('compiled','legacy','fixture_baselines'))}
+    if public!=expected:raise ValueError('Stale or unverified concordance chunks')
     core=read_table(base,'fixtures/fixtures');extra=read_table(base,'fixtures/extra');meta=read_table(base,'fixtures/metadata')
     if tuple(core.columns)!=CORE_COLUMNS or tuple(extra.columns)!=EXTRA_COLUMNS:raise ValueError('Incorrect fixture schema')
     keys=set(core.match_entity_id)
@@ -338,16 +377,21 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
                 shutil.copytree(target/'metadata',stage/'metadata',dirs_exist_ok=True,copy_function=link_or_copy)
             # Unlink copied table files before writing: copied metadata can be
             # hard-linked to the previous publication, which must remain intact.
-            for old_format in FORMATS:
-                for name in TABLES:(stage/table_path(name,old_format)).unlink(missing_ok=True)
+            for name in TABLES:
+                for old_format in FORMATS:
+                    (stage/table_path(name,old_format,legacy=True)).unlink(missing_ok=True)
+                old=stage/Path(table_path(name)).parent
+                if old.exists():shutil.rmtree(old)
             from collection.files import atomic_csv
             for name,table in tables.items():
-                path=stage/table_path(name,data_format);path.parent.mkdir(parents=True,exist_ok=True)
-                if data_format=='parquet':pq.write_table(table,path,compression='zstd',row_group_size=chunk_rows)
-                else:atomic_csv(table.to_pandas(),path)
-                manifest['tables'][name]={'rows':len(table),'files':[
-                    {'path':path.relative_to(stage).as_posix(),'sha256':digest(path)}]}
-            manifest.pop('chunk_rows',None)
+                pieces=[table.slice(start,chunk_rows) for start in range(0,max(1,len(table)),chunk_rows)] if data_format=='parquet' else [table]
+                files=[]
+                for index,piece in enumerate(pieces):
+                    path=stage/table_path(name,data_format,index);path.parent.mkdir(parents=True,exist_ok=True)
+                    if data_format=='parquet':pq.write_table(piece,path,compression='zstd',row_group_size=chunk_rows)
+                    else:atomic_csv(piece.to_pandas(),path)
+                    files.append({'path':path.relative_to(stage).as_posix(),'sha256':digest(path)})
+                manifest['tables'][name]={'rows':len(table),'files':files}
             atomic_json(manifest_path(stage),manifest,indent=2);validate(stage)
             if check:check()
             previous=target.parent/('.concordances-previous-'+uuid4().hex)

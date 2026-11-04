@@ -219,11 +219,60 @@ def _team_reference(source_teams, fixtures_path, *, crosswalk_path=TEAM_CROSSWAL
     return pd.DataFrame(records, columns=TEAM_ID_COLUMNS)
 
 
+def _canonical_team_reference(source_teams,fixtures_path):
+    """Retain teams from every provider; shared IDs decide canonical identity."""
+    records=source_teams.fillna('').to_dict('records')
+    if Path(fixtures_path).is_file():
+        from concordance.publication import fixture_references
+        with Path(fixtures_path).open(encoding='utf-8-sig',newline='') as stream:
+            _,fixtures=fixture_references(list(csv.DictReader(stream)))
+        records.extend(fixtures)
+    from providers.teamProfiles import canonical_team_id
+    crosswalk=_team_crosswalk()
+    result=[]
+    for row in records:
+        native={p+'_id':_identifier(row.get(p+'_id')) or '' for p in ('sofascore','fotmob','whoscored')}
+        if not any(native.values()):continue
+        native={column:canonical_team_id(column.removesuffix('_id'),value) if value else '' for column,value in native.items()}
+        fotmob=native['fotmob_id']
+        for column in ('sofascore_id','whoscored_id'):
+            verified=_identifier(VERIFIED_TEAM_ID_OVERRIDES.get(fotmob,{}).get(column)) or _identifier(crosswalk.get(fotmob,{}).get(column))
+            if verified:verified=canonical_team_id(column.removesuffix('_id'),verified)
+            if verified and native[column] and verified!=native[column]:
+                raise ValueError('Conflicting reviewed team mapping: '+column+' for FotMob '+fotmob)
+            if verified:native[column]=verified
+        name=row.get('team_name') or next((row.get(p+'_name') for p in ('reep','sofascore','fotmob','whoscored') if row.get(p+'_name')),'')
+        result.append({'team_name':name,**native})
+    return pd.DataFrame(result,columns=TEAM_ID_COLUMNS).drop_duplicates(ignore_index=True)
+
+
 def standardize_fixture_team_names(fixtures_path, team_ids_path):
-    """Replace fixture display names using the FotMob-keyed reference."""
+    """Use canonical team names; accept the old FotMob reference for compatibility."""
     fixtures_path = Path(fixtures_path);
     team_ids_path = Path(team_ids_path)
     teams = pd.read_csv(team_ids_path, dtype=str, keep_default_na=False)
+    if 'entity_id' in teams.columns:
+        fixtures=pd.read_csv(fixtures_path,dtype=str,keep_default_na=False)
+        choices={};native={}
+        for row in teams.to_dict('records'):
+            if row.get('team_name'):choices.setdefault(row['entity_id'],Counter())[row['team_name']]+=1
+            for provider in ('sofascore','fotmob','whoscored'):
+                if row.get(provider+'_id'):native.setdefault((provider,row[provider+'_id']),set()).add(row['entity_id'])
+        names={key:max(values,key=lambda name:(values[name],len(name),name)) for key,values in choices.items()}
+        for index,row in fixtures.iterrows():
+            for side in ('home','away'):
+                entity=row.get(side+'_entity_id','');candidates=set()
+                if entity in names:candidates.add(entity)
+                else:
+                    for provider in ('sofascore','fotmob','whoscored'):
+                        number=row.get(provider+'_'+side+'_team_id','')
+                        if not number and provider==row.get('baseline_provider','sofascore'):number=row.get(side+'_team_id','')
+                        candidates.update(native.get((provider,number),()))
+                if len(candidates)==1:
+                    name=names.get(next(iter(candidates)))
+                    if name:fixtures.at[index,side+'_team']=name
+        atomic_csv(fixtures,fixtures_path)
+        return
     if not set(TEAM_ID_COLUMNS).issubset(teams.columns):
         raise ValueError(f'{team_ids_path} is missing team reference columns')
     if teams.fotmob_id.duplicated().any():
@@ -551,7 +600,7 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
         _backfill_unambiguous_ids(team_rows)
         source_teams = _finalize_id_rows(team_rows, SOURCE_TEAM_ID_COLUMNS,
                                          ['competition', 'season', 'team_name'])
-        teams = _team_reference(source_teams, output / 'fixtures.csv')
+        teams = _canonical_team_reference(source_teams, output / 'fixtures.csv')
         pending['team IDs'] = (teams, output / 'team_ids.csv')
     if build_match_ids:
         from providers.teamProfiles import canonical_frame
@@ -573,13 +622,14 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
         atomic_csv(frame, path);
         written[label] = path
         if label == 'team IDs':
-            missing = frame[['sofascore_id', 'whoscored_id']].fillna('').eq('')
-            incomplete = int(missing.any(axis=1).sum())
-            print(f'Team IDs: {len(frame)} FotMob teams; '
-                  f'{len(frame) - incomplete} have all three IDs; '
-                  f'{incomplete} have missing provider IDs '
-                  f'(SofaScore: {int(missing.sofascore_id.sum())}, '
-                  f'WhoScored: {int(missing.whoscored_id.sum())}).', flush=True)
+            canonical={}
+            for row in frame.fillna('').to_dict('records'):
+                held=canonical.setdefault(row['entity_id'],set())
+                held.update(p for p in ('sofascore','fotmob','whoscored') if row.get(p+'_id'))
+            counts={p:sum(p in held for held in canonical.values()) for p in ('sofascore','fotmob','whoscored')}
+            complete=sum(len(held)==3 for held in canonical.values())
+            print(f'Team IDs: {len(canonical)} canonical teams; {complete} linked across all three providers; '
+                  + '; '.join(f'{p}: {count} linked, {len(canonical)-count} missing' for p,count in counts.items()),flush=True)
     frames = {kind: pending[kind + ' IDs'][0] for kind in ('player','team','match')
               if kind + ' IDs' in pending}
     written.update(export_concordance(frames, data_root, output,
@@ -995,7 +1045,8 @@ def main(argv=None, *, package=False):
     parser.set_defaults(mode='incremental',concordance_format=None)
     args = parser.parse_args(argv)
     try:
-        build = build_dataset
+        from collection.datasetPackaging import package_saved
+        build = package_saved
         return build(args.data_root, args.dataset_root,
                      args.name, references_only=args.references_only, mode=args.mode,concordance_format=args.concordance_format)
     except (OSError, ValueError, KeyError) as exc:

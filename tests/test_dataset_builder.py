@@ -43,9 +43,9 @@ class DatasetBuildTests(unittest.TestCase):
             packaged = root / 'dataset/raw_data/premier-league/2024-2025'
             self.assertEqual({p.name for p in packaged.iterdir()}, {
                 'player_match_stats.csv', 'team_match_stats.csv', 'fixtures.csv'})
-            self.assertTrue((root / 'dataset/concordance/player_ids.parquet').is_file())
-            self.assertTrue((root / 'dataset/concordance/team_ids.parquet').is_file())
-            self.assertTrue((root / 'dataset/concordance/match_ids.parquet').is_file())
+            self.assertTrue((root / 'dataset/concordance/player_ids/part-00000.parquet').is_file())
+            self.assertTrue((root / 'dataset/concordance/team_ids/part-00000.parquet').is_file())
+            self.assertTrue((root / 'dataset/concordance/match_ids/part-00000.parquet').is_file())
             self.assertEqual(before, {p: p.read_bytes() for p in before})
             self.assertEqual(set(pd.read_csv(packaged / 'player_match_stats.csv').season), {'2024-2025'})
 
@@ -71,41 +71,19 @@ class DatasetBuildTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'separate'):
                 dataset_builder.build_dataset(folder, Path(folder) / 'dataset')
 
-    def test_dataset_flag_includes_completed_skipped_seasons(self):
-        with tempfile.TemporaryDirectory() as folder:
-            source = collection_directory(folder, 'bundesliga-2024-25')
-            source.mkdir(parents=True)
-            (source / 'job.json').write_text(json.dumps({'workflow_version':3,'providers':['sofascore','fotmob','whoscored']}))
-            with patch('main.COMPETITIONS', ['Bundesliga']), patch('main.SEASONS', ['2024/25']), \
-                    patch.dict(main.config.TRANSPORT,{'sofascore_mode':'auto'}), \
-                    patch('main._collection_complete', return_value=True), \
-                    patch('main.collect') as collect, \
-                    patch('dataset_builder.build_dataset', return_value=0) as build:
-                self.assertEqual(main.main(['--build-dataset', '--data-root', folder]), 0)
+    def test_legacy_build_flag_points_to_explicit_package_command(self):
+        with patch('dataset_builder.build_dataset') as build,patch('main.collect') as collect:
+            with self.assertRaises(SystemExit):main.main(['resume','--build-dataset'])
+        build.assert_not_called();collect.assert_not_called()
+
+    def test_normal_collection_and_raw_export_never_package(self):
+        for action,result in [('resume',0),('resume',2),('resume',130),('export',0),('status',0)]:
+            with self.subTest(action=action,result=result),patch('main.collect',return_value=result),patch('dataset_builder.build_dataset') as build:
+                self.assertEqual(main.main([action]),result)
+                build.assert_not_called()
+
+    def test_only_package_entrypoint_routes_to_dataset_production(self):
+        with patch('dataset_builder.main',return_value=0) as package,patch('main.collect') as collect:
+            self.assertEqual(main.entrypoint(['--package','--parquet']),0)
+            package.assert_called_once_with(['--parquet'],package=True)
             collect.assert_not_called()
-            self.assertEqual(build.call_args.args[2], ['bundesliga-2024-25'])
-
-    def test_export_routes_once_to_full_builder_even_with_flag_before_command(self):
-        with patch('main.collect') as collect, \
-                patch('dataset_builder.build_dataset', return_value=0) as build:
-            self.assertEqual(main.main(['--build-dataset', 'export', '--competition',
-                                        'Bundesliga', '--season', '2024/25']), 0)
-        collect.assert_not_called()
-        self.assertEqual(build.call_args.args[2], ['bundesliga-2024-25'])
-
-    def test_disabled_flag_and_status_do_not_build(self):
-        with patch('main.collect', return_value=0), patch('dataset_builder.build_dataset') as build:
-            self.assertEqual(main.main(['status', '--build-dataset']), 0)
-            self.assertEqual(main.main(['resume', '--no-build-dataset']), 0)
-        build.assert_not_called()
-
-    def test_partial_collection_still_packages_available_checkpoints(self):
-        with patch('main.collect', return_value=2), \
-                patch('dataset_builder.build_dataset', return_value=0) as build:
-            self.assertEqual(main.main(['resume', '--build-dataset']), 2)
-        build.assert_called_once()
-
-    def test_interrupt_does_not_start_dataset_build(self):
-        with patch('main.collect', return_value=130), patch('dataset_builder.build_dataset') as build:
-            self.assertEqual(main.main(['resume', '--build-dataset']), 130)
-        build.assert_not_called()

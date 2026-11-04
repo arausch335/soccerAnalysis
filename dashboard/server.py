@@ -12,8 +12,8 @@ from .model import DashboardModel
 
 
 class DashboardServer:
-    def __init__(self,root,ensemble,plan,worker,port):
-        model=DashboardModel(root,ensemble,plan,worker)
+    def __init__(self,root,ensemble,plan,worker,port,*,dataset_root=None):
+        model=DashboardModel(root,ensemble,plan,worker,dataset_root=dataset_root)
         assets=Path(__file__).parent
         review_token=secrets.token_urlsafe(32)
         class Handler(DisconnectSafeHandler):
@@ -25,12 +25,13 @@ class DashboardServer:
                 url=urlsplit(self.path)
                 try:
                     if url.path=='/api/status':data=json.dumps(model.status()).encode();kind='application/json'
+                    elif url.path=='/api/dataset':data=json.dumps(model.dataset()).encode();kind='application/json'
                     elif url.path=='/api/identity-review':data=json.dumps({**model.reviews(),'review_token':review_token}).encode();kind='application/json'
                     elif url.path=='/api/collection-review':data=json.dumps({**model.collection_reviews(),'review_token':review_token}).encode();kind='application/json'
                     elif url.path=='/api/logs':data=json.dumps(model.logs(parse_qs(url.query))).encode();kind='application/json'
                     elif url.path=='/api/matches':data=json.dumps(model.matches(parse_qs(url.query))).encode();kind='application/json'
-                    elif url.path in ('/','/dashboard.css','/dashboard.js'):
-                        name='index.html' if url.path=='/' else url.path[1:]
+                    elif url.path in ('/','/dataset','/dashboard.css','/dashboard.js','/dataset.js'):
+                        name='index.html' if url.path in ('/','/dataset') else url.path[1:]
                         data=(assets/name).read_bytes();kind={'html':'text/html','css':'text/css','js':'text/javascript'}[name.rsplit('.',1)[-1]]
                     else:self.send_error(404);return
                     self.send_response(200);self.send_header('Content-Type',kind+'; charset=utf-8')
@@ -76,4 +77,4 @@ class DashboardServer:
     def close(self):self.server.shutdown();self.server.server_close();self.thread.join(timeout=3)
 
 
-def start_server(root,ensemble,plan,worker,port=8765):return DashboardServer(root,ensemble,plan,worker,port).start()
+def start_server(root,ensemble,plan,worker,port=8765,*,dataset_root=None):return DashboardServer(root,ensemble,plan,worker,port,dataset_root=dataset_root).start()

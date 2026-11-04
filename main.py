@@ -190,38 +190,20 @@ def _normal_main(argv=None):
     args=list(sys.argv[1:] if argv is None else argv)
     commands={'start','resume','export','status','probe'}
     parser = argparse.ArgumentParser(description=__doc__, epilog='Select a season with --competition/--season/--name. Use python -m collection --help for collection options.')
-    parser.add_argument('--build-dataset', action=argparse.BooleanOptionalAction, default=BUILD_DATASET)
+    parser.add_argument('--build-dataset', action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('--dataset-root', type=Path, default=config.DATASET_ROOT)
     parser.add_argument('--defer-exports',action='store_true',help=argparse.SUPPRESS)
     build_settings, args = parser.parse_known_args(args)
     explicit_command=bool(args and args[0] in commands)
     explicit_selection=any(arg in ('--competition','--season','--name') or
                            arg.startswith(('--competition=','--season=','--name=')) for arg in args)
-    # A main.py export is always a full dataset build, rather than a partial CSV export.
-    action = args[0] if explicit_command else ACTION
-    build_requested = build_settings.build_dataset or action == 'export'
-    if any(arg in ('--build-csvs', '--no-build-csvs') for arg in args):
-        parser.error('Use --build-dataset or --no-build-dataset instead of CSV flags')
-    if build_settings.defer_exports and action!='export':
-        args.append('--no-build-csvs');build_requested=False
-    result = 0 if action == 'export' else (_single(args) if explicit_command or explicit_selection else _batch(args))
-    if build_requested and action in ('auto', 'start', 'resume', 'export') and result != 130:
-        from dataset_builder import build_dataset
-        selection = _selection(args)
-        # Batch builds include completed seasons skipped during collection.
-        names = ([selection.name] if explicit_command or explicit_selection else
-                 [_collection_name(c, s) for c in COMPETITIONS for s in SEASONS
-                  if (collection_directory(selection.data_root, _collection_name(c, s)) / 'job.json').is_file()])
-        if not names and action == 'export':
-            parser.error('No saved seasons match COMPETITIONS and SEASONS')
-        if names:
-            try:
-                build_result = build_dataset(selection.data_root, build_settings.dataset_root, names)
-            except (OSError, ValueError, KeyError) as exc:
-                print(f'Dataset build failed: {exc}', flush=True)
-                build_result = 2
-            result = max(result, build_result)
-    return result
+    if '--build-dataset' in list(sys.argv[1:] if argv is None else argv):
+        parser.error('Dataset production is explicit: use python main.py --package')
+    if any(arg in ('--build-csvs','--no-build-csvs') for arg in args):
+        parser.error('Use collection export for raw CSVs, or python main.py --package for the dataset')
+    if build_settings.defer_exports and (args[0] if explicit_command else ACTION)!='export':
+        args.append('--no-build-csvs')
+    return _single(args) if explicit_command or explicit_selection else _batch(args)
 
 
 KINDS=('combined',)

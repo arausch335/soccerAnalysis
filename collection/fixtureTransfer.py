@@ -14,13 +14,13 @@ MARKER='fixture-transfer.json'
 
 
 def verify(source):
-    from concordance.publication import FORMATS,public_paths,validate,folder
+    from concordance.publication import is_public_bundle,validate,folder
     source=Path(source)
     if source.is_symlink():raise ValueError('Fixture transfer contains symbolic links')
     value=json.loads((source/MARKER).read_text(encoding='utf-8'))
     if value.get('format')!=FORMAT:raise ValueError('Invalid fixture transfer format')
     rows=value.get('files',[]);paths=[r['path'] for r in rows]
-    if len(paths)!=len(set(paths)) or not any(set(paths)==public_paths(fmt) for fmt in FORMATS):
+    if len(paths)!=len(set(paths)) or not is_public_bundle(paths):
         raise ValueError('Fixture transfer must contain one complete public bundle')
     for item in rows:
         safe_path(item['path'],'dataset');path=source/item['path']

@@ -1,0 +1,131 @@
+"""Coverage of packaged local files, independent of worker inventory claims."""
+from collections import Counter,defaultdict
+from datetime import datetime,timezone
+from pathlib import Path
+import csv
+import json
+
+from storage.pandasStore import atomic_json
+
+FORMAT='soccer-dataset-coverage-v1'
+TABLES=('player_match_stats','team_match_stats','fixtures')
+
+
+def _files(dataset):
+    return sorted(p for name in TABLES for p in (dataset/'raw_data').glob('*/*/'+name+'.csv'))
+
+
+def _inventory(dataset):
+    return [[p.relative_to(dataset).as_posix(),p.stat().st_size] for p in _files(dataset)]
+
+
+def _review_rows(path):
+    import pandas as pd
+    with path.open(encoding='utf-8-sig',newline='') as stream:
+        fields=next(csv.reader(stream),[])
+    if 'match_id' not in fields:raise ValueError('Packaged table lacks match_id: '+str(path))
+    selected={'match_id','competition','season','provider','minutes_played','goals','xg','xa','touches'}
+    for chunk in pd.read_csv(path,dtype=str,keep_default_na=False,chunksize=50_000,
+                             usecols=lambda name:name in selected,encoding='utf-8-sig'):
+        yield from chunk.to_dict('records')
+
+
+def create_review(dataset):
+    from concordance.publication import folder,manifest_path,digest,read_table
+    dataset=Path(dataset);base=folder(dataset)
+    manifest=json.loads(manifest_path(base).read_text())
+    before=[(p.relative_to(dataset).as_posix(),p.stat().st_size,p.stat().st_mtime_ns) for p in _files(dataset)]
+    before_manifest=digest(manifest_path(base))
+    core=read_table(base,'fixtures/fixtures').fillna('')
+    facts=read_table(base,'fixtures/metadata').fillna('')
+    groups={};entity_group={};lookup={};native=defaultdict(set)
+    for row in core.to_dict('records'):
+        key=(str(row['competition']),str(row['season']))
+        group=groups.setdefault(key,{'competition':key[0],'season':key[1],'fixtures':0,'saved_stats_evidence':0,
+                                    'player_match_stats':{'rows':0,'matches':0},'team_match_stats':{'rows':0,'matches':0},
+                                    'unlinked_matches':0})
+        group['fixtures']+=1;group['saved_stats_evidence']+=str(row.get('has_player_stats')).lower()=='true'
+        entity_group[str(row['match_entity_id'])]=key
+    for row in facts.to_dict('records'):
+        entity=str(row['match_entity_id']);key=entity_group.get(entity)
+        if key and row.get('match_id'):lookup[(*key,str(row['match_id']))]=entity
+    ids={}
+    for kind in ('match','team','player'):
+        frame=read_table(base,kind+'_ids').fillna('');records=frame.to_dict('records')
+        ids[kind]={'total':len(records),'all_three':sum(all(r.get(p+'_id') for p in ('sofascore','fotmob','whoscored')) for r in records),
+                   'providers':{p:sum(bool(r.get(p+'_id')) for r in records) for p in ('sofascore','fotmob','whoscored')}}
+        if kind=='match':
+            for row in records:
+                for p in ('sofascore','fotmob','whoscored'):
+                    if row.get(p+'_id'):native[str(row[p+'_id'])].add(str(row['entity_id']))
+    matches=defaultdict(set);unlinked=defaultdict(set);files=[];quality=Counter()
+    for path in _files(dataset):
+        table=path.stem;rows=0;observed=set();fields=Counter();providers=Counter()
+        for row in _review_rows(path):
+            rows+=1;mid=str(row.get('match_id') or '')
+            key=(row.get('competition') or path.parent.parent.name,row.get('season') or path.parent.name)
+            entity=lookup.get((*key,mid))
+            if not entity:
+                candidates=[v for v in native.get(mid,()) if entity_group.get(v)==key]
+                if len(candidates)==1:entity=candidates[0]
+            if entity:
+                key=entity_group[entity];observed.add(entity);matches[key,table].add(entity)
+            elif mid:unlinked[key,table].add(mid)
+            if key in groups and table in ('player_match_stats','team_match_stats'):groups[key][table]['rows']+=1
+            for field in ('minutes_played','goals','xg','xa','touches'):
+                if field in row and row[field] not in ('','NA','NaN','nan','None'):fields[field]+=1
+            if row.get('provider'):providers[row['provider']]+=1
+        files.append({'path':path.relative_to(dataset).as_posix(),'table':table,'rows':rows,
+                      'linked_matches':len(observed),'nonempty_fields':dict(fields),'provider_rows':dict(providers)})
+    for key,group in groups.items():
+        for table in ('player_match_stats','team_match_stats'):
+            group[table]['matches']=len(matches[key,table])
+            group[table]['percent']=round(100*len(matches[key,table])/group['fixtures'],2) if group['fixtures'] else 0
+        group['unlinked_matches']=sum(len(unlinked[key,t]) for t in TABLES)
+    total_fixtures=len(core);player=sum(g['player_match_stats']['matches'] for g in groups.values())
+    team=sum(g['team_match_stats']['matches'] for g in groups.values())
+    quality['unlinked_match_keys']=sum(len(values) for values in unlinked.values())
+    review={'format':FORMAT,'generated_at':datetime.now(timezone.utc).isoformat(),'state':'ready',
+            'scope':'Published fixtures and actual packaged local CSV tables; no raw inventory or remote worker claims.',
+            'concordance_format':manifest['format'],'concordance_digest':digest(manifest_path(base)),
+            'source_files':_inventory(dataset),'summary':{'fixtures':total_fixtures,'player_stat_matches':player,
+                'team_stat_matches':team,'player_stat_percent':round(100*player/total_fixtures,2) if total_fixtures else 0,
+                'team_stat_percent':round(100*team/total_fixtures,2) if total_fixtures else 0,
+                'saved_stats_evidence':sum(g['saved_stats_evidence'] for g in groups.values()),
+                'player_stat_rows':sum(f['rows'] for f in files if f['table']=='player_match_stats'),
+                'team_stat_rows':sum(f['rows'] for f in files if f['table']=='team_match_stats')},
+            'identities':ids,'seasons':[groups[k] for k in sorted(groups)],'files':files,'quality':dict(quality)}
+    after=[(p.relative_to(dataset).as_posix(),p.stat().st_size,p.stat().st_mtime_ns) for p in _files(dataset)]
+    if before!=after or before_manifest!=digest(manifest_path(base)):
+        raise ValueError('Dataset changed during coverage review; previous review retained; retry')
+    atomic_json(dataset/'coverage.json',review,indent=2)
+    return review
+
+
+def load_review(dataset):
+    from concordance.publication import folder,manifest_path,digest
+    dataset=Path(dataset);path=manifest_path(folder(dataset))
+    if not path.is_file():return {'state':'missing','summary':{},'seasons':[],'message':'No local dataset yet. Run main.py --package.'}
+    manifest=json.loads(path.read_text());review_path=dataset/'coverage.json'
+    if not review_path.is_file():return {'state':'unreviewed','summary':{'fixtures':manifest['tables']['fixtures/fixtures']['rows']},'seasons':[],
+                                       'message':'This dataset predates the coverage review. Run main.py --package to generate one.'}
+    value=json.loads(review_path.read_text())
+    if value.get('format')!=FORMAT:raise ValueError('Unknown dataset coverage format')
+    if value.get('concordance_digest')!=digest(path) or value.get('source_files')!=_inventory(dataset):
+        return {**value,'state':'stale','message':'Local dataset files differ from the last packaging review. Run main.py --package to refresh it.'}
+    return value
+
+
+def print_review(review,report=print):
+    total=review['summary']
+    report('\nDataset coverage review — local packaged files',flush=True)
+    report(f"Fixtures: {total['fixtures']:,}; player-stat matches: {total['player_stat_matches']:,} ({total['player_stat_percent']}%); team-stat matches: {total['team_stat_matches']:,} ({total['team_stat_percent']}%)",flush=True)
+    competitions=defaultdict(lambda:[0,0,0])
+    for row in review['seasons']:
+        counts=competitions[row['competition']];counts[0]+=row['fixtures'];counts[1]+=row['player_match_stats']['matches'];counts[2]+=row['team_match_stats']['matches']
+    for name,(fixtures,players,teams) in sorted(competitions.items()):
+        report(f'  {name}: {fixtures:,} fixtures | player stats {players:,}/{fixtures:,} | team stats {teams:,}/{fixtures:,}',flush=True)
+    for kind,row in review['identities'].items():
+        report(f"  {kind.title()} identities: {row['total']:,}; all three provider IDs {row['all_three']:,}; "+'; '.join(f'{p} {n:,}' for p,n in row['providers'].items()),flush=True)
+    if review['quality'].get('unlinked_match_keys'):report(f"Review needed: {review['quality']['unlinked_match_keys']} packaged match keys could not be linked to catalogue fixtures.",flush=True)
+    report('Coverage saved to coverage.json; open the Dataset page in the local dashboard for season details.',flush=True)

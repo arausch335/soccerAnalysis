@@ -246,8 +246,6 @@ class StorageAgent:
                 # Direct worker fixture publications supersede an MSI copy.
                 excluded=FIXTURE_DATASET_PATHS if receipt_path(self.root).exists() else ()
                 mid=install_dataset(peer,manifest,self.output,self.directory/'downloads',exclude=excluded)
-                from fixtures.identityRefresh import reconcile_exports
-                reconcile_exports(self.root,self.output)
                 self.receipt={'id':mid,'received_at':now()};atomic_json(self.directory/'dataset-receipt.json',self.receipt)
                 self.log('[Storage] Updated datasets and concordance received from MSI.')
             self.status={'state':'up_to_date' if manifest else 'awaiting_dataset','role':role,'last_dataset':self.receipt.get('received_at')}
@@ -361,7 +359,7 @@ class StorageAgent:
         elif status['state']=='importing':
             self.log(f"[Storage] Portable {status['source']} · importing {status['season']}")
 
-    def maintenance_once(self):
+    def maintenance_once(self, *, package=False):
         """One independent, resumable maintenance pass; useful for offline tests."""
         from .maintenance import background, Checkpoint, require_space, DeferredWork, LowSpace
         from .inventoryCache import InventoryInterrupted
@@ -396,7 +394,7 @@ class StorageAgent:
                 self.log(f'[Storage] Set aside upload {mid} ({manifest["season"]}) for review: {type(exc).__name__}: {exc}')
                 continue
         archive.refresh_build_inputs()
-        for season,build_revision in archive.build_jobs():
+        for season,build_revision in (archive.build_jobs() if package else []):
             check()
             self.maintenance_status={'state':'building_dataset','season':season}
             self.log('[Storage] Background dataset build: '+season)
@@ -432,7 +430,7 @@ class StorageAgent:
                             if canonical:
                                 from concordance.publication import public_paths,manifest_format,manifest_path,folder
                                 encoding=manifest_format(json.loads(manifest_path(folder(output)).read_text()))
-                                allowed=public_paths(encoding)
+                                allowed=public_paths(encoding,json.loads(manifest_path(folder(output)).read_text()))
                                 files={name:path for name,path in files.items() if name in allowed or name.startswith('raw_data/')}
                             files.update(updates)
                             manifest={'format':FORMAT,'kind':'dataset','worker':self.worker,'files':[
@@ -474,7 +472,8 @@ class StorageAgent:
         waiting=counts.get('waiting_input_builds',0)
         self.maintenance_status=({'state':'review_needed','message':f'{held} upload(s) and {blocked} dataset build(s) set aside; other work continues'}
                                  if held or blocked else {'state':'waiting_inputs','message':f'{waiting} dataset job(s) need saved collection inputs; ready jobs continue'}
-                                 if waiting else {'state':'current'})
+                                 if waiting and package else {'state':'awaiting_package','message':'Saved data changed; run python main.py --package to produce and publish a dataset'}
+                                 if counts['pending_builds'] or waiting else {'state':'current'})
         return changed
 
     def log_report(self,message,**kwargs):self.log(message)

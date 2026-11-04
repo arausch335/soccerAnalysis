@@ -241,6 +241,11 @@ class Archive:
             db.execute("UPDATE builds SET state='published' WHERE season=? AND revision=?",(season,revision));db.commit()
 
     def publish(self,manifest,files,*,check=lambda:None):
+        from filelock import FileLock
+        with FileLock(str(self.directory/'.publication.lock'),timeout=60):
+            return self._publish(manifest,files,check=check)
+
+    def _publish(self,manifest,files,*,check=lambda:None):
         validate_manifest(manifest)
         if manifest['kind']!='dataset':raise ValueError('Expected dataset publication')
         with self.lock:self.publishing=True
@@ -269,6 +274,11 @@ class Archive:
         return json.loads(row[0]) if row else None
 
     def collected(self):
+        from filelock import FileLock
+        with FileLock(str(self.directory/'.publication.lock'),timeout=60):
+            return self._collected()
+
+    def _collected(self):
         """Remove transfer duplicates only after incorporation; keep ledger receipts."""
         with self.lock,self.connect() as db:
             if self.publishing or self.readers:return

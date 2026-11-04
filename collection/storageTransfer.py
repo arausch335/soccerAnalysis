@@ -50,8 +50,8 @@ def safe_path(value,kind):
             r'concordances/(?:fixtures/(?:fixtures|extra|metadata)|metadata/(?:match_ids|team_ids|player_ids|registry)|match_ids|team_ids|player_ids|entities)/part-\d{5}\.parquet',value)):
         return value
     if kind=='dataset':
-        from concordance.publication import FORMATS,public_paths
-        if any(value in public_paths(fmt) for fmt in FORMATS):
+        from concordance.publication import is_public_path
+        if is_public_path(value):
             return value
         if path.parts[:2]==('concordance','metadata'):raise ValueError('Private concordance metadata cannot be transferred')
         if path.parts[0]=='raw_data':
@@ -62,7 +62,7 @@ def safe_path(value,kind):
     if path.suffix not in ('.csv','.json'):raise ValueError('Only collection/dataset files may be transferred')
     if kind=='dataset':
         if any(p in ('raw','match_checkpoints','snapshots') for p in path.parts):raise ValueError('Raw data cannot be sent to dataset consumers')
-        if len(path.parts)==1 and path.name in ('fixtures.csv','player_ids.csv','team_ids.csv','match_ids.csv'):return value
+        if len(path.parts)==1 and path.name in ('fixtures.csv','player_ids.csv','team_ids.csv','match_ids.csv','coverage.json'):return value
         if len(path.parts)==2 and path.parts[0]=='concordance':return value
         if len(path.parts)==3 and path.parts[0]=='concordance' and (
                 path.parts[1]=='full' and path.name in ('fixtures.csv','entities.csv','teams.csv') or

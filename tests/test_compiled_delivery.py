@@ -53,7 +53,7 @@ class CompiledDeliveryTests(unittest.TestCase):
                     self.assertEqual(result['state'],'installed_on_main')
                     self.assertEqual(validate(self.output/'concordance')['rows'],3)
                     self.assertEqual(len(read_table(self.output/'concordance','match_ids')),3)
-                    self.assertTrue((self.output/('concordance/fixtures.'+encoding)).is_file())
+                    self.assertTrue((self.output/('concordance/fixtures/part-00000.parquet' if encoding=='parquet' else 'concordance/fixtures.csv')).is_file())
                     other='csv' if encoding=='parquet' else 'parquet'
                     self.assertFalse((self.output/('concordance/fixtures.'+other)).exists())
                     self.assertEqual(json.loads(receipt_path(self.main).read_text())['route'],'worker_to_main')

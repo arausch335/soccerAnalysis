@@ -117,11 +117,11 @@ class TransferTests(unittest.TestCase):
         settings={'hub':'msi','consumers':['main'],'url':self.server.url}
         agent=StorageAgent(hubroot,'msi',settings,dataset_root=self.base/'hub-dataset',log=quiet);agent.server=self.server
         self.server.archive.schedule_build(self.season)
-        with patch('providers.httpClient.HttpClient._request',side_effect=AssertionError('Unexpected provider request')):agent.maintenance_once()
+        with patch('providers.httpClient.HttpClient._request',side_effect=AssertionError('Unexpected provider request')):agent.maintenance_once(package=True)
         manifest=self.reader.request('/v1/dataset')['manifest'];self.assertIsNotNone(manifest)
         output=self.base/'main-dataset';install_dataset(self.reader,manifest,output,self.base/'downloads')
         self.assertTrue((output/'raw_data'/self.season/'player_match_stats.csv').is_file())
-        for kind in ('player','team','match'):self.assertTrue((output/'concordance'/(kind+'_ids.parquet')).is_file())
+        for kind in ('player','team','match'):self.assertTrue((output/'concordance'/(kind+'_ids/part-00000.parquet')).is_file())
         self.assertFalse(list(output.rglob('raw')));self.assertEqual(self.server.archive.builds(),[])
 
     def test_incomplete_season_match_is_integrated_without_publishing_a_dataset(self):
@@ -135,7 +135,7 @@ class TransferTests(unittest.TestCase):
         agent=StorageAgent(hub,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.base/'dataset',log=quiet)
         agent.server=self.server
         with patch('dataset_builder.build_dataset',side_effect=AssertionError('Unfinished season must not publish')):
-            agent.maintenance_once()
+            agent.maintenance_once(package=True)
         self.assertIn(1,PandasStore(hub/self.season/'match_checkpoints/1').from_csv().matches)
         self.assertEqual(self.server.archive.commit('headless',mid)['state'],'imported')
         self.assertEqual(self.server.archive.builds(),[])
@@ -162,7 +162,7 @@ class TransferTests(unittest.TestCase):
             thread=threading.Thread(target=portable);thread.start()
             try:
                 self.assertTrue(entered.wait(2))
-                agent.maintenance_once()
+                agent.maintenance_once(package=True)
                 self.assertFalse(release.is_set())
                 self.assertEqual(self.server.archive.commit('headless',mid)['state'],'imported')
                 self.assertIn(1,PandasStore(hub/self.season/'match_checkpoints/1').from_csv().matches)
@@ -197,7 +197,7 @@ class TransferTests(unittest.TestCase):
         hub=self.base/'msi';atomic_json(hub/'.soccer-scraper.json',{'format':1});ensure_identity(hub,'msi')
         agent=StorageAgent(hub,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.base/'dataset',log=quiet)
         agent.server=self.server
-        self.assertTrue(agent.maintenance_once())
+        self.assertTrue(agent.maintenance_once(package=True))
         archive=self.server.archive
         self.assertEqual(archive.status()['quarantined'],1)
         self.assertEqual(archive.status()['received'],0)
@@ -212,7 +212,7 @@ class TransferTests(unittest.TestCase):
         restored=Archive(hub)
         self.assertEqual(restored.quarantined()[0]['id'],bad)
         with patch('collection.backgroundImports.import_parts',side_effect=AssertionError('Repeated quarantined upload')):
-            self.assertFalse(agent.maintenance_once())
+            self.assertFalse(agent.maintenance_once(package=True))
         from tools.audit_integration import inspect_queues
         counts,problems=inspect_queues(hub,self.base/'ensemble')
         self.assertEqual(counts['quarantined'],1)
@@ -243,7 +243,7 @@ class TransferTests(unittest.TestCase):
         agent=StorageAgent(hub,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.base/'dataset',log=quiet)
         agent.server=self.server
         with patch('collection.backgroundImports.import_parts',side_effect=ValueError('home team differs')):
-            agent.maintenance_once()
+            agent.maintenance_once(package=True)
         from tools.review_imports import main as review
         import io
         with patch('sys.stdout',new_callable=io.StringIO) as output:
@@ -252,7 +252,7 @@ class TransferTests(unittest.TestCase):
             self.assertTrue(all(Path(f['preserved_at']).exists() for f in files))
         with patch('sys.stdout',new_callable=io.StringIO):review(['--data-root',str(hub),'--retry',mid])
         self.assertEqual(self.server.archive.quarantined(),[])
-        self.assertTrue(agent.maintenance_once())
+        self.assertTrue(agent.maintenance_once(package=True))
         self.assertEqual(self.server.archive.upload('headless',mid)[1],'imported')
         with self.server.archive.connect() as db:
             row=db.execute('SELECT error,retried_at FROM upload_failures WHERE upload_id=?',(mid,)).fetchone()
@@ -277,9 +277,9 @@ class TransferTests(unittest.TestCase):
             with self.subTest(error=type(error).__name__), \
                  patch('collection.backgroundImports.import_parts',side_effect=error):
                 if isinstance(error,DeferredWork) and not isinstance(error,LowSpace):
-                    self.assertFalse(agent.maintenance_once())
+                    self.assertFalse(agent.maintenance_once(package=True))
                 else:
-                    with self.assertRaises(type(error)):agent.maintenance_once()
+                    with self.assertRaises(type(error)):agent.maintenance_once(package=True)
             self.assertEqual(self.server.archive.status()['quarantined'],0)
             self.assertEqual(self.server.archive.status()['received'],1)
 
@@ -305,7 +305,7 @@ class TransferTests(unittest.TestCase):
         hubroot=self.base/'msi';atomic_json(hubroot/'.soccer-scraper.json',{'format':1});ensure_identity(hubroot,'msi')
         agent=StorageAgent(hubroot,'msi',settings,dataset_root=self.base/'hub-dataset',log=quiet);agent.server=self.server
         with patch('dataset_builder.build_dataset',return_value=2):
-            self.assertTrue(agent.maintenance_once())
+            self.assertTrue(agent.maintenance_once(package=True))
         self.assertTrue((hubroot/self.season/'match_checkpoints/1/CURRENT.json').exists())
         progress=PortableProgress(None,hubroot);progress.scan()
         self.assertTrue(any('headless' in r['origins'] for r in progress.local_records.values()))

@@ -118,6 +118,19 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(error.exception.code,code)
 
 
+    def test_dataset_page_uses_local_dataset_and_serves_coverage(self):
+        from unittest.mock import patch
+        output=self.base/'local-dataset'
+        with patch('dataset_review.load_review',return_value={'state':'ready','summary':{'fixtures':17},'seasons':[]}) as review:
+            server=start_server(self.root,self.ensemble,self.plan,'main',0,dataset_root=output);self.addCleanup(server.close)
+            with urlopen(server.url+'/api/dataset') as response:
+                self.assertEqual(json.load(response)['summary']['fixtures'],17)
+            review.assert_called_once_with(output)
+            with urlopen(server.url+'/dataset') as response:
+                self.assertIn('id="dataset"',response.read().decode())
+            with urlopen(server.url+'/dataset.js') as response:
+                self.assertIn('loadDataset',response.read().decode())
+
     def test_received_runtime_uses_connection_age_and_logs_endpoint_supports_filters(self):
         from datetime import datetime, timezone
         from collection.reporting import ReportingStore

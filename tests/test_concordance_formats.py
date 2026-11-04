@@ -31,7 +31,7 @@ class ConcordanceFormatTests(unittest.TestCase):
                 manifest=helper.write(data_format=encoding)
                 base=helper.dataset/'concordance';publication.validate(base)
                 self.assertEqual(manifest['data_format'],encoding)
-                self.assertEqual({p.suffix for p in base.glob('*.*')},{'.'+encoding})
+                self.assertEqual({p.suffix for p in base.glob('*.*')},({'.csv'} if encoding=='csv' else set()))
                 self.assertFalse(any((base/publication.table_path(name,other)).exists()
                     for other in publication.FORMATS if other!=encoding for name in publication.TABLES))
                 self.assertEqual(private.read_text(),'private linker input\n')
@@ -40,7 +40,7 @@ class ConcordanceFormatTests(unittest.TestCase):
                 self.assertTrue(pd.isna(frame.home_score.iloc[2]))
                 self.assertEqual(str(frame.kickoff_utc.dt.tz),'UTC')
                 if encoding=='parquet':
-                    schema=pq.read_schema(base/'fixtures.parquet')
+                    schema=pq.read_schema(base/'fixtures/part-00000.parquet')
                     self.assertEqual(schema.field('date').type,pa.date32())
                     self.assertEqual(schema.field('awarded').type,pa.bool_())
                     self.assertTrue(pa.types.is_integer(schema.field('home_score').type))
@@ -94,21 +94,21 @@ class ConcordanceFormatTests(unittest.TestCase):
         with helper.fixture_mode():
             with patch.object(config,'CONCORDANCE_FORMAT','csv'):
                 helper.archive.schedule_build('premier-league/2024-2025')
-                self.assertTrue(helper.agent.maintenance_once())
+                self.assertTrue(helper.agent.maintenance_once(package=True))
             with patch.object(config,'CONCORDANCE_FORMAT','parquet'), \
                  patch('dataset_builder.package_collection',side_effect=AssertionError('raw export')), \
                  patch('dataset_builder._build_reference_csvs',side_effect=AssertionError('ID scan')):
                 helper.archive.schedule_build('premier-league/2024-2025')
-                self.assertTrue(helper.agent.maintenance_once())
+                self.assertTrue(helper.agent.maintenance_once(package=True))
                 paths={item['path'] for item in helper.archive.publication()['files']}
-                self.assertIn('concordance/fixtures.parquet',paths)
+                self.assertIn('concordance/fixtures/part-00000.parquet',paths)
                 self.assertNotIn('concordance/fixtures.csv',paths)
                 self.assertIn('raw_data/premier-league/2024-2025/fixtures.csv',paths)
                 self.assertFalse(any('compiled/' in path for path in paths))
                 publication.validate(helper.output/'concordance')
                 with patch.object(helper.archive,'publish',side_effect=AssertionError('unchanged publication')):
                     helper.archive.schedule_build('premier-league/2024-2025')
-                    self.assertTrue(helper.agent.maintenance_once())
+                    self.assertTrue(helper.agent.maintenance_once(package=True))
 
     def test_config_defaults_and_format_changes_leave_raw_recipe_unchanged(self):
         from concordance.package_state import recipe
@@ -135,7 +135,7 @@ class ConcordanceFormatTests(unittest.TestCase):
                 config.load_config(path,project_root=root)
 
     def test_cli_forwards_format_and_rejects_both_flags(self):
-        with patch('dataset_builder.build_dataset',return_value=0) as build:
+        with patch('collection.datasetPackaging.package_saved',return_value=0) as build:
             for flags,expected in (([],None),(['--csv'],'csv'),(['--parquet'],'parquet')):
                 self.assertEqual(dataset_builder.main(flags),0)
                 self.assertEqual(build.call_args.kwargs['concordance_format'],expected)

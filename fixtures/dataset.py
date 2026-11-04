@@ -781,8 +781,7 @@ def export(snapshots, coverage, root, output, *, include_upcoming=True, scope=No
     atomic_json(folder / 'manifest.json', manifest)
     from providers.teamHistory import export_history
     export_history(root,output.parent)
-    from concordance.publication import refresh
-    manifest['publication']=refresh(root,output.parent,rows=rows)
+    manifest['publication']='private fixture inputs saved; run python main.py --package to publish'
     return manifest
 
 
@@ -871,8 +870,7 @@ def build(*, data_root=None, output_csv=None, clients=None, competitions=COMPETI
             schedule_coverage_complete=manifest['schedule_coverage_complete'],count_checks_passed=manifest['count_checks_passed'],
             required_schedule_coverage_complete=manifest['required_schedule_coverage_complete'],
             registry_version=manifest['registry_version'],registry_conflicts=manifest['registry_conflicts'])
-    from concordance.publication import folder as publication_folder,output_format,table_path
-    report(f"Wrote {manifest['rows']} fixtures to {publication_folder(output.parent) / table_path('fixtures/fixtures',output_format())} ({output_format()}). Required schedule coverage complete: {manifest['required_schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
+    report(f"Saved {manifest['rows']} fixture inputs to {output}. Run python main.py --package to publish. Required schedule coverage complete: {manifest['required_schedule_coverage_complete']}; count checks passed: {manifest['count_checks_passed']}", flush=True)
     return manifest
 
 

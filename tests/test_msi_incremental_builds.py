@@ -40,7 +40,7 @@ class MSIIncrementalBuildTests(unittest.TestCase):
         source=self.add_season('premier-league-2024-25','Premier League',101)
         with self.fixture_mode():
             self.archive.schedule_build('premier-league/2024-2025')
-            self.assertTrue(self.agent.maintenance_once())
+            self.assertTrue(self.agent.maintenance_once(package=True))
             before=self.state.read_bytes()
             # A new agent has no in-memory state, and creates a new temporary tree.
             self.agent=StorageAgent(self.root,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.output,log=lambda *a,**k:None)
@@ -49,7 +49,7 @@ class MSIIncrementalBuildTests(unittest.TestCase):
             with patch('dataset_builder.package_collection',side_effect=AssertionError('unchanged export')), \
                  patch('dataset_builder._source_id_rows',side_effect=AssertionError('unchanged ID scan')), \
                  patch.object(self.archive,'publish',side_effect=AssertionError('unchanged publication')):
-                self.assertTrue(self.agent.maintenance_once())
+                self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertEqual(self.archive.build_jobs(),[])
         self.assertEqual(self.state.read_bytes(),before)
         self.assertFalse(list((self.root/'_system/storage').glob('b-*')))
@@ -59,29 +59,29 @@ class MSIIncrementalBuildTests(unittest.TestCase):
         second=self.add_season('bundesliga-2024-25','Bundesliga',201)
         with self.fixture_mode():
             self.archive.schedule_build('premier-league/2024-2025')
-            self.assertTrue(self.agent.maintenance_once())
+            self.assertTrue(self.agent.maintenance_once(package=True))
             self.archive.schedule_build('bundesliga/2024-2025')
             with patch('dataset_builder._source_id_rows',side_effect=AssertionError('cached ID scan')):
-                self.assertTrue(self.agent.maintenance_once())
+                self.assertTrue(self.agent.maintenance_once(package=True))
             atomic_json(second/'schedule.json',{'events':[event(201),event(202)]})
             self.archive.schedule_build('bundesliga/2024-2025')
             with patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as index:
-                self.assertTrue(self.agent.maintenance_once())
+                self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertEqual(len(index.call_args_list),1)
         self.assertEqual(index.call_args.args[0].parent.name,'bundesliga')
 
     def test_failed_publication_does_not_advance_successful_private_checkpoint(self):
         source=self.add_season('premier-league-2024-25','Premier League',101)
         with self.fixture_mode():
-            self.archive.schedule_build('premier-league/2024-2025');self.agent.maintenance_once()
+            self.archive.schedule_build('premier-league/2024-2025');self.agent.maintenance_once(package=True)
             before=self.state.read_bytes()
             atomic_json(source/'schedule.json',{'events':[event(101),event(102)]})
             self.archive.schedule_build('premier-league/2024-2025')
             with patch.object(self.archive,'publish',side_effect=OSError('interrupted publication')):
-                with self.assertRaises(OSError):self.agent.maintenance_once()
+                with self.assertRaises(OSError):self.agent.maintenance_once(package=True)
             self.assertEqual(self.state.read_bytes(),before)
             self.assertEqual(len(self.archive.build_jobs()),1)
-            self.assertTrue(self.agent.maintenance_once())
+            self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertNotEqual(self.state.read_bytes(),before)
 
     def test_first_publication_failure_retains_all_completed_source_indexes(self):
@@ -90,7 +90,7 @@ class MSIIncrementalBuildTests(unittest.TestCase):
         with self.fixture_mode():
             self.archive.schedule_build('premier-league/2024-2025')
             with patch.object(self.archive,'publish',side_effect=OSError('publication interrupted')):
-                with self.assertRaises(OSError):self.agent.maintenance_once()
+                with self.assertRaises(OSError):self.agent.maintenance_once(package=True)
             self.assertIsNone(self.archive.publication())
             self.assertFalse(self.state.exists())
             self.assertEqual(len(list((self.root/'_system/cache/dataset-ids').glob('*/*.json'))),2)
@@ -100,7 +100,7 @@ class MSIIncrementalBuildTests(unittest.TestCase):
                                     dataset_root=self.output,log=lambda *a,**k:None)
             self.agent.server=SimpleNamespace(archive=self.archive)
             with patch('dataset_builder._source_id_rows',side_effect=AssertionError('completed source reindexed')):
-                self.assertTrue(self.agent.maintenance_once())
+                self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertIsNotNone(self.archive.publication())
 
     def test_partial_index_failure_resumes_only_the_unfinished_source(self):
@@ -113,11 +113,11 @@ class MSIIncrementalBuildTests(unittest.TestCase):
         with self.fixture_mode():
             self.archive.schedule_build('premier-league/2024-2025')
             with patch('dataset_builder._source_id_rows',side_effect=interrupt):
-                with self.assertRaises(KeyboardInterrupt):self.agent.maintenance_once()
+                with self.assertRaises(KeyboardInterrupt):self.agent.maintenance_once(package=True)
             self.assertFalse(self.state.exists())
             self.assertEqual(len(list((self.root/'_system/cache/dataset-ids').glob('*/*.json'))),1)
             with patch('dataset_builder._source_id_rows',wraps=original) as scan:
-                self.assertTrue(self.agent.maintenance_once())
+                self.assertTrue(self.agent.maintenance_once(package=True))
             self.assertEqual(scan.call_count,1)
             self.assertNotEqual(scan.call_args.args[0].parent.name,completed[0])
 
@@ -130,9 +130,9 @@ class MSIIncrementalBuildTests(unittest.TestCase):
         with self.fixture_mode(),patch('collection.backgroundImports.link_or_copy',side_effect=copy):
             self.archive.schedule_build('premier-league/2024-2025')
             with patch.object(self.archive,'publish',side_effect=OSError('publication interrupted')):
-                with self.assertRaises(OSError):self.agent.maintenance_once()
+                with self.assertRaises(OSError):self.agent.maintenance_once(package=True)
             with patch('dataset_builder._source_id_rows',side_effect=AssertionError('copied source reindexed')):
-                self.assertTrue(self.agent.maintenance_once())
+                self.assertTrue(self.agent.maintenance_once(package=True))
 
     def test_changed_source_after_failed_publication_is_reindexed_alone(self):
         self.add_season('premier-league-2024-25','Premier League',101)
@@ -140,14 +140,14 @@ class MSIIncrementalBuildTests(unittest.TestCase):
         with self.fixture_mode():
             self.archive.schedule_build('premier-league/2024-2025')
             with patch.object(self.archive,'publish',side_effect=OSError('publication interrupted')):
-                with self.assertRaises(OSError):self.agent.maintenance_once()
+                with self.assertRaises(OSError):self.agent.maintenance_once(package=True)
             atomic_json(second/'schedule.json',{'events':[event(201),event(202)]})
             with patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as scan:
-                self.assertTrue(self.agent.maintenance_once())
+                self.assertTrue(self.agent.maintenance_once(package=True))
             self.assertEqual(scan.call_count,1)
             self.assertEqual(scan.call_args.args[0].parent.name,'bundesliga')
         import pandas as pd
-        self.assertEqual(len(pd.read_parquet(self.output/'concordance/fixtures.parquet')),3)
+        self.assertEqual(len(pd.read_parquet(self.output/'concordance/fixtures/part-00000.parquet')),3)
 
     def test_corrupt_progress_cache_is_recomputed_without_trusting_its_rows(self):
         import json
@@ -155,18 +155,18 @@ class MSIIncrementalBuildTests(unittest.TestCase):
         with self.fixture_mode():
             self.archive.schedule_build('premier-league/2024-2025')
             with patch.object(self.archive,'publish',side_effect=OSError('publication interrupted')):
-                with self.assertRaises(OSError):self.agent.maintenance_once()
+                with self.assertRaises(OSError):self.agent.maintenance_once(package=True)
             path=next((self.root/'_system/cache/dataset-ids').glob('*/*.json'))
             value=json.loads(path.read_text());value['checksum']='bad';atomic_json(path,value)
             with patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as scan:
-                self.assertTrue(self.agent.maintenance_once())
+                self.assertTrue(self.agent.maintenance_once(package=True))
             self.assertEqual(scan.call_count,1)
 
     def test_private_cache_swap_failure_preserves_prior_checkpoint_and_retries(self):
         from collection import datasetBuildCache
         source=self.add_season('premier-league-2024-25','Premier League',101)
         with self.fixture_mode():
-            self.archive.schedule_build('premier-league/2024-2025');self.agent.maintenance_once()
+            self.archive.schedule_build('premier-league/2024-2025');self.agent.maintenance_once(package=True)
             before=self.state.read_bytes()
             atomic_json(source/'schedule.json',{'events':[event(101),event(102)]})
             self.archive.schedule_build('premier-league/2024-2025')
@@ -176,21 +176,21 @@ class MSIIncrementalBuildTests(unittest.TestCase):
                     raise PermissionError('Windows sharing conflict')
                 return replace(incoming,target)
             with patch('collection.datasetBuildCache.atomic_replace',side_effect=sharing_error):
-                with self.assertRaises(PermissionError):self.agent.maintenance_once()
+                with self.assertRaises(PermissionError):self.agent.maintenance_once(package=True)
             self.assertEqual(self.state.read_bytes(),before)
             self.assertTrue((self.output/'concordance/metadata/compiled/fixtures.csv').is_file())
-            self.assertTrue(self.agent.maintenance_once())
+            self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertEqual(self.archive.build_jobs(),[])
 
     def test_checkpoint_exports_do_not_force_reindexing_on_the_next_snapshot(self):
         source=collection_directory(self.root,'premier-league-2024-25');source.mkdir(parents=True)
         atomic_json(source/'job.json',{'competition':'Premier League','season':'2024/25','providers':['sofascore'],'spatial':[]})
         SeasonRunner({'sofascore':Sofa()},source,providers=['sofascore'],spatial=(),report=lambda _:None).run('EPL','2024',limit=1,build_csvs=False)
-        self.archive.schedule_build('premier-league/2024-2025');self.assertTrue(self.agent.maintenance_once())
+        self.archive.schedule_build('premier-league/2024-2025');self.assertTrue(self.agent.maintenance_once(package=True))
         self.archive.schedule_build('premier-league/2024-2025')
         with patch('dataset_builder.package_collection',side_effect=AssertionError('unchanged raw checkpoint exported')), \
              patch('dataset_builder._source_id_rows',side_effect=AssertionError('unchanged raw checkpoint reindexed')):
-            self.assertTrue(self.agent.maintenance_once())
+            self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertEqual(self.archive.build_jobs(),[])
 
     def test_data_received_during_a_build_is_detected_by_the_next_snapshot(self):
@@ -204,37 +204,37 @@ class MSIIncrementalBuildTests(unittest.TestCase):
             return result
         with self.fixture_mode():
             with patch('dataset_builder.build_dataset',side_effect=build_then_receive):
-                self.assertTrue(self.agent.maintenance_once())
+                self.assertTrue(self.agent.maintenance_once(package=True))
             self.assertEqual(len(self.archive.build_jobs()),1)
             with patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as index:
-                self.assertTrue(self.agent.maintenance_once())
+                self.assertTrue(self.agent.maintenance_once(package=True))
             self.assertEqual(index.call_count,1)
         import pandas as pd
-        self.assertEqual(len(pd.read_parquet(self.output/'concordance/fixtures.parquet')),2)
+        self.assertEqual(len(pd.read_parquet(self.output/'concordance/fixtures/part-00000.parquet')),2)
 
     def test_missing_archive_publication_is_restored_from_retained_outputs(self):
         self.add_season('premier-league-2024-25','Premier League',101)
         with self.fixture_mode():
-            self.archive.schedule_build('premier-league/2024-2025');self.agent.maintenance_once()
+            self.archive.schedule_build('premier-league/2024-2025');self.agent.maintenance_once(package=True)
             with self.archive.connect() as db:
                 db.execute('DELETE FROM publication');db.commit()
             self.archive.schedule_build('premier-league/2024-2025')
             with patch('dataset_builder._source_id_rows',side_effect=AssertionError('unchanged source indexed')):
-                self.assertTrue(self.agent.maintenance_once())
+                self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertIsNotNone(self.archive.publication())
 
     def test_incomplete_live_csv_publication_is_restored_before_parquet_build(self):
         self.add_season('premier-league-2024-25','Premier League',101)
         with self.fixture_mode(),patch.object(dataset_builder.config,'CONCORDANCE_FORMAT','csv'):
-            self.archive.schedule_build('premier-league/2024-2025');self.agent.maintenance_once()
+            self.archive.schedule_build('premier-league/2024-2025');self.agent.maintenance_once(package=True)
         (self.output/'concordance/match_ids.csv').unlink()
         self.add_season('bundesliga-2024-25','Bundesliga',201)
         with self.fixture_mode():
             self.archive.schedule_build('bundesliga/2024-2025')
-            self.assertTrue(self.agent.maintenance_once())
+            self.assertTrue(self.agent.maintenance_once(package=True))
         from concordance.publication import validate,folder
         result=validate(folder(self.output))
-        self.assertEqual(result['format'],'soccer-concordance-parquet-v1')
+        self.assertEqual(result['format'],'soccer-concordance-parquet-v2')
         self.assertEqual(result['rows'],2)
         self.assertFalse((self.output/'concordance/match_ids.csv').exists())
 
@@ -244,7 +244,7 @@ class MSIIncrementalBuildTests(unittest.TestCase):
         for name in ('fixtures','player_match_stats','team_match_stats'):
             (previous/(name+'.csv')).write_text('match_id,season\n55,2023-2024\n')
         self.archive.schedule_build('premier-league/2024-2025')
-        with self.fixture_mode():self.assertTrue(self.agent.maintenance_once())
+        with self.fixture_mode():self.assertTrue(self.agent.maintenance_once(package=True))
         names={row['path'] for row in self.archive.publication()['files']}
         self.assertTrue(all(name.startswith(('raw_data/','concordance/')) for name in names))
         self.assertIn('raw_data/serie-a/2023-2024/player_match_stats.csv',names)
@@ -256,12 +256,12 @@ class MSIIncrementalBuildTests(unittest.TestCase):
         season='bundesliga/2024-2025'
         self.archive.schedule_build(season)
         with patch('collection.backgroundImports.snapshot_data',side_effect=AssertionError('missing inputs snapshotted')):
-            self.assertFalse(self.agent.maintenance_once())
+            self.assertFalse(self.agent.maintenance_once(package=True))
         self.assertEqual(self.archive.status()['pending_builds'],0)
         self.assertEqual(self.archive.status()['waiting_input_builds'],1)
         self.assertEqual(self.archive.status()['blocked_builds'],0)
         self.add_season('bundesliga-2024-25','Bundesliga',201)
-        with self.fixture_mode():self.assertTrue(self.agent.maintenance_once())
+        with self.fixture_mode():self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertEqual(self.archive.status()['waiting_input_builds'],0)
         self.assertEqual(self.archive.diagnostics()['builds'][0]['state'],'published')
 

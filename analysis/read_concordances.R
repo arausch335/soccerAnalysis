@@ -7,7 +7,7 @@ read_concordances <- function(concordance_root = "dataset/concordance", require_
   if (!file.exists(file.path(folder, "metadata", "manifest.json"))) folder <- file.path(folder, "concordance")
   manifest <- jsonlite::fromJSON(file.path(folder, "metadata", "manifest.json"), simplifyVector = FALSE)
   encoding <- switch(manifest$format, "soccer-concordance-csv-v1" = "csv",
-    "soccer-concordance-parquet-v1" = "parquet", stop("Unknown concordance format"))
+    "soccer-concordance-parquet-v1" = "parquet", "soccer-concordance-parquet-v2" = "parquet", stop("Unknown concordance format"))
   if (!is.null(manifest$data_format) && !identical(manifest$data_format, encoding)) stop("Concordance format fields disagree")
   if (encoding == "parquet" && !requireNamespace("arrow", quietly = TRUE)) stop("Install package: arrow")
   if (require_integration && !isTRUE(manifest$ready_for_R)) stop("MSI integration is unconfirmed. Audit and rebuild first.")
@@ -15,11 +15,13 @@ read_concordances <- function(concordance_root = "dataset/concordance", require_
   read_table <- function(name) {
     info <- manifest$tables[[name]]
     if (is.null(info) || !length(info$files)) stop("Missing table: ", name)
-    paths <- vapply(info$files, function(item) {
+    paths <- vapply(seq_along(info$files), function(index) {
+      item <- info$files[[index]]
       relative <- item$path
       stem <- switch(name, "fixtures/fixtures" = "fixtures", "fixtures/extra" = "metadata/fixture_extra",
         "fixtures/metadata" = "metadata/fixtures", "entities" = "metadata/entities", name)
-      if (!identical(relative, paste0(stem, ".", encoding))) stop("Invalid concordance path")
+      wanted <- if (identical(manifest$format, "soccer-concordance-parquet-v2")) paste0(stem, sprintf("/part-%05d.parquet", index - 1L)) else paste0(stem, ".", encoding)
+      if (!identical(relative, wanted)) stop("Invalid concordance path")
       path <- file.path(folder, relative)
       if (!identical(digest::digest(file = path, algo = "sha256", serialize = FALSE), item$sha256)) stop("Concordance checksum mismatch: ", relative)
       expected <<- c(expected, relative)
@@ -98,8 +100,9 @@ read_concordances <- function(concordance_root = "dataset/concordance", require_
       if (!is.null(alias) && canonical(alias) != data$entity_id[i]) stop("Provider/canonical ID disagreement")
     }
   }
-  found <- list.files(folder, pattern = "\\.(csv|parquet)$", recursive = FALSE)
-  if (!setequal(found, expected[!grepl("/", expected)])) stop("Unverified or stale concordance tables")
+  found <- list.files(folder, pattern = "\\.(csv|parquet)$", recursive = TRUE)
+  found <- found[!grepl("^metadata/(compiled|legacy|fixture_baselines)/", found)]
+  if (!setequal(found, expected)) stop("Unverified or stale concordance tables")
   key <- fixtures$match_entity_id
   if (anyNA(key) || anyDuplicated(key) || anyNA(match(key, ids$match_ids$entity_id))) stop("Invalid fixture match key")
   for (data in list(extra, metadata)) {

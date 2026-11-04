@@ -53,7 +53,7 @@ class PackageDatasetTests(unittest.TestCase):
                                     '--dataset-root', str(self.output)])
         self.assertEqual(code, 0)
         self.assertEqual((self.output / 'concordance/metadata/compiled/fixtures.csv').read_bytes(), before)
-        self.assertEqual({p.name for p in self.output.iterdir()}, {'concordance'})
+        self.assertEqual({p.name for p in self.output.iterdir()}, {'concordance','coverage.json','.dataset-install.lock'})
         fixtures = read_table(self.output / 'concordance', 'fixtures/fixtures')
         self.assertEqual(tuple(fixtures.columns), CORE_COLUMNS)
         self.assertEqual(fixtures.match_entity_id.tolist(), [self.match_id])
@@ -100,11 +100,11 @@ class PackageDatasetTests(unittest.TestCase):
 
     def test_repeated_build_keeps_one_layout_and_stable_ids(self):
         self.assertEqual(dataset_builder.package_dataset(self.root,self.output),0)
-        ids=pd.read_parquet(self.output/'concordance/match_ids.parquet').entity_id.tolist()
+        ids=pd.read_parquet(self.output/'concordance/match_ids/part-00000.parquet').entity_id.tolist()
         self.assertEqual(dataset_builder.package_dataset(self.root,self.output),0)
-        self.assertEqual(pd.read_parquet(self.output/'concordance/match_ids.parquet').entity_id.tolist(),ids)
+        self.assertEqual(pd.read_parquet(self.output/'concordance/match_ids/part-00000.parquet').entity_id.tolist(),ids)
         self.assertEqual({p.name for p in (self.output/'concordance').iterdir()},
-                         {'fixtures.parquet','match_ids.parquet','team_ids.parquet','player_ids.parquet','metadata'})
+                         {'fixtures','match_ids','team_ids','player_ids','metadata'})
         self.assertFalse(list(self.output.glob('raw_data/*/*/events.csv')))
 
     def test_old_parquet_only_publication_migrates_to_csv_without_losing_ids(self):
@@ -125,7 +125,7 @@ class PackageDatasetTests(unittest.TestCase):
         (old/'manifest.json').write_text(json.dumps(manifest))
         shutil.rmtree(base)
         self.assertEqual(dataset_builder.package_dataset(self.root,self.output),0)
-        self.assertEqual(pd.read_parquet(base/'fixtures.parquet').match_entity_id.tolist(),[self.match_id])
+        self.assertEqual(pd.read_parquet(base/'fixtures/part-00000.parquet').match_entity_id.tolist(),[self.match_id])
         self.assertFalse(old.exists())
         self.assertTrue((base/'metadata/legacy/concordances/manifest.json').is_file())
 

@@ -198,13 +198,13 @@ class DatasetManagerTests(unittest.TestCase):
                     '8194': {'sofascore_id': '2588', 'whoscored_id': '116'}}):
                 dataset_builder.build_id_tables(root/'data',root/'dataset',
                     build_player_ids=False,build_team_ids=True,build_match_ids=False)
-            self.assertIn('1 have missing provider IDs (SofaScore: 1, WhoScored: 1)',
+            self.assertIn('2 canonical teams; 1 linked across all three providers',
                           output.getvalue())
             teams=pd.read_csv(root/'dataset'/'team_ids.csv',dtype=str)
             self.assertTrue(teams.fotmob_id.is_unique)
-            opponent=teams.loc[teams.fotmob_id.eq('123')].iloc[0]
+            opponent=teams.loc[teams.sofascore_id.eq('30')].iloc[0]
             self.assertEqual(opponent.team_name,'Opponent')
-            self.assertTrue(pd.isna(opponent.sofascore_id))
+            self.assertTrue(pd.isna(opponent.fotmob_id))
             self.assertTrue(pd.isna(opponent.whoscored_id))
 
     def test_team_reference_deduplicates_seasons_and_allows_missing_ids(self):

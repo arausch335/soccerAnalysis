@@ -8,13 +8,14 @@ from storage.pandasStore import atomic_replace
 from .storageTransfer import link_or_copy
 
 
-def seed(live, output, season, *, check=lambda: None, archive=None):
+def seed(live, output, season=None, *, check=lambda: None, archive=None):
     live, output = Path(live), Path(output)
     def copy(source, target):
         check()
         return link_or_copy(source,target)
-    if (live/'raw_data'/season).is_dir():
-        shutil.copytree(live/'raw_data'/season,output/'raw_data'/season,copy_function=copy)
+    raw=live/'raw_data'/season if season is not None else live/'raw_data'
+    destination=output/'raw_data'/season if season is not None else output/'raw_data'
+    if raw.is_dir():shutil.copytree(raw,destination,copy_function=copy)
     # Seed previous layouts without keeping their paths in the next public bundle.
     for path in live.glob('*/*/*.csv'):
         if (re.fullmatch(r'\d{4}-\d{4}',path.parent.name) and path.parent.parent.name not in ('raw_data','concordance','concordances')
@@ -26,7 +27,7 @@ def seed(live, output, season, *, check=lambda: None, archive=None):
         # Archived old datasets are not needed to compute a new publication.
         shutil.copytree(live/'concordance',output/'concordance',copy_function=copy,
                         ignore=lambda directory,names: ['legacy'] if Path(directory).name=='metadata' and 'legacy' in names else [])
-    for name in ('fixtures.csv','player_ids.csv','team_ids.csv','match_ids.csv'):
+    for name in ('fixtures.csv','player_ids.csv','team_ids.csv','match_ids.csv','coverage.json'):
         if (live/name).is_file():copy(live/name,output/name)
     if (live/'fixture_concordance').is_dir():
         shutil.copytree(live/'fixture_concordance',output/'fixture_concordance',copy_function=copy)
@@ -41,6 +42,8 @@ def seed(live, output, season, *, check=lambda: None, archive=None):
                 if not relative.startswith('concordance/'):continue
                 safe_path(relative,'dataset');check()
                 source=archive.objects/item['sha256'];target=output/relative
+                if target.is_file() and target.stat().st_size==item['size'] and digest(target)==item['sha256']:
+                    continue  # Retain timestamps of an unchanged, valid live publication.
                 if not source.is_file() or source.stat().st_size!=item['size'] or digest(source)!=item['sha256']:
                     raise ValueError('Archived publication is incomplete or corrupt: '+relative)
                 target.unlink(missing_ok=True);copy(source,target)

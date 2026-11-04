@@ -78,7 +78,8 @@ class DatasetConfigTests(unittest.TestCase):
                                 **{**DISABLED, 'BUILD_FIXTURES': True}), \
                     patch('dataset_builder.package_collection') as package:
                 self.assertEqual(dataset_builder.main([]), 0)
-            self.assertEqual(package.call_args.args, (source.resolve(), (root / 'dataset/raw_data').resolve()))
+            self.assertEqual(package.call_args.args[0].parts[-2:],('bundesliga','2024-2025'))
+            self.assertEqual(package.call_args.args[1].name,'raw_data')
 
     def test_invalid_switch_stops_before_writes(self):
         with patch.object(dataset_config, 'BUILD_EVENTS', 'False'), \
@@ -106,5 +107,4 @@ class DatasetConfigTests(unittest.TestCase):
                     patch('dataset_builder.build_dataset', return_value=0) as build:
                 self.assertEqual(main.main([]), 0)
             collect.assert_not_called()
-            self.assertEqual(build.call_args.args, (
-                root / 'data', root / 'dataset', ['bundesliga-2024-25']))
+            build.assert_not_called()

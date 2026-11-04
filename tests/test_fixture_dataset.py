@@ -99,6 +99,7 @@ class FixtureDatasetTests(unittest.TestCase):
     def test_live_progress_reports_provider_stages_cache_and_terminal_coverage(self):
         events=[]
         result=self.build(progress=lambda event,**values:events.append((event,values)))
+        self.assertFalse((self.base/'dataset/concordance/metadata/manifest.json').exists())
         self.assertEqual(events[0][0],'season_started')
         self.assertTrue(any(e=='provider_progress' and v.get('month')=='201009' for e,v in events))
         self.assertEqual([v['provider'] for e,v in events if e=='provider_finished'],['sofascore','fotmob','whoscored'])

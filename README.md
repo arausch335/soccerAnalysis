@@ -45,6 +45,9 @@ Package the data already saved on this computer for R:
 python main.py --package
 ```
 
+Dataset production is explicit: normal `main.py` collection, imports and the MSI
+receiver never build or publish a dataset. Run `--package` on MSI to build and
+publish its saved data for Main. Main downloads published datasets automatically.
 The default is incremental: only new or changed saved seasons are processed.
 To explicitly select either mode:
 
@@ -60,8 +63,7 @@ saved inputs and preserve stable IDs and received fixture history. Concordance
 tables default to Parquet. `--csv` selects CSV; `--parquet` explicitly selects
 Parquet. Switching format during an incremental build republishes concordance
 without rebuilding unchanged season CSVs. Set `dataset.concordance_format` in
-`config/settings.yaml` to choose the default for packaging and MSI background
-builds.
+`config/settings.yaml` to choose the default for explicit packaging.
 
 This uses one saved-data builder for season CSVs and consolidated fixture/ID Parquet tables:
 
@@ -72,10 +74,10 @@ dataset/
     player_match_stats.csv
     team_match_stats.csv
   concordance/
-    fixtures.parquet
-    match_ids.parquet
-    team_ids.parquet
-    player_ids.parquet
+    fixtures/part-00000.parquet
+    match_ids/part-00000.parquet
+    team_ids/part-00000.parquet
+    player_ids/part-00000.parquet
     metadata/
 ```
 
@@ -97,7 +99,12 @@ python main.py --package --dataset-root /path/to/R-project/data
 
 `python dataset_builder.py`, `soccer-dataset`, and the older
 `python -m tools.export_concordances` command delegate to the same builder.
-Fixture collection and audited ID rebuilds use the same publisher.
+Fixture collection saves inputs for the next explicit package.
+Each Parquet table is a folder with numbered chunks of at most 50,000 rows.
+Packaging prints a coverage review, saves `dataset/coverage.json`, and makes it
+available on the dashboard’s **Dataset** page (`/dataset`). See
+[dataset production and coverage](docs/DATASET_PRODUCTION.md).
+
 See [dataset layout and R import](docs/DATASET_LAYOUT.md). Packaging does not
 certify MSI integration; [audit and rebuild concordances](docs/CONCORDANCES.md)
 when an integration-confirmed publication is required.

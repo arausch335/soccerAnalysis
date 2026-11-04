@@ -491,10 +491,10 @@ finished status, or events) alongside the file path.
 `python dataset_builder.py --references-only` uses the saved index without
 downloading anything. The public exports default to:
 
-- `dataset/concordance/fixtures.parquet`
-- `dataset/concordance/match_ids.parquet`
-- `dataset/concordance/team_ids.parquet`
-- `dataset/concordance/player_ids.parquet`
+- `dataset/concordance/fixtures/part-00000.parquet`
+- `dataset/concordance/match_ids/part-00000.parquet`
+- `dataset/concordance/team_ids/part-00000.parquet`
+- `dataset/concordance/player_ids/part-00000.parquet`
 - `dataset/concordance/metadata/manifest.json` (checksums and integration status)
 
 Each ID table contains six IDs and five names; see [dataset layout](DATASET_LAYOUT.md)
@@ -502,7 +502,7 @@ for the schema. Matching evidence and registry snapshots stay under metadata.
 Private working inputs remain CSV under `metadata/compiled`.
 `python main.py --package --csv` selects CSV for a run; `--parquet` selects
 Parquet. The shared `dataset.concordance_format` setting controls the default,
-including MSI background exports. Incremental builds recognize format switches
+for explicit packaging. Incremental builds recognize format switches
 and republish concordance while reusing unchanged season CSVs and ID observations.
 Progress reporting sends worker match IDs, not complete player/statistics datasets.
 Import those datasets before rebuilding a combined export across all computers.
@@ -572,12 +572,12 @@ in place. Provisioning and initial storage startup may take about a minute.
   the same season makes an import yield. Other seasons can import concurrently
   with scraping. A partially scraped season
   is stored by MSI but does not trigger a dataset publication.
-- MSI builds the configured dataset tables and match/team/player concordance
-  after its own completed seasons and after incorporating remote completed seasons.
-  Failed builds keep the last published dataset intact and remain queued for retry.
-  Builds use pinned input snapshots, so their export locks never block the live
-  scraper. CSV exports and dataset builds are deferred out of supervised collection.
-  Concordance can read saved match checkpoints even before flat CSVs are exported.
+- MSI receives and incorporates saved raw data in the background. Dataset builds
+  and publication happen only when `python main.py --package` is run explicitly.
+  New completed inputs remain queued as “awaiting --package”. Packaging uses a
+  pinned snapshot and incremental caches; changed inputs received during a run
+  remain pending for the next explicit package. Failures preserve the last
+  published dataset and do not start automatic build retries.
 - Main polls MSI every 30 seconds and downloads new prepared dataset files,
   including `dataset/concordance/`. Its storage credentials cannot download raw
   objects. Existing Main dataset seasons are preserved. All files in a publication
@@ -594,7 +594,8 @@ in place. Provisioning and initial storage startup may take about a minute.
 Saved completed jobs from the current worker plan are queued once on startup, so
 upgrading does not require re-scraping those seasons. Use the normal explicit
 `--retry` flow for paused assignments or historical seasons outside that plan.
-Keep MSI running to receive and build data even after its scraping plan finishes.
+Keep MSI running to receive data after scraping finishes. Run `--package` when
+you want to create and publish the next dataset.
 
 Background staging checks available disk space before each batch and keeps 1 GiB
 free for collection. Low space pauses maintenance with source data retained.
@@ -812,12 +813,12 @@ history and are shared with workers like other rejected identity pairs.
 
 MSI incorporates every fully received raw upload in its background maintenance
 loop, including individual matches from unfinished or partial seasons. Only a
-completed-season snapshot schedules dataset publication to Main. A per-match
+completed-season snapshot marks saved inputs awaiting explicit `--package`. A per-match
 incorporation acknowledges that package alone; it never retires other matches
 that are still waiting to be imported. Existing received packages become eligible
 after upgrading, without re-uploading them. Portable imports still verify their
 source files before incorporation. Their bulk validation/import runs in a separate
-background task, so uploaded matches and dataset builds do not wait for an entire
+background task, so uploaded matches can be incorporated without waiting for an entire
 portable folder to finish. The same season leases still yield to active scraping.
 Portable verification reports file counts at roughly 10% intervals, with a season
 message during incorporation; Main receives these logs and the `portable_import`
@@ -959,24 +960,26 @@ After updating a worker that stopped with `EOFError: Compressed file ended`,
 rerun the fixture command with its original settings. Existing checkpoints and
 registry files can remain in place.
 
-## Incremental MSI dataset jobs
+## Incremental explicit MSI packaging
 
-MSI keeps the immutable temporary input snapshots used by background exports,
-but anchors their cache identities to the original MSI data root. Each successful
+Only `main.py --package` builds and publishes the dataset. Normal worker
+maintenance receives and incorporates raw data; it does not build or retry a
+dataset. Packaging snapshots saved inputs and anchors cache identities to the
+original MSI data root. Each successful
 job retains its private ID observations and packaging checkpoint under
 `dataset/concordance/metadata`. Subsequent jobs, including jobs after a restart,
 reuse unchanged season observations instead of re-indexing every saved season.
 A repeated job with unchanged inputs reuses the existing publication.
 
 Only a successful publication and public-file installation advance the private
-checkpoint. An interrupted build or publication remains queued for retry. The
+checkpoint. An interrupted build or publication remains pending for the next explicit package. The
 checkpoint describes the pinned inputs actually processed, so data received while
 a job runs remains detectable by the next job. Private cache files stay on MSI
 and are excluded from the dataset transfer contract.
 
 The archive now distinguishes three kinds of outstanding dataset work:
 
-- **Queued:** saved inputs are present and the season is eligible to build.
+- **Awaiting --package:** saved inputs are present for the next explicit package.
 - **Waiting for saved inputs:** `job.json`, `config.json` or `schedule.json` is
   missing. Metadata-only historical folders remain here without repeatedly
   snapshotting the archive or blocking ready seasons. MSI checks again during

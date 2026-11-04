@@ -21,7 +21,9 @@ def receipt_path(root):
 def fixture_files(output, *, fixture_csv=None):
     output = Path(output)
     from concordance.publication import exists,folder,validate,publication_files
-    if exists(output):
+    # A fixture collector explicitly passes fresh private inputs; do not send
+    # an older public package in their place. Only --package republishes it.
+    if fixture_csv is None and exists(output):
         validate(folder(output))
         paths=publication_files(folder(output))
         return {'concordance/'+p.relative_to(folder(output)).as_posix():p for p in paths}
@@ -104,8 +106,8 @@ class CompiledReceiver(Archive):
         validate_manifest(manifest)
         paths = {f['path'] for f in manifest['files']}
         parquet=bool('concordances/manifest.json' in paths and all(p.startswith('concordances/') for p in paths))
-        from concordance.publication import FORMATS,public_paths
-        canonical_bundle=any(paths==public_paths(fmt) for fmt in FORMATS)
+        from concordance.publication import is_public_bundle
+        canonical_bundle=is_public_bundle(paths)
         if manifest['kind'] != 'dataset' or manifest['worker'] != worker or not (canonical_bundle or parquet or FIXTURE_REQUIRED_PATHS <= paths <= FIXTURE_DATASET_PATHS):
             raise PermissionError('Only owned compiled fixture bundles may be delivered to Main')
         mid = identifier(manifest)

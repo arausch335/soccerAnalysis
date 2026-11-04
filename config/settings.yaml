@@ -19,7 +19,7 @@ collection:
     - Ligue 1
   seasons: ["2023/24"]
   spatial_capture: fast        # fast = no spatial maps; all = every spatial endpoint
-  build_dataset: false        # Package combined/Sofascore seasons after collection
+  build_dataset: false        # Legacy option; dataset production requires main.py --package
   show_timing: true            # Per-game duration, season ETA, full collection ETA
 
   http:

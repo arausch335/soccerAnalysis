@@ -22,3 +22,5 @@
 .fixture-progress{margin-top:12px;padding-top:12px;border-top:1px solid var(--line,#ddd)}
 .fixture-progress h4{margin-top:0}.fixture-bar{height:7px;margin:10px 0}.fixture-bar .type-fill{background:var(--worker-color,#6b8667)}
 .fixture-issue{color:#946028}
+
+.summary[hidden]{display:none}.dataset-summary{margin:20px 0}.dataset-table td{vertical-align:top}.dataset-table td small{display:block;color:#697565;font-size:11px;margin-top:5px}.dataset-progress{height:7px;min-width:130px;background:#e7ebe3;border-radius:8px;overflow:hidden;margin:7px 0}.dataset-progress span{display:block;height:100%;background:#547151;border-radius:8px}.dataset-stale{color:#9a6429}#dataset>.panel{margin:20px 0}#dataset .panel>h2{margin-top:0}#dataset .panel{padding:22px}

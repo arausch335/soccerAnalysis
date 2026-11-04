@@ -190,7 +190,7 @@ def snapshot_data(root, output, *, check=lambda:None):
             # A fallback copy is still the same saved input, not a new source
             # version merely because this temporary directory was just created.
             os.utime(target,ns=(before.st_atime_ns,before.st_mtime_ns))
-    pin(root/'.soccer-scraper.json')
+    if (root/'.soccer-scraper.json').is_file():pin(root/'.soccer-scraper.json')
     from .removedCollections import removed_seasons
     excluded=removed_seasons()
     for directory in sorted(root.glob('*/*')):

@@ -47,9 +47,15 @@ def resource_states(row):
 
 
 class DashboardModel:
-    def __init__(self,root,ensemble,plan_path,worker,*,clock=time.monotonic):
+    def __init__(self,root,ensemble,plan_path,worker,*,clock=time.monotonic,dataset_root=None):
         self.root=Path(root);self.ensemble=Path(ensemble);self.plan_path=Path(plan_path);self.worker=worker
         self.clock=clock;self.loaded=-100;self.snapshot=None;self.rows=[];self.lock=threading.Lock()
+        import config
+        self.dataset_root=Path(config.DATASET_ROOT if dataset_root is None else dataset_root)
+
+    def dataset(self):
+        from dataset_review import load_review
+        return load_review(self.dataset_root)
 
     def status(self):
         with self.lock:
