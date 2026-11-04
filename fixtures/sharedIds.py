@@ -19,6 +19,35 @@ REFERENCE_KEYS=('entity_id','alex_id','id_source','safe_for_cross_provider_joins
 ISSUE_COLUMNS=('kind','provider','native_id','reason','candidate_id','entity_id')
 
 
+def candidate_ids(value):
+    """Flatten historical publication metadata without discarding competing IDs."""
+    result={p+'_id':set() for p in PROVIDERS}
+    def visit(item,depth=0):
+        if depth>24:raise ValueError('Provider candidate metadata is too deeply nested')
+        if isinstance(item,str):
+            if not item:return
+            encoded=item
+            for _ in range(16):
+                try:decoded=json.loads(encoded);break
+                except json.JSONDecodeError:
+                    unescaped=encoded.replace('\\"','"')
+                    if unescaped==encoded:raise ValueError('Invalid published provider candidate metadata')
+                    encoded=unescaped
+            else:raise ValueError('Invalid published provider candidate metadata')
+            visit(decoded,depth+1)
+        elif isinstance(item,list):
+            for child in item:visit(child,depth+1)
+        elif isinstance(item,dict):
+            for key in result:
+                values=item.get(key,[])
+                if not isinstance(values,list) or any(not isinstance(v,(str,int)) for v in values):
+                    raise ValueError('Invalid provider candidate IDs')
+                result[key].update(str(v) for v in values if str(v))
+        elif item is not None:raise ValueError('Invalid provider candidate metadata')
+    visit(value or {})
+    return {key:sorted(values) for key,values in result.items()}
+
+
 def assign_ids(root,fixtures,matches=(),teams=(),players=(),*,folder=None,save=True):
     """Use the shared registry; native IDs withheld from joins remain in audit."""
     root=Path(root);path=root/'_system/identity/alex_ids.json'
@@ -54,7 +83,7 @@ def assign_ids(root,fixtures,matches=(),teams=(),players=(),*,folder=None,save=T
             for s in specs:
                 if s['kind']!=kind:continue
                 observations.append(s['native'])
-                candidates=json.loads(s['row'].get('provider_id_candidates') or '{}')
+                candidates=candidate_ids(s['row'].get('provider_id_candidates'))
                 for p in PROVIDERS:
                     if p!=s['anchor'][0] and len(candidates.get(p+'_id',[]))>1:
                         observations.extend({**s['native'],p+'_id':v} for v in candidates[p+'_id'])
@@ -71,7 +100,7 @@ def assign_ids(root,fixtures,matches=(),teams=(),players=(),*,folder=None,save=T
             row,kind,native,published,prefix=s['row'],s['kind'],s['native'],s['published'],s['prefix']
             result=registry.reconcile(kind,native,published,conflict=s['status']=='conflict',
                 reject=rejects[kind],verified=verified[kind])
-            candidates=json.loads(row.get('provider_id_candidates') or '{}')
+            candidates=candidate_ids(row.get('provider_id_candidates'))
             if any(len(ids)>1 and any((kind,p.removesuffix('_id'),v) in rejects[kind] for v in ids) for p,ids in candidates.items()):
                 result['safe_for_cross_provider_joins']=False
             s['assigned']=result

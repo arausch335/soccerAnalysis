@@ -114,7 +114,7 @@ def _install_dataset(peer,manifest,output,staging_root,*,exclude=()):
             from concordance.publication import validate
             validate(canonical_bundle)
             # Keep this computer's private linker inputs out of the transfer contract.
-            for name in ('compiled','legacy'):
+            for name in ('compiled','legacy','fixture_baselines'):
                 if (output/'concordance/metadata'/name).is_dir():
                     shutil.copytree(output/'concordance/metadata'/name,canonical_bundle/'metadata'/name,dirs_exist_ok=True,copy_function=link_or_copy)
             local_state=output/'concordance/metadata/package-state.json'
@@ -342,10 +342,17 @@ class StorageAgent:
         # Hub imports must have a receiver ready to persist dataset build jobs.
         if self.ensemble is None or self.worker!=self.settings['hub'] or self.server is None:return False
         self.portable_status={'state':'checking_staged_imports'}
+        from .fixtureTransfer import import_staged as import_fixtures
+        from .maintenance import Checkpoint
+        fixture_changed=import_fixtures(self.ensemble,self.output,check=Checkpoint(self.stop),report=self.log_report)
+        if fixture_changed:
+            for job in self.root.glob('*/*/job.json'):
+                if all((job.parent/name).is_file() for name in ('config.json','schedule.json')):
+                    self.server.archive.schedule_build(job.parent.relative_to(self.root).as_posix())
         changed=import_staged(self.root,self.ensemble,stop=self.stop,report=self.log_report,
                               on_season=self.server.archive.schedule_build,on_progress=self.portable_progress)
         if self.portable_status.get('state')!='waiting':self.portable_status={'state':'current'}
-        return changed
+        return changed or fixture_changed
 
     def portable_progress(self,status):
         self.portable_status=status
@@ -405,7 +412,7 @@ class StorageAgent:
                     require_space(self.directory,sum(path.stat().st_size for path in (source/season).rglob('*') if path.is_file())*3)
                     from .datasetBuildCache import seed,commit
                     from concordance import package_state as tracking
-                    seed(self.output,output,season,check=check)
+                    seed(self.output,output,season,check=check,archive=archive)
                     state_path=output/'concordance/metadata/package-state.json'
                     previous_state=state_path.read_bytes() if state_path.is_file() else None
                     with tracking.snapshot_inputs(self.root,source):

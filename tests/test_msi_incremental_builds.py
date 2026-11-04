@@ -145,6 +145,21 @@ class MSIIncrementalBuildTests(unittest.TestCase):
                 self.assertTrue(self.agent.maintenance_once())
         self.assertIsNotNone(self.archive.publication())
 
+    def test_incomplete_live_csv_publication_is_restored_before_parquet_build(self):
+        self.add_season('premier-league-2024-25','Premier League',101)
+        with self.fixture_mode(),patch.object(dataset_builder.config,'CONCORDANCE_FORMAT','csv'):
+            self.archive.schedule_build('premier-league/2024-2025');self.agent.maintenance_once()
+        (self.output/'concordance/match_ids.csv').unlink()
+        self.add_season('bundesliga-2024-25','Bundesliga',201)
+        with self.fixture_mode():
+            self.archive.schedule_build('bundesliga/2024-2025')
+            self.assertTrue(self.agent.maintenance_once())
+        from concordance.publication import validate,folder
+        result=validate(folder(self.output))
+        self.assertEqual(result['format'],'soccer-concordance-parquet-v1')
+        self.assertEqual(result['rows'],2)
+        self.assertFalse((self.output/'concordance/match_ids.csv').exists())
+
     def test_background_upgrade_preserves_old_season_csvs_and_publishes_only_new_paths(self):
         self.add_season('premier-league-2024-25','Premier League',101)
         previous=self.output/'serie-a/2023-2024';previous.mkdir(parents=True)

@@ -8,7 +8,7 @@ from storage.pandasStore import atomic_replace
 from .storageTransfer import link_or_copy
 
 
-def seed(live, output, season, *, check=lambda: None):
+def seed(live, output, season, *, check=lambda: None, archive=None):
     live, output = Path(live), Path(output)
     def copy(source, target):
         check()
@@ -30,6 +30,22 @@ def seed(live, output, season, *, check=lambda: None):
         if (live/name).is_file():copy(live/name,output/name)
     if (live/'fixture_concordance').is_dir():
         shutil.copytree(live/'fixture_concordance',output/'fixture_concordance',copy_function=copy)
+    # The archive is the immutable, acknowledged publication. A partially
+    # installed live tree must not seed a manifest without its public tables.
+    if archive is not None:
+        manifest=archive.publication()
+        if manifest and any(f['path']=='concordance/metadata/manifest.json' for f in manifest['files']):
+            from .storageTransfer import safe_path,digest
+            for item in manifest['files']:
+                relative=item['path']
+                if not relative.startswith('concordance/'):continue
+                safe_path(relative,'dataset');check()
+                source=archive.objects/item['sha256'];target=output/relative
+                if not source.is_file() or source.stat().st_size!=item['size'] or digest(source)!=item['sha256']:
+                    raise ValueError('Archived publication is incomplete or corrupt: '+relative)
+                target.unlink(missing_ok=True);copy(source,target)
+    from concordance.publication import exists,folder,validate
+    if exists(output):validate(folder(output))
 
 
 def commit(source, output, live, *, publication_id=None, check=lambda: None):

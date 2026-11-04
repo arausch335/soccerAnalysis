@@ -125,6 +125,8 @@ class ReportingStore:
         self.identities=ReviewStore(root)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        self.identity_lock = threading.Lock()
+        self.pending_work = threading.Event()
         with self.connect() as db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS workers (
@@ -133,6 +135,9 @@ class ReportingStore:
                 CREATE TABLE IF NOT EXISTS logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, worker TEXT, at TEXT, level TEXT, message TEXT);
                 CREATE INDEX IF NOT EXISTS logs_worker ON logs(worker, id);
+                CREATE TABLE IF NOT EXISTS identity_inbox (
+                    worker TEXT, digest TEXT, payload TEXT, done INTEGER DEFAULT 0,
+                    PRIMARY KEY(worker,digest));
             ''')
         # Existing durable reports always win over an older Git inventory.
         from .ensembleProgress import read_progress
@@ -274,13 +279,31 @@ class ReportingStore:
                        (worker, instance_seen, stream_seen, sequence_seen, inventory_json,
                         version, runtime_json, now()))
             db.execute('DELETE FROM logs WHERE worker=? AND id NOT IN (SELECT id FROM logs WHERE worker=? ORDER BY id DESC LIMIT 10000)', (worker, worker))
-        # Idempotent replay repairs suggestions as well as runtime views after an interrupted export.
-        proposals = list(suggestions_by_id.values())
-        for index in range(0, len(proposals), 500):
-            self.identities.ingest(proposals[index:index + 500], worker)
+            # Persist identity work in the same transaction as report receipt.
+            # Replayed old batches repair pre-upgrade interrupted ingestion too.
+            for proposal in suggestions_by_id.values():
+                payload=encode(proposal);key=hashlib.sha256(payload.encode()).hexdigest()
+                db.execute('INSERT OR IGNORE INTO identity_inbox(worker,digest,payload) VALUES(?,?,?)',
+                           (worker,key,payload))
+        self.pending_work.set()
         # Retry also repairs materialized views if a previous response/export was interrupted.
         self.materialize({worker}, inventories=changed_inventory or any(e.get('inventory') is not None for e in events))
         return events[-1]['sequence']
+
+    def process_identities(self):
+        """Expensive review is durable and independent of HTTP acknowledgements."""
+        with self.identity_lock:
+            with self.connect() as db:
+                row=db.execute('SELECT worker FROM identity_inbox WHERE done=0 ORDER BY rowid LIMIT 1').fetchone()
+                if row is None:return False
+                worker=row['worker']
+                rows=db.execute('SELECT digest,payload FROM identity_inbox WHERE worker=? AND done=0 ORDER BY rowid LIMIT 100',
+                                (worker,)).fetchall()
+            self.identities.ingest([json.loads(row['payload']) for row in rows],worker)
+            with self.connect() as db:
+                db.executemany('UPDATE identity_inbox SET done=1 WHERE worker=? AND digest=?',
+                               [(worker,row['digest']) for row in rows])
+            return True
 
     def inventories(self, versions, exclude=None, reep_version=''):
         from providers.identityReview import decisions
@@ -330,6 +353,8 @@ def read_logs(root, worker='', level='', search='', limit=200, after=0, *, focus
 class ReportingServer:
     def __init__(self, root, ensemble, options, *, storage_plan=None,workers=None,command_plan=None,dataset_root=None):
         self.store = ReportingStore(root, ensemble)
+        self.review_stop=threading.Event()
+        self.review_thread=threading.Thread(target=self.review_pending,daemon=True,name='report-identity-inbox')
         if dataset_root is None:
             import config
             dataset_root = config.DATASET_ROOT
@@ -458,10 +483,21 @@ class ReportingServer:
 
     def start(self):
         self.thread.start()
+        self.review_thread.start()
         return self
 
+    def review_pending(self):
+        while not self.review_stop.is_set():
+            try:
+                if self.store.process_identities():continue
+            except Exception as exc:
+                print(f'[Reporting] Saved identity review deferred: {type(exc).__name__}: {exc}',flush=True)
+            self.store.pending_work.wait(5);self.store.pending_work.clear()
+
     def close(self):
+        self.review_stop.set();self.store.pending_work.set()
         self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=3)
+        if self.review_thread.is_alive():self.review_thread.join(timeout=1)
 
 
 class NoRedirect(HTTPRedirectHandler):

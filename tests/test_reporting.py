@@ -358,13 +358,31 @@ class ReportingTests(unittest.TestCase):
         ingest=store.identities.ingest
         with patch.object(store.identities,'ingest',wraps=ingest) as process:
             store.accept('msi',events)
+            self.assertEqual(process.call_count,0)
+            store.process_identities()
         self.assertEqual(process.call_count,1)
         self.assertEqual(len(process.call_args.args[0]),1)
         self.assertEqual(len(process.call_args.args[0][0]['contexts']),5)
-        # If the identity export failed after durable receipt, replay must repair it.
-        with store.identities.connect() as db:db.execute('DELETE FROM proposals')
+        # Successful review is not repeated by a lost-ACK replay.
         store.accept('msi',events)
+        self.assertFalse(store.process_identities())
         self.assertEqual(len(store.identities.proposals()),1)
+
+    def test_failed_identity_review_does_not_block_ack_and_survives_restart(self):
+        store=ReportingStore(self.main,self.main_ensemble)
+        proposal={'kind':'player','provider':'fotmob','source_id':'22','target_id':'11',
+                  'source_name':'Player','target_name':'Player','score':.9,'contexts':[]}
+        event={'instance_id':'original-folder','stream':'stream','sequence':1,
+               'identity_suggestions':[proposal],'logs':[{'at':'now','level':'INFO','message':'saved'}]}
+        with patch.object(store.identities,'ingest',side_effect=OSError('busy')):
+            self.assertEqual(store.accept('msi',[event]),1)
+            with self.assertRaises(OSError):store.process_identities()
+            self.assertEqual(store.accept('msi',[event]),1)
+        restarted=ReportingStore(self.main,self.main_ensemble)
+        self.assertTrue(restarted.process_identities())
+        self.assertFalse(restarted.process_identities())
+        self.assertEqual(len(restarted.identities.proposals()),1)
+        self.assertEqual(len(read_logs(self.main)['rows']),1)
 
     def test_identity_observation_timestamps_do_not_republish_unchanged_evidence(self):
         from providers.identityReview import ReviewStore

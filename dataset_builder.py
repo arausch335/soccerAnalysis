@@ -827,6 +827,8 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
         raise ValueError('Data and dataset roots must be separate directories')
     from concordance.layout import prepare, retire_legacy
     compiled = prepare(output)
+    from collection.fixtureTransfer import apply_baselines
+    apply_baselines(root,output)
     state_path = output/'concordance/metadata/package-state.json'
     state = tracking.load(state_path)
     recipe_id = tracking.recipe()
