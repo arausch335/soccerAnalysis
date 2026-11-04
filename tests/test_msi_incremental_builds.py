@@ -84,6 +84,84 @@ class MSIIncrementalBuildTests(unittest.TestCase):
             self.assertTrue(self.agent.maintenance_once())
         self.assertNotEqual(self.state.read_bytes(),before)
 
+    def test_first_publication_failure_retains_all_completed_source_indexes(self):
+        self.add_season('premier-league-2024-25','Premier League',101)
+        self.add_season('bundesliga-2024-25','Bundesliga',201)
+        with self.fixture_mode():
+            self.archive.schedule_build('premier-league/2024-2025')
+            with patch.object(self.archive,'publish',side_effect=OSError('publication interrupted')):
+                with self.assertRaises(OSError):self.agent.maintenance_once()
+            self.assertIsNone(self.archive.publication())
+            self.assertFalse(self.state.exists())
+            self.assertEqual(len(list((self.root/'_system/cache/dataset-ids').glob('*/*.json'))),2)
+            self.assertFalse(list((self.root/'_system/storage').glob('b-*')))
+            # A fresh supervisor and a new temporary snapshot reuse durable IDs.
+            self.agent=StorageAgent(self.root,'msi',{'hub':'msi','consumers':['main']},
+                                    dataset_root=self.output,log=lambda *a,**k:None)
+            self.agent.server=SimpleNamespace(archive=self.archive)
+            with patch('dataset_builder._source_id_rows',side_effect=AssertionError('completed source reindexed')):
+                self.assertTrue(self.agent.maintenance_once())
+        self.assertIsNotNone(self.archive.publication())
+
+    def test_partial_index_failure_resumes_only_the_unfinished_source(self):
+        self.add_season('premier-league-2024-25','Premier League',101)
+        self.add_season('bundesliga-2024-25','Bundesliga',201)
+        original=dataset_builder._source_id_rows;completed=[]
+        def interrupt(source,*args):
+            if completed:raise KeyboardInterrupt('interrupted between sources')
+            original(source,*args);completed.append(source.parent.name)
+        with self.fixture_mode():
+            self.archive.schedule_build('premier-league/2024-2025')
+            with patch('dataset_builder._source_id_rows',side_effect=interrupt):
+                with self.assertRaises(KeyboardInterrupt):self.agent.maintenance_once()
+            self.assertFalse(self.state.exists())
+            self.assertEqual(len(list((self.root/'_system/cache/dataset-ids').glob('*/*.json'))),1)
+            with patch('dataset_builder._source_id_rows',wraps=original) as scan:
+                self.assertTrue(self.agent.maintenance_once())
+            self.assertEqual(scan.call_count,1)
+            self.assertNotEqual(scan.call_args.args[0].parent.name,completed[0])
+
+    def test_snapshot_copy_fallback_does_not_make_unchanged_sources_new(self):
+        import shutil
+        def copy(source,target):
+            Path(target).parent.mkdir(parents=True,exist_ok=True)
+            return shutil.copyfile(source,target)
+        self.add_season('premier-league-2024-25','Premier League',101)
+        with self.fixture_mode(),patch('collection.backgroundImports.link_or_copy',side_effect=copy):
+            self.archive.schedule_build('premier-league/2024-2025')
+            with patch.object(self.archive,'publish',side_effect=OSError('publication interrupted')):
+                with self.assertRaises(OSError):self.agent.maintenance_once()
+            with patch('dataset_builder._source_id_rows',side_effect=AssertionError('copied source reindexed')):
+                self.assertTrue(self.agent.maintenance_once())
+
+    def test_changed_source_after_failed_publication_is_reindexed_alone(self):
+        self.add_season('premier-league-2024-25','Premier League',101)
+        second=self.add_season('bundesliga-2024-25','Bundesliga',201)
+        with self.fixture_mode():
+            self.archive.schedule_build('premier-league/2024-2025')
+            with patch.object(self.archive,'publish',side_effect=OSError('publication interrupted')):
+                with self.assertRaises(OSError):self.agent.maintenance_once()
+            atomic_json(second/'schedule.json',{'events':[event(201),event(202)]})
+            with patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as scan:
+                self.assertTrue(self.agent.maintenance_once())
+            self.assertEqual(scan.call_count,1)
+            self.assertEqual(scan.call_args.args[0].parent.name,'bundesliga')
+        import pandas as pd
+        self.assertEqual(len(pd.read_parquet(self.output/'concordance/fixtures.parquet')),3)
+
+    def test_corrupt_progress_cache_is_recomputed_without_trusting_its_rows(self):
+        import json
+        self.add_season('premier-league-2024-25','Premier League',101)
+        with self.fixture_mode():
+            self.archive.schedule_build('premier-league/2024-2025')
+            with patch.object(self.archive,'publish',side_effect=OSError('publication interrupted')):
+                with self.assertRaises(OSError):self.agent.maintenance_once()
+            path=next((self.root/'_system/cache/dataset-ids').glob('*/*.json'))
+            value=json.loads(path.read_text());value['checksum']='bad';atomic_json(path,value)
+            with patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as scan:
+                self.assertTrue(self.agent.maintenance_once())
+            self.assertEqual(scan.call_count,1)
+
     def test_private_cache_swap_failure_preserves_prior_checkpoint_and_retries(self):
         from collection import datasetBuildCache
         source=self.add_season('premier-league-2024-25','Premier League',101)

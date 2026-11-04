@@ -67,7 +67,7 @@ class DatasetConfigTests(unittest.TestCase):
                 self.assertEqual(dataset_builder.build_dataset(root / 'data', root / 'dataset'), 0)
             export.assert_not_called()
             self.assertEqual(ids.call_args.kwargs, dict(
-                build_player_ids=True, build_team_ids=False, build_match_ids=False))
+                build_player_ids=True, build_team_ids=False, build_match_ids=False,reuse_cache=True))
 
     def test_ide_run_uses_config_paths_and_season_selection_without_arguments(self):
         with tempfile.TemporaryDirectory() as folder:

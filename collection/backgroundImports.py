@@ -4,12 +4,13 @@ from storage.sqlitePaths import readonly_uri
 from contextlib import closing
 import csv
 import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
 import tempfile
 import uuid
-from .maintenance import available, require_space, LowSpace
+from .maintenance import available, require_space, LowSpace, DeferredWork
 from .storageTransfer import digest, identifier, link_or_copy
 from .workerIdentity import ensure_identity, save_origins
 from storage.pandasStore import SCHEMA, atomic_json
@@ -178,9 +179,17 @@ def snapshot_data(root, output, *, check=lambda:None):
     from filelock import FileLock
     root=Path(root);output=Path(output);output.mkdir(parents=True,exist_ok=True)
     def pin(source):
-        check();target=output/source.relative_to(root)
-        require_space(output,source.stat().st_size if source.stat().st_dev!=output.stat().st_dev else 4096)
+        check();target=output/source.relative_to(root);before=source.stat()
+        require_space(output,before.st_size if before.st_dev!=output.stat().st_dev else 4096)
         link_or_copy(source,target)
+        pinned=target.stat()
+        if (before.st_dev,before.st_ino)!=(pinned.st_dev,pinned.st_ino):
+            after=source.stat()
+            if (before.st_size,before.st_mtime_ns,before.st_ino)!=(after.st_size,after.st_mtime_ns,after.st_ino):
+                raise DeferredWork('Source changed during snapshot copy; retry')
+            # A fallback copy is still the same saved input, not a new source
+            # version merely because this temporary directory was just created.
+            os.utime(target,ns=(before.st_atime_ns,before.st_mtime_ns))
     pin(root/'.soccer-scraper.json')
     from .removedCollections import removed_seasons
     excluded=removed_seasons()

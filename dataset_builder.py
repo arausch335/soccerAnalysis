@@ -488,7 +488,7 @@ def _source_id_rows(source, player_rows, team_rows, match_rows, review_root=None
 
 
 def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team_ids=True,
-                    build_match_ids=True):
+                    build_match_ids=True, reuse_cache=True):
     """Write combined provider ID tables at the top level of ``output_root``."""
     if not build_player_ids and not build_team_ids and not build_match_ids: return {}
     sources = discover_collections(Path(data_root), 'config.json')
@@ -497,30 +497,32 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
     team_rows = {};
     match_rows = {}
     from concordance import package_state as tracking
-    recipe_id=tracking.recipe()
+    from collection import datasetIndexCache as indexing
+    recipe_id=indexing.recipe()
     context=tracking.identity_context(data_root)
     for number, source in enumerate(sources, 1):
         key=tracking.digest(str(tracking.logical_root(source).resolve()))
         cache=Path(output_root)/'id_cache'/(key+'.json')
         signature=tracking.digest([tracking.source_signature(source),recipe_id,context])
-        try:
-            saved=json.loads(cache.read_text(encoding='utf-8'))
-            rows=saved.get('rows')
-            if (saved.get('signature')!=signature or not isinstance(rows,list) or len(rows)!=3
-                    or any(not isinstance(group,list) for group in rows)):
-                saved=None
-        except (OSError,ValueError,AttributeError):
-            saved=None
+        durable=indexing.cache_path(data_root,source,signature)
+        saved=indexing.load(durable,signature) if reuse_cache else None
+        durable_hit=saved is not None
+        if saved is None and reuse_cache:saved=indexing.load(cache,signature)
         if saved is None:
             print(f'Indexing IDs [{number}/{len(sources)}]: {source.parent.name}/{source.name}', flush=True)
             contributions=[{}, {}, {}]
             _source_id_rows(source, *contributions, data_root)
             saved={'signature':signature, 'rows':[
                 [[list(key),row] for key,row in rows.items()] for rows in contributions]}
-            from storage.pandasStore import atomic_json
-            atomic_json(cache,saved)
+            if signature!=tracking.digest([tracking.source_signature(source),recipe_id,tracking.identity_context(data_root)]):
+                raise ValueError('Source data or identity rules changed during ID indexing; retry')
         else:
             print(f'Reusing IDs [{number}/{len(sources)}]: {source.parent.name}/{source.name}', flush=True)
+        # This checkpoint certifies only a completed source projection. It does
+        # not advance the successful build state or replace any public output.
+        if not durable_hit:indexing.save(durable,saved)
+        from storage.pandasStore import atomic_json
+        atomic_json(cache,saved)
         for destination,records in zip((player_rows,team_rows,match_rows),saved['rows']):
             for key,row in records:
                 key=tuple(key)
@@ -794,7 +796,7 @@ def _build_settings():
     return tables, values
 
 
-def _build_reference_csvs(root, output, settings, *, offline=False):
+def _build_reference_csvs(root, output, settings, *, offline=False, reuse_ids=True):
     if settings['REFRESH_PUBLISHED_TEAM_IDS'] and settings['BUILD_TEAM_IDS'] and not offline:
         from providers.reep import refresh
         value = refresh(root, output, config.PROJECT_ROOT / 'ensemble_data')
@@ -802,7 +804,7 @@ def _build_reference_csvs(root, output, settings, *, offline=False):
     written = build_id_tables(root, output,
                              build_player_ids=settings['BUILD_PLAYER_IDS'],
                              build_team_ids=settings['BUILD_TEAM_IDS'],
-                             build_match_ids=settings['BUILD_MATCH_IDS'])
+                             build_match_ids=settings['BUILD_MATCH_IDS'],reuse_cache=reuse_ids)
     for label, path in written.items():
         print(f'Wrote combined {label}: {path}', flush=True)
     if settings['STANDARDIZE_FIXTURE_TEAM_NAMES']:
@@ -903,7 +905,7 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
             if mode == 'rebuild' and (compiled/'id_cache').exists():
                 shutil.rmtree(compiled/'id_cache')
             if needs_inputs and discover_collections(root, 'config.json'):
-                _build_reference_csvs(root, compiled, settings, offline=offline)
+                _build_reference_csvs(root, compiled, settings, offline=offline,reuse_ids=mode!='rebuild')
             if needs_inputs and (changed_sources or not (compiled/'fixtures.csv').is_file()):
                 _seed_fixture_catalog(root, compiled, sources=changed_sources)
             from concordance.publication import refresh, folder, validate
