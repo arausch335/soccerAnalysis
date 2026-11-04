@@ -88,6 +88,17 @@ class ExplicitDatasetTests(unittest.TestCase):
         self.assertEqual(pub.validate(base)['rows'],3)
         self.assertEqual(len(pub.read_table(base,'fixtures/fixtures')),3)
 
+    def test_review_links_qualification_and_collection_name_aliases(self):
+        helper=self.fixture_helper()
+        for row in helper.rows:row['competition']='Champions League Qualification'
+        helper.write()
+        target=helper.dataset/'raw_data/champions-league-qualifiers/2024-2025';target.mkdir(parents=True)
+        pd.DataFrame([{'competition':'Champions League Qualifiers','season':'2024-2025','match_id':'100','player_id':'1'}]).to_csv(target/'player_match_stats.csv',index=False)
+        review=create_review(helper.dataset)
+        self.assertEqual(review['summary']['player_stat_matches'],1)
+        self.assertEqual(review['seasons'][0]['player_match_stats']['matches'],1)
+        self.assertEqual(review['quality']['unlinked_match_keys'],0)
+
     def test_review_measures_packaged_rows_separately_from_fixture_flags(self):
         helper=self.fixture_helper();helper.write();target=helper.dataset/'raw_data/premier-league/2024-2025';target.mkdir(parents=True)
         rows=[{'match_id':mid,'competition':'Premier League','season':'2024-2025','player_id':pid,'minutes_played':90} for mid,pid in [('100','1'),('100','2'),('102','3'),('999','4')]]

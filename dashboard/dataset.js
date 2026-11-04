@@ -16,6 +16,7 @@ function renderDataset(){
   if(!datasetReview)return;
   const value=datasetReview,s=value.summary||{},available=value.state==='ready'||value.state==='stale';
   $('dataset-note').textContent=value.message||(value.generated_at?'Packaging review · '+when(value.generated_at)+' · '+(value.concordance_format.includes('parquet')?'Parquet':'CSV'):'No completed package review');
+  if(value.quality?.unlinked_match_keys)$('dataset-note').textContent+=' · '+fmt(value.quality.unlinked_match_keys)+' packaged match keys need linkage review';
   $('dataset-note').classList.toggle('dataset-stale',value.state!=='ready');
   $('dataset-summary').innerHTML=[['Catalogue fixtures',s.fixtures,'Published fixtures in this local dataset'],
     ['Player-stat matches',available?s.player_stat_matches:null,available?s.player_stat_percent+'% · '+fmt(s.player_stat_rows)+' player rows':'Package the dataset to measure coverage'],

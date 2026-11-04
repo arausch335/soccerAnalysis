@@ -58,12 +58,22 @@ def create_review(dataset):
             for row in records:
                 for p in ('sofascore','fotmob','whoscored'):
                     if row.get(p+'_id'):native[str(row[p+'_id'])].add(str(row['entity_id']))
+    # Collection calls these Qualifiers; the catalogue uses Qualification.
+    # Resolve the reviewed naming aliases before using provider IDs to link.
+    def competition_key(name):
+        for league in ('Champions League','Europa League','Conference League'):
+            if name in (league+' Qualifiers',league+' Qualification'):return league+' Qualification'
+        return name
+    group_aliases=defaultdict(set)
+    for key in groups:group_aliases[competition_key(key[0]),key[1]].add(key)
     matches=defaultdict(set);unlinked=defaultdict(set);files=[];quality=Counter()
     for path in _files(dataset):
         table=path.stem;rows=0;observed=set();fields=Counter();providers=Counter()
         for row in _review_rows(path):
             rows+=1;mid=str(row.get('match_id') or '')
             key=(row.get('competition') or path.parent.parent.name,row.get('season') or path.parent.name)
+            aliases=group_aliases.get((competition_key(key[0]),key[1]),set())
+            if len(aliases)==1:key=next(iter(aliases))
             entity=lookup.get((*key,mid))
             if not entity:
                 candidates=[v for v in native.get(mid,()) if entity_group.get(v)==key]
