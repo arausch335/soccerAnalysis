@@ -24,7 +24,8 @@ def _review_rows(path):
     with path.open(encoding='utf-8-sig',newline='') as stream:
         fields=next(csv.reader(stream),[])
     if 'match_id' not in fields:raise ValueError('Packaged table lacks match_id: '+str(path))
-    selected={'match_id','competition','season','provider','minutes_played','goals','xg','xa','touches'}
+    selected={'match_id','competition','season','provider','minutes_played','goals','xg','xa','touches',
+              'player_id','player_name','fotmob_player_stats_status','fotmob_statistic_group_conflicts'}
     for chunk in pd.read_csv(path,dtype=str,keep_default_na=False,chunksize=50_000,
                              usecols=lambda name:name in selected,encoding='utf-8-sig'):
         yield from chunk.to_dict('records')
@@ -67,10 +68,17 @@ def create_review(dataset,*,deferred_seasons=(),package_diagnostic=None):
     group_aliases=defaultdict(set)
     for key in groups:group_aliases[competition_key(key[0]),key[1]].add(key)
     matches=defaultdict(set);unlinked=defaultdict(set);files=[];quality=Counter()
+    conflict_examples=[]
     for path in _files(dataset):
         table=path.stem;rows=0;observed=set();fields=Counter();providers=Counter()
         for row in _review_rows(path):
             rows+=1;mid=str(row.get('match_id') or '')
+            if row.get('fotmob_player_stats_status')=='conflicting_statistics':
+                quality['fotmob_statistic_conflict_rows']+=1
+                if len(conflict_examples)<20:
+                    conflict_examples.append({'path':path.relative_to(dataset).as_posix(),'match_id':mid,
+                        'player_id':row.get('player_id'),'player_name':row.get('player_name'),
+                        'conflicts':json.loads(row.get('fotmob_statistic_group_conflicts') or '[]')})
             key=(row.get('competition') or path.parent.parent.name,row.get('season') or path.parent.name)
             aliases=group_aliases.get((competition_key(key[0]),key[1]),set())
             if len(aliases)==1:key=next(iter(aliases))
@@ -107,7 +115,8 @@ def create_review(dataset,*,deferred_seasons=(),package_diagnostic=None):
             'deferred_seasons':list(deferred_seasons),
             'package_diagnostic':package_diagnostic,
             'identity_resolution':json.loads((dataset/'id-resolution.json').read_text())['summary'] if (dataset/'id-resolution.json').is_file() else None,
-            'identities':ids,'seasons':[groups[k] for k in sorted(groups)],'files':files,'quality':dict(quality)}
+            'identities':ids,'seasons':[groups[k] for k in sorted(groups)],'files':files,
+            'quality':{**quality,'fotmob_statistic_conflict_examples':conflict_examples}}
     after=[(p.relative_to(dataset).as_posix(),p.stat().st_size,p.stat().st_mtime_ns) for p in _files(dataset)]
     if before!=after or before_manifest!=digest(manifest_path(base)):
         raise ValueError('Dataset changed during coverage review; previous review retained; retry')
@@ -144,6 +153,8 @@ def print_review(review,report=print):
     for kind,row in review['identities'].items():
         report(f"  {kind.title()} identities: {row['total']:,}; all three provider IDs {row['all_three']:,}; "+'; '.join(f'{p} {n:,}' for p,n in row['providers'].items()),flush=True)
     if review['quality'].get('unlinked_match_keys'):report(f"Review needed: {review['quality']['unlinked_match_keys']} packaged match keys could not be linked to catalogue fixtures.",flush=True)
+    if review['quality'].get('fotmob_statistic_conflict_rows'):
+        report(f"Review needed: {review['quality']['fotmob_statistic_conflict_rows']} player rows contain conflicting FotMob statistics. Disputed components are blank; details are in the season CSVs and coverage.json.",flush=True)
     report('Coverage saved to coverage.json; open the Dataset page in the local dashboard for season details.',flush=True)
 
 

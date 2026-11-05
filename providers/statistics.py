@@ -126,13 +126,34 @@ def sofa_stats(raw):
 
 
 def fotmob_stats(player):
-    raw={}
+    # The same field appears in overview and detailed groups. Presentation
+    # metadata may differ; compare the actual components, preserving uncertainty.
+    grouped={}
     for group in player.get('stats',[]):
-        for item in group.get('stats',{}).values():
+        for label,item in group.get('stats',{}).items():
             key=item.get('key')
             if key:
-                if key in raw and raw[key]!=item['stat']:raise ValueError('Conflicting FotMob statistic groups')
-                raw[key]=item['stat']
+                grouped.setdefault(key,[]).append({'group':group.get('title'),
+                    'label':label,'stat':deepcopy(item['stat'])})
+    raw={};conflicts=[]
+    for key,entries in grouped.items():
+        resolved=deepcopy(entries[0]['stat']);disputed=[]
+        for component in ('value','total','bonus'):
+            observed=[entry['stat'][component] for entry in entries
+                      if entry['stat'].get(component) is not None]
+            if not observed:continue
+            if any(value!=observed[0] for value in observed[1:]):
+                resolved[component]=None;disputed.append(component)
+            else:resolved[component]=observed[0]
+        if len(entries)>1 and key in {definition[2] for definition in PAIRS.values()}:
+            value=number(resolved.get('value'));total=number(resolved.get('total'))
+            if value is not None and total is not None and value>total:
+                # Complementary partial groups must not synthesize an impossible pair.
+                resolved['value']=resolved['total']=None
+                disputed=list(dict.fromkeys([*disputed,'value','total']))
+        raw[key]=resolved
+        if disputed:conflicts.append({'field':key,'components':disputed,'groups':entries})
+    if conflicts:raw['_statistic_group_conflicts']=conflicts
     metrics={metric:number(raw.get(key,{}).get('value')) for metric,(_,_,key,_,_) in SCALARS.items()}
     for stem,(_,_,key,_) in PAIRS.items():
         metrics[stem+'_attempted']=number(raw.get(key,{}).get('total'))

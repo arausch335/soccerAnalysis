@@ -27,6 +27,7 @@ class FotMobLoader(ProviderLoader):
                         player={'id':entry['id'],'teamId':team['id'],'stats':[]}
                     if player['teamId']!=team['id']:raise ValueError('FotMob player belongs to another team')
                     raw,metrics=fotmob_stats(player)
+                    if raw.get('_statistic_group_conflicts'):data_status='conflicting_statistics'
                     # FotMob's incident timeline is intentionally not consumed.
                     # Participation comes only from the lineup and player stats.
                     appeared=starter or (metrics.get('minutes_played') or 0)>0

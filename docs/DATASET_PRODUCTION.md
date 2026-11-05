@@ -131,3 +131,19 @@ ID indexing failed, the export cache is reused when the indexing problem is fixe
 A code, identity-rule or input change can invalidate the relevant caches; the
 first run after such an update may still take the full build time. Avoid
 `--rebuild` for ordinary retries.
+
+## Repeated FotMob statistic groups
+
+FotMob can repeat a field in overview and detailed groups. Different display
+metadata alone is accepted. Compatible partial entries can supply missing values.
+If the groups disagree on a value, total or fantasy bonus, Python leaves that
+component blank and retains all variants for review. Other fields, players and
+matches still export; synthesis can use another provider under its normal rules.
+
+The player CSV marks these rows with
+`fotmob_player_stats_status = conflicting_statistics` and stores the affected
+fields, components and original group values in
+`fotmob_statistic_group_conflicts` as JSON. The local `data_quality.csv` records
+each issue. The published `coverage.json` counts affected rows and includes up to
+20 examples; the post-publication review prints a warning. The dataset folder
+alone therefore retains the row-level evidence needed in R.

@@ -879,6 +879,8 @@ class SeasonRunner:
                     row['appeared']=appeared
                     fot=p.stats.raw.get('_providers',{}).get('fotmob',{})
                     profile=fot.get('lineup_profile',{})
+                    conflicts=fot.get('raw',{}).get('_statistic_group_conflicts',[])
+                    row['fotmob_statistic_group_conflicts']=json.dumps(conflicts,ensure_ascii=False) if conflicts else None
                     row.update(fotmob_player_stats_status=fot.get('data_status'),
                         shirt_number=p.shirt_number,fotmob_opta_id=fot.get('opta_id'),
                         fotmob_position_id=profile.get('positionId'),fotmob_age_reported=profile.get('age'),
@@ -886,6 +888,11 @@ class SeasonRunner:
                     if fot.get('data_status')=='missing_player_stats':
                         quality.append({**context,'provider':'fotmob','provider_player_id':fot['id'],
                             'issue':'missing_player_stats','appeared':appeared})
+                    for conflict in conflicts:
+                        quality.append({**context,'provider':'fotmob','provider_player_id':fot['id'],
+                            'issue':'conflicting_statistic_groups','appeared':appeared,
+                            'field':conflict['field'],'components':','.join(conflict['components']),
+                            'details':json.dumps(conflict['groups'],ensure_ascii=False)})
                     for name,action in p.stats.actions.items():row[name+'_completion_rate']=action.rate
                     heat_summary=extract_minimal_spatial(match,p,self.directory)
                     rows.append({**row,**heat_summary})
@@ -928,7 +935,7 @@ class SeasonRunner:
         atomic_csv(pd.DataFrame(sofascore_teams,columns=TEAM_STAT_COLUMNS),self.directory/'sofascore_team_statistics.csv')
         atomic_csv(pd.DataFrame([*fotmob_teams,*sofascore_teams],columns=TEAM_STAT_COLUMNS),self.directory/'team_match_statistics.csv')
         atomic_csv(pd.DataFrame(team_results,columns=TEAM_RESULT_COLUMNS),self.directory/'team_match_results.csv')
-        atomic_csv(pd.DataFrame(quality,columns=context_columns+['provider','provider_player_id','issue','appeared']),self.directory/'data_quality.csv')
+        atomic_csv(pd.DataFrame(quality,columns=context_columns+['provider','provider_player_id','issue','appeared','field','components','details']),self.directory/'data_quality.csv')
         if compile_events:
             atomic_csv(pd.DataFrame(whoscored_events,columns=EVENT_COLUMNS),self.directory/'events.csv')
         status_path=self.directory/'collection.csv'
