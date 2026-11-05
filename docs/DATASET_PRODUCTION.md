@@ -9,8 +9,13 @@ Incremental mode is the default. New/changed seasons are exported, unchanged
 season exports and ID observations are reused, and a fully unchanged run keeps
 its publication. Use `--rebuild` only for an explicit full regeneration.
 Successful packaging acknowledges the input revisions actually processed; inputs
-received during a build remain pending. Failed builds retain the previous
-publication and retry only when you run `--package` again.
+received during a build remain pending. A season export or source ID-index failure does not block completed seasons.
+They publish as a verified partial package (exit code 0); failed seasons keep
+previous published exports where available, or are omitted if none existed.
+Failed/deferred input revisions remain pending. The final console diagnostic and
+`coverage.json` list each failure, reason, and whether an older export was retained.
+Run `--package` again after fixing the inputs. A shared concordance validation or
+installation failure still returns an error and cannot publish an invalid bundle.
 
 Public concordance tables default to Parquet directories:
 
@@ -105,7 +110,9 @@ resolution automatically.
 
 `--resolve-ids` needs an installed dataset. For the first dataset, run
 `python main.py --package` and wait for **Dataset package complete**. That command
-already resolves IDs. A failed first package leaves no installed dataset.
+already resolves IDs. A first attempt with some usable seasons publishes those
+seasons; an attempt with no usable seasons or invalid shared concordance cannot
+install a new dataset.
 
 Completed season exports are retained privately under
 `data/_system/cache/dataset-exports` before global ID building or publication.
@@ -115,3 +122,12 @@ matched to their saved input signature, code, tables and identity decisions.
 Changed or corrupt inputs/exports are rebuilt; `--rebuild` explicitly bypasses
 this cache. Incomplete seasons are not cached or marked published. The global
 success checkpoint still advances only after the final package is verified.
+
+A retry after partial publication skips unchanged completed season exports and
+reuses their ID indexes. If the same remaining season fails again without input
+changes, the existing package is retained without rebuilding concordance,
+resolving IDs again or rescanning coverage. If an export succeeded but its source
+ID indexing failed, the export cache is reused when the indexing problem is fixed.
+A code, identity-rule or input change can invalidate the relevant caches; the
+first run after such an update may still take the full build time. Avoid
+`--rebuild` for ordinary retries.

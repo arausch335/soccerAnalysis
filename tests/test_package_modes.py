@@ -84,11 +84,11 @@ class PackageModeTests(unittest.TestCase):
         self.assertTrue(missing.is_file())
 
     def test_failed_changed_season_does_not_advance_checkpoint(self):
-        self.assertEqual(self.build(),0);before=self.state.read_bytes()
+        self.assertEqual(self.build(),0);before=json.loads(self.state.read_text())['seasons']
         atomic_json(self.sources[1]/'schedule.json',{'events':[event(201),event(202)]})
         with patch('dataset_builder.package_collection',side_effect=OSError('interrupted export')):
-            self.assertEqual(self.build(),2)
-        self.assertEqual(self.state.read_bytes(),before)
+            self.assertEqual(self.build(),0)
+        self.assertEqual(json.loads(self.state.read_text())['seasons'],before)
         self.assertEqual(self.build(),0)
 
     def test_cli_modes_are_exclusive_and_route_to_shared_builder(self):

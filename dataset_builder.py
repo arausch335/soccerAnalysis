@@ -537,11 +537,14 @@ def _source_id_rows(source, player_rows, team_rows, match_rows, review_root=None
 
 
 def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team_ids=True,
-                    build_match_ids=True, reuse_cache=True):
+                    build_match_ids=True, reuse_cache=True, excluded_sources=(), on_source_error=None):
     """Write combined provider ID tables at the top level of ``output_root``."""
     if not build_player_ids and not build_team_ids and not build_match_ids: return {}
-    sources = [p for p in discover_collections(Path(data_root), 'config.json') if (p/'schedule.json').is_file()]
-    if not sources: raise ValueError(f'No saved collections found under {Path(data_root)}')
+    sources = [p for p in discover_collections(Path(data_root), 'config.json')
+               if (p/'schedule.json').is_file() and p not in excluded_sources]
+    if not sources:
+        if excluded_sources:return {}
+        raise ValueError(f'No saved collections found under {Path(data_root)}')
     player_rows = {};
     team_rows = {};
     match_rows = {}
@@ -550,28 +553,33 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
     recipe_id=indexing.recipe()
     context=tracking.identity_context(data_root)
     for number, source in enumerate(sources, 1):
-        key=tracking.digest(str(tracking.logical_root(source).resolve()))
-        cache=Path(output_root)/'id_cache'/(key+'.json')
-        signature=tracking.digest([tracking.source_signature(source),recipe_id,context])
-        durable=indexing.cache_path(data_root,source,signature)
-        saved=indexing.load(durable,signature) if reuse_cache else None
-        durable_hit=saved is not None
-        if saved is None and reuse_cache:saved=indexing.load(cache,signature)
-        if saved is None:
-            print(f'Indexing IDs [{number}/{len(sources)}]: {source.parent.name}/{source.name}', flush=True)
-            contributions=[{}, {}, {}]
-            _source_id_rows(source, *contributions, data_root)
-            saved={'signature':signature, 'rows':[
-                [[list(key),row] for key,row in rows.items()] for rows in contributions]}
-            if signature!=tracking.digest([tracking.source_signature(source),recipe_id,tracking.identity_context(data_root)]):
-                raise ValueError('Source data or identity rules changed during ID indexing; retry')
-        else:
-            print(f'Reusing IDs [{number}/{len(sources)}]: {source.parent.name}/{source.name}', flush=True)
-        # This checkpoint certifies only a completed source projection. It does
-        # not advance the successful build state or replace any public output.
-        if not durable_hit:indexing.save(durable,saved)
-        from storage.pandasStore import atomic_json
-        atomic_json(cache,saved)
+        try:
+            key=tracking.digest(str(tracking.logical_root(source).resolve()))
+            cache=Path(output_root)/'id_cache'/(key+'.json')
+            signature=tracking.digest([tracking.source_signature(source),recipe_id,context])
+            durable=indexing.cache_path(data_root,source,signature)
+            saved=indexing.load(durable,signature) if reuse_cache else None
+            durable_hit=saved is not None
+            if saved is None and reuse_cache:saved=indexing.load(cache,signature)
+            if saved is None:
+                print(f'Indexing IDs [{number}/{len(sources)}]: {source.parent.name}/{source.name}', flush=True)
+                contributions=[{}, {}, {}]
+                _source_id_rows(source, *contributions, data_root)
+                saved={'signature':signature, 'rows':[
+                    [[list(key),row] for key,row in rows.items()] for rows in contributions]}
+                if signature!=tracking.digest([tracking.source_signature(source),recipe_id,tracking.identity_context(data_root)]):
+                    raise ValueError('Source data or identity rules changed during ID indexing; retry')
+            else:
+                print(f'Reusing IDs [{number}/{len(sources)}]: {source.parent.name}/{source.name}', flush=True)
+            # This checkpoint certifies only a completed source projection. It does
+            # not advance the successful build state or replace any public output.
+            if not durable_hit:indexing.save(durable,saved)
+            from storage.pandasStore import atomic_json
+            atomic_json(cache,saved)
+        except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
+            if on_source_error is None:raise
+            on_source_error(source,exc)
+            continue
         for destination,records in zip((player_rows,team_rows,match_rows),saved['rows']):
             for key,row in records:
                 key=tuple(key)
@@ -710,6 +718,8 @@ def _atomic_copy(source, destination, season=None, *, baseline=None):
                 header = next(reader, None)
                 if not header or 'season' not in header:
                     raise ValueError(f'{Path(source).name} has no season column')
+                if 'match_id' not in header or len(header)!=len(set(header)):
+                    raise ValueError(f'{Path(source).name} requires match_id and unique column names')
                 index = header.index('season');
                 writer.writerow(header)
                 for row in reader:
@@ -846,17 +856,18 @@ def _build_settings():
     return tables, values
 
 
-def _build_reference_csvs(root, output, settings, *, offline=False, reuse_ids=True):
+def _build_reference_csvs(root, output, settings, *, offline=False, reuse_ids=True, excluded_sources=(), on_source_error=None):
     if settings['REFRESH_PUBLISHED_TEAM_IDS'] and settings['BUILD_TEAM_IDS'] and not offline:
         from providers.reep import refresh
         value = refresh(root, output, config.PROJECT_ROOT / 'ensemble_data')
         print(f"Reep {value['release']}: retained {len(value['rows'])} typed bridges.", flush=True)
-    if not any((p/'schedule.json').is_file() for p in discover_collections(root,'config.json')):
+    if not any((p/'schedule.json').is_file() and p not in excluded_sources for p in discover_collections(root,'config.json')):
         return {}
     written = build_id_tables(root, output,
                              build_player_ids=settings['BUILD_PLAYER_IDS'],
                              build_team_ids=settings['BUILD_TEAM_IDS'],
-                             build_match_ids=settings['BUILD_MATCH_IDS'],reuse_cache=reuse_ids)
+                             build_match_ids=settings['BUILD_MATCH_IDS'],reuse_cache=reuse_ids,
+                             excluded_sources=excluded_sources,on_source_error=on_source_error)
     for label, path in written.items():
         print(f'Wrote combined {label}: {path}', flush=True)
     if settings['STANDARDIZE_FIXTURE_TEAM_NAMES']:
@@ -864,7 +875,8 @@ def _build_reference_csvs(root, output, settings, *, offline=False, reuse_ids=Tr
     return written
 
 
-def build_dataset(data_root=None, dataset_root=None, names=None, *, references_only=False, offline=True, mode="incremental", concordance_format=None):
+def build_dataset(data_root=None, dataset_root=None, names=None, *, references_only=False, offline=True, mode="incremental", concordance_format=None,
+                  allow_partial=False, build_report=None):
     """Build types enabled in config/settings.yaml from saved local collection data."""
     from collection.cli import main as collect
     from concordance import package_state as tracking
@@ -900,6 +912,7 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
     needs_references = (needs_inputs or state.get('concordance_format') != concordance_format
                         or state.get('publication') != publication
                         or any(value is None for value in publication.values()))
+    initial_needs_references=needs_references
     print(f'Packaging mode: {mode}; concordance format: {concordance_format}', flush=True)
     if settings['STANDARDIZE_FIXTURE_TEAM_NAMES'] and not (compiled / 'fixtures.csv').is_file():
         raise ValueError('Standardizing fixture names requires compiled fixtures from the fixture builder')
@@ -907,9 +920,26 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
                        ('BUILD_PLAYER_IDS', 'BUILD_TEAM_IDS', 'BUILD_MATCH_IDS') if settings[name]]
     print('Dataset types: ' + ', '.join([*tables, *reference_names]), flush=True)
     failures = []
+    diagnostic = build_report if build_report is not None else {}
+    diagnostic.update(completed=[], failed=[], deferred=[])
+    failed_sources=set()
+    source_names={}
+    previous_states=dict(season_state)
+    def failed(source,exc,phase='export'):
+        name=source_names.get(source,collection_name(source))
+        failures.append(name);failed_sources.add(source)
+        diagnostic['completed'][:]=[r for r in diagnostic['completed'] if r['collection']!=name]
+        if name in previous_states:season_state[name]=previous_states[name]
+        else:season_state.pop(name,None)
+        # Only stable paths belong in the portable diagnostic, never p- snapshots.
+        error=str(exc).replace(str(root),str(tracking.logical_root(root)))
+        diagnostic['failed'].append({'collection':name,'season_path':source.relative_to(root).as_posix(),
+                                     'phase':phase,'error':error})
+        print(f'Failed {phase} for {name}: {error}',flush=True)
     if tables:
         from collection.datasetInputs import selected_inputs
         selected,deferred=selected_inputs(root,names)
+        diagnostic['deferred']=deferred
         for item in deferred:
             print('Deferred dataset: '+item['collection']+'; missing '+', '.join(item['missing_inputs'])+'; previous exports retained.',flush=True)
         if not selected and not (compiled/'fixtures.csv').is_file():
@@ -917,19 +947,19 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
             if not exists(output):raise ValueError('No saved seasons with schedules or compiled fixture catalogue available; deferred seasons need saved inputs')
         for index, name in enumerate(selected, 1):
             source = collection_directory(root, name)
+            source_names[source]=name
             previous = season_state.get(name, {})
             if not isinstance(previous,dict):previous={}
-            inputs = tracking.source_signature(source)
-            exports = tracking.season_outputs(source, output, tables)
-            if (mode == 'incremental' and previous.get('inputs') == inputs
-                    and previous.get('recipe') == recipe_id and previous.get('root') == str(tracking.logical_root(root))
-                    and previous.get('outputs') == exports and all(value is not None for value in exports.values())):
-                print(f'[{index}/{len(selected)}] Unchanged season: {name}', flush=True)
-                continue
-            needs_references = True
-            needs_inputs = True
-            print(f'[{index}/{len(selected)}] Building dataset: {name}', flush=True)
             try:
+                inputs = tracking.source_signature(source)
+                exports = tracking.season_outputs(source, output, tables)
+                if (mode == 'incremental' and previous.get('inputs') == inputs
+                        and previous.get('recipe') == recipe_id and previous.get('root') == str(tracking.logical_root(root))
+                        and previous.get('outputs') == exports and all(value is not None for value in exports.values())):
+                    print(f'[{index}/{len(selected)}] Unchanged season: {name}', flush=True)
+                    diagnostic['completed'].append({'collection':name,'season_path':source.relative_to(root).as_posix(),'state':'unchanged'})
+                    continue
+                print(f'[{index}/{len(selected)}] Building dataset: {name}', flush=True)
                 from dataset_export_cache import key as export_key,restore as restore_export,save as save_export
                 saved_settings=json.loads((source/'config.json').read_text())
                 destination=output/'raw_data'/_slug(saved_settings['competition'])/_season_directory(saved_settings['season'])
@@ -943,30 +973,41 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
                         code = collect(['export', '--data-root', str(root), '--name', name,
                                         '--no-compile-events'])
                         if code:
-                            failures.append(name)
+                            failed(source, f'Local CSV export exited with code {code}')
                             continue
                     destination = package_collection(source, output/'raw_data',replace=True,tables=tables)
                     # Cache only a completed export. This is separate from the
                     # successful global publication checkpoint below.
                     save_export(root,source,destination,export_key(root,source,recipe_id,tables),tables=tables)
+                needs_references = True;needs_inputs = True
+                diagnostic['completed'].append({'collection':name,'season_path':source.relative_to(root).as_posix(),
+                                                 'state':'reused' if restored else 'built'})
                 print(f'Prepared season export (not yet installed): {destination}', flush=True)
                 season_state[name] = {'inputs':tracking.source_signature(source),
                                       'recipe':recipe_id, 'root':str(tracking.logical_root(root)),
                                       'outputs':tracking.season_outputs(source, output, tables)}
             except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
-                print(f'Failed dataset for {name}: {exc}', flush=True)
-                failures.append(name)
-    if not failures and not needs_references:
+                failed(source,exc)
+    if failures and (not allow_partial or not diagnostic['completed']):return 2
+    if not needs_references:
         print('Dataset is up to date; no new or changed saved inputs.', flush=True)
         return 0
-    if not failures:
+    if not failures or allow_partial:
         try:
             if mode == 'rebuild' and (compiled/'id_cache').exists():
                 shutil.rmtree(compiled/'id_cache')
             if needs_inputs and discover_collections(root, 'config.json'):
-                _build_reference_csvs(root, compiled, settings, offline=offline,reuse_ids=mode!='rebuild')
+                _build_reference_csvs(root, compiled, settings, offline=offline,reuse_ids=mode!='rebuild',
+                    excluded_sources=failed_sources,
+                    on_source_error=(lambda source,exc:failed(source,exc,'ID indexing')) if allow_partial else None)
+            if (allow_partial and failures and not initial_needs_references
+                    and not any(row['state']!='unchanged' for row in diagnostic['completed'])):
+                # The retry changed no usable season. Discard the temporary
+                # combined references and retain the existing publication.
+                return 0
             if needs_inputs and (changed_sources or not (compiled/'fixtures.csv').is_file()):
-                _seed_fixture_catalog(root, compiled, sources=changed_sources)
+                _seed_fixture_catalog(root, compiled, sources=[p for p in changed_sources if p not in failed_sources])
+            if failures and not diagnostic['completed']:return 2
             from concordance.publication import refresh, folder, validate
             if refresh(root, compiled, report=print,data_format=concordance_format) is None:
                 raise ValueError('No entity-keyed compiled fixtures found')
@@ -975,13 +1016,14 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
             tracking.save(state_path, {'seasons':season_state, 'recipe':recipe_id,
                 'concordance_format':concordance_format,
                 'identity_context':tracking.identity_context(root),
-                'source_inputs':{p.relative_to(root).as_posix():tracking.source_signature(p) for p in sources},
+                'source_inputs':{p.relative_to(root).as_posix():tracking.source_signature(p) for p in sources if p not in failed_sources},
                 'global':tracking.global_signature(root, compiled, sources, settings, recipe_id),
                 'publication':tracking.publication_outputs(output)})
         except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
             print(f'Failed combined ID tables: {exc}', flush=True)
-            failures.append('ID tables')
-    return 2 if failures else 0
+            diagnostic['fatal_error']=str(exc).replace(str(root),str(tracking.logical_root(root)))
+            return 2
+    return 2 if failures and not allow_partial else 0
 
 
 def _seed_fixture_catalog(root, compiled, *, sources=None):

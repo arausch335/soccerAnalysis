@@ -30,7 +30,7 @@ def _review_rows(path):
         yield from chunk.to_dict('records')
 
 
-def create_review(dataset,*,deferred_seasons=()):
+def create_review(dataset,*,deferred_seasons=(),package_diagnostic=None):
     from concordance.publication import folder,manifest_path,digest,read_table
     dataset=Path(dataset);base=folder(dataset)
     manifest=json.loads(manifest_path(base).read_text())
@@ -105,6 +105,7 @@ def create_review(dataset,*,deferred_seasons=()):
                 'player_stat_rows':sum(f['rows'] for f in files if f['table']=='player_match_stats'),
                 'team_stat_rows':sum(f['rows'] for f in files if f['table']=='team_match_stats')},
             'deferred_seasons':list(deferred_seasons),
+            'package_diagnostic':package_diagnostic,
             'identity_resolution':json.loads((dataset/'id-resolution.json').read_text())['summary'] if (dataset/'id-resolution.json').is_file() else None,
             'identities':ids,'seasons':[groups[k] for k in sorted(groups)],'files':files,'quality':dict(quality)}
     after=[(p.relative_to(dataset).as_posix(),p.stat().st_size,p.stat().st_mtime_ns) for p in _files(dataset)]
@@ -144,3 +145,18 @@ def print_review(review,report=print):
         report(f"  {kind.title()} identities: {row['total']:,}; all three provider IDs {row['all_three']:,}; "+'; '.join(f'{p} {n:,}' for p,n in row['providers'].items()),flush=True)
     if review['quality'].get('unlinked_match_keys'):report(f"Review needed: {review['quality']['unlinked_match_keys']} packaged match keys could not be linked to catalogue fixtures.",flush=True)
     report('Coverage saved to coverage.json; open the Dataset page in the local dashboard for season details.',flush=True)
+
+
+def print_package_diagnostic(diagnostic,report=print,*,published=True):
+    """Report the outcome only after installation/publication has finished."""
+    completed=diagnostic.get('completed',[]);failed=diagnostic.get('failed',[]);deferred=diagnostic.get('deferred',[])
+    counts=Counter(item['state'] for item in completed)
+    report('\nPackaging diagnostic — '+('published dataset' if published else 'no new dataset published'),flush=True)
+    report(f"Seasons completed: {len(completed)} (built {counts['built']}, reused exports {counts['reused']}, unchanged {counts['unchanged']}); failed: {len(failed)}; deferred: {len(deferred)}.",flush=True)
+    for item in [*failed,*deferred]:
+        reason=item.get('error') or 'missing '+', '.join(item.get('missing_inputs',[]))
+        outcome=('previous export retained; not current' if item.get('retained_previous') else 'no export included for this season') if published else 'previous dataset left in place'
+        report('  '+item['collection']+': '+reason+'; '+outcome+'.',flush=True)
+    if diagnostic.get('fatal_error'):report('  Publication validation failed: '+diagnostic['fatal_error'],flush=True)
+    if failed or deferred:
+        report('Next step: fix the listed inputs, then run python main.py --package. Incremental mode reuses completed work.',flush=True)

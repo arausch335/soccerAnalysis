@@ -58,7 +58,8 @@ def resolve_dataset(dataset_root, data_root=None, *, report=print):
                 print_review(previous_review,report)
                 report('ID resolution complete. Dataset IDs and R handoff are already up to date.',flush=True)
                 return 0
-            review=create_review(staged,deferred_seasons=previous_review.get('deferred_seasons',()))
+            review=create_review(staged,deferred_seasons=previous_review.get('deferred_seasons',()),
+                                 package_diagnostic=previous_review.get('package_diagnostic'))
             create_handoff(staged,metadata)
             # The concordance itself is unchanged. Install only derived CSVs,
             # audits and R handoff files; retain original files for rollback.

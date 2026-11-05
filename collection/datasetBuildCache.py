@@ -77,7 +77,7 @@ def commit(source, output, live, *, publication_id=None, check=lambda: None):
     state['archive_publication']=publication_id
     for name,previous in state['seasons'].items():
         directory=collection_directory(source,name)
-        if (directory/'config.json').is_file():
+        if (directory/'config.json').is_file() and directory.relative_to(source).as_posix() in state.get('source_inputs',{}):
             previous['outputs']=tracking.season_outputs(directory,live,tuple(previous['outputs']))
     state['global']=tracking.global_signature(source,compiled_root(output),
         discover_collections(source,'config.json'),_build_settings()[1],state['recipe'])
