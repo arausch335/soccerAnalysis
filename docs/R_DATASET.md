@@ -59,5 +59,7 @@ The lower-level `read_concordances` reader retains its strict default.
 Private rebuild caches under `concordance/metadata/compiled`, `legacy` and
 `fixture_baselines` are ignored by the R loader. Public data, readers and review
 files are listed by checksum in `dataset-manifest.json`. To verify a copied
-folder again, run `verify_dataset("dataset")`. Do not edit packaged files;
-regenerate or replace the package when data changes.
+folder again, run `verify_dataset("dataset")`. Do not edit packaged files by hand. In the Python project,
+`python main.py --resolve-ids` repairs an existing local dataset and refreshes
+its audits and R checksums without rebuilding season exports. Use `--package`
+when you want to rebuild/publish saved data.

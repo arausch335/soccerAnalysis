@@ -79,3 +79,24 @@ seasons can package successfully; any previous export is retained. Deferred
 seasons appear in `coverage.json` and remain pending on MSI. A missing schedule
 is never represented as a complete zero-match season. When saved inputs arrive,
 the next explicit incremental package processes the season.
+
+## Resolve IDs without rebuilding the dataset
+
+```sh
+python main.py --resolve-ids
+python main.py --resolve-ids --dataset-root /path/to/dataset
+```
+
+The command repairs an existing local dataset using its saved concordance,
+provider aliases, redirects and fixture evidence. It refreshes `id-resolution.json`,
+coverage and the bundled R handoff/checksums. Unchanged files retain their
+contents and timestamps. It does not scrape, export seasons, rebuild concordance,
+start workers or publish to Main. Missing schedules do not prevent this repair.
+When source metadata is absent, the published fixture metadata supplies known
+native ID namespaces. Optional `--data-root` supplies saved namespace metadata.
+
+Resolution uses the same package and dataset locks as the normal pipeline. A
+failed resolution pass leaves the live files untouched; installation starts only
+after validation succeeds. The next `--package` reuses the repaired season
+outputs and publishes the verified result. `--package` continues to include ID
+resolution automatically.

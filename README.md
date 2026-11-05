@@ -48,6 +48,16 @@ python main.py --package
 Dataset production is explicit: normal `main.py` collection, imports and the MSI
 receiver never build or publish a dataset. Run `--package` on MSI to build and
 publish its saved data for Main. Main downloads published datasets automatically.
+To resolve IDs in an existing dataset without rebuilding season exports:
+
+```sh
+python main.py --resolve-ids
+```
+
+This updates local CSV IDs, coverage, the ID audit and R handoff files. It uses
+saved mappings, stays incremental and does not start collection or publish.
+`--package` already includes this step and publishes the dataset on MSI.
+
 The default is incremental: only new or changed saved seasons are processed.
 To explicitly select either mode:
 

@@ -287,6 +287,12 @@ def _ensemble_main(args,transfer):
 def entrypoint(argv=None):
     """No-argument launches use the shared plan; explicit scrape commands stay compatible."""
     args=list(sys.argv[1:] if argv is None else argv)
+    if '--resolve-ids' in args:
+        if '--package' in args or '--fixtures' in args or '--terminate' in args:
+            raise SystemExit('Use --resolve-ids by itself; --package already includes ID resolution.')
+        from resolve_dataset_ids import main as resolve_ids
+        args.remove('--resolve-ids')
+        return resolve_ids(args)
     if '--package' in args:
         from dataset_builder import main as package_dataset
         args.remove('--package')
