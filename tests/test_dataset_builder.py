@@ -55,6 +55,8 @@ class DatasetBuildTests(unittest.TestCase):
             source = collection_directory(root / 'data', 'bundesliga-2024-25')
             source.mkdir(parents=True)
             (source / 'job.json').write_text(json.dumps({'workflow_version':3,'providers':['sofascore','fotmob','whoscored']}))
+            (source/'config.json').write_text(json.dumps({'competition':'Bundesliga','season':'2024/2025'}))
+            (source/'schedule.json').write_text(json.dumps({'events':[]}))
             old = root / 'dataset/bundesliga/2024-2025/events.csv'
             old.parent.mkdir(parents=True)
             old.write_text('previous dataset\n')

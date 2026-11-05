@@ -80,6 +80,21 @@ read_dataset_table <- function(dataset, table, competition = NULL, season = NULL
     }
     result
   }
+  store_id <- function(data, column, resolved, kind) {
+    if (column %in% names(data)) {
+      supplied <- as.character(data[[column]])
+      supplied[supplied == ""] <- NA_character_
+      if (any(!is.na(supplied) & !is.na(resolved) & supplied != resolved))
+        stop("Packaged canonical ID disagrees with provider mapping: ", column)
+      missing <- is.na(supplied)
+      if ("identity_resolution_status" %in% names(data)) missing <- missing & data$identity_resolution_status != "conflict"
+      supplied[missing] <- resolved[missing]; resolved <- supplied
+    }
+    allowed <- dataset$concordance[[paste0(kind, "_ids")]]$entity_id
+    if (any(!is.na(resolved) & !resolved %in% allowed)) stop("Unknown packaged canonical ID: ", column)
+    data[[column]] <- resolved
+    data
+  }
   frames <- lapply(entries, function(item) {
     path <- file.path(dataset$root, item$path)
     info <- dataset$manifest$files[[match(item$path, vapply(dataset$manifest$files, function(f) f$path, character(1)))]]
@@ -96,20 +111,25 @@ read_dataset_table <- function(dataset, table, competition = NULL, season = NULL
     if ("kickoff_utc" %in% columns) data$kickoff_utc <- .soccer_parse_utc(data$kickoff_utc)
     providers <- rep(if (is.null(item$id_namespace)) NA_character_ else item$id_namespace, nrow(data))
     data$id_namespace <- providers
-    data$match_entity_id <- lookup(data$match_id, "match", providers)
+    data <- store_id(data,"match_entity_id",lookup(data$match_id,"match",providers),"match")
     if (all(c("provider", "provider_match_id") %in% columns)) {
       alternate <- lookup(data$provider_match_id, "match", data$provider)
-      use <- is.na(data$match_entity_id); data$match_entity_id[use] <- alternate[use]
+      use <- is.na(data$match_entity_id)
+      if ("identity_resolution_status" %in% names(data)) use <- use & data$identity_resolution_status != "conflict"
+      data$match_entity_id[use] <- alternate[use]
       if (any(!use & !is.na(alternate) & data$match_entity_id != alternate, na.rm = TRUE))
         stop("Baseline/provider match identities disagree: ", item$path)
     }
     for (spec in list(c("player_id", "player", "player_entity_id"), c("team_id", "team", "team_entity_id"),
                       c("opponent_id", "team", "opponent_entity_id"), c("home_team_id", "team", "home_team_entity_id"),
                       c("away_team_id", "team", "away_team_entity_id"))) {
-      if (spec[1] %in% columns) data[[spec[3]]] <- lookup(data[[spec[1]]], spec[2], providers)
+      if (spec[1] %in% columns) data <- store_id(data,spec[3],lookup(data[[spec[1]]],spec[2],providers),spec[2])
     }
     if (all(c("provider", "provider_team_id") %in% columns))
-      data$team_entity_id <- lookup(data$provider_team_id, "team", data$provider)
+      data <- store_id(data,"team_entity_id",lookup(data$provider_team_id,"team",data$provider),"team")
+    for (column in intersect(c("team_entity_id","opponent_entity_id","home_team_entity_id","away_team_entity_id"),names(data)))
+      data <- store_id(data,column,rep(NA_character_,nrow(data)),"team")
+    if ("player_entity_id" %in% names(data)) data <- store_id(data,"player_entity_id",rep(NA_character_,nrow(data)),"player")
     missing <- sum(is.na(data$match_entity_id) & !is.na(data$match_id))
     if (missing) warning(missing, " rows have an unlinked match ID in ", item$path, call. = FALSE)
     for (name in intersect(c("team_entity_id", "player_entity_id", "opponent_entity_id"), names(data))) {

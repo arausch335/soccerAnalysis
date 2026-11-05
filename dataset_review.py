@@ -30,7 +30,7 @@ def _review_rows(path):
         yield from chunk.to_dict('records')
 
 
-def create_review(dataset):
+def create_review(dataset,*,deferred_seasons=()):
     from concordance.publication import folder,manifest_path,digest,read_table
     dataset=Path(dataset);base=folder(dataset)
     manifest=json.loads(manifest_path(base).read_text())
@@ -104,6 +104,8 @@ def create_review(dataset):
                 'saved_stats_evidence':sum(g['saved_stats_evidence'] for g in groups.values()),
                 'player_stat_rows':sum(f['rows'] for f in files if f['table']=='player_match_stats'),
                 'team_stat_rows':sum(f['rows'] for f in files if f['table']=='team_match_stats')},
+            'deferred_seasons':list(deferred_seasons),
+            'identity_resolution':json.loads((dataset/'id-resolution.json').read_text())['summary'] if (dataset/'id-resolution.json').is_file() else None,
             'identities':ids,'seasons':[groups[k] for k in sorted(groups)],'files':files,'quality':dict(quality)}
     after=[(p.relative_to(dataset).as_posix(),p.stat().st_size,p.stat().st_mtime_ns) for p in _files(dataset)]
     if before!=after or before_manifest!=digest(manifest_path(base)):
@@ -135,6 +137,9 @@ def print_review(review,report=print):
         counts=competitions[row['competition']];counts[0]+=row['fixtures'];counts[1]+=row['player_match_stats']['matches'];counts[2]+=row['team_match_stats']['matches']
     for name,(fixtures,players,teams) in sorted(competitions.items()):
         report(f'  {name}: {fixtures:,} fixtures | player stats {players:,}/{fixtures:,} | team stats {teams:,}/{fixtures:,}',flush=True)
+    for item in review.get('deferred_seasons',[]):
+        report('  Deferred '+item['collection']+': missing '+', '.join(item['missing_inputs'])+'; previous exports retained; not certified current.',flush=True)
+    if review.get('identity_resolution'):report('  Canonical IDs in exported rows: '+str(review['identity_resolution']),flush=True)
     for kind,row in review['identities'].items():
         report(f"  {kind.title()} identities: {row['total']:,}; all three provider IDs {row['all_three']:,}; "+'; '.join(f'{p} {n:,}' for p,n in row['providers'].items()),flush=True)
     if review['quality'].get('unlinked_match_keys'):report(f"Review needed: {review['quality']['unlinked_match_keys']} packaged match keys could not be linked to catalogue fixtures.",flush=True)

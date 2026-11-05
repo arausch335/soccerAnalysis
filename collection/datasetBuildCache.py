@@ -27,7 +27,7 @@ def seed(live, output, season=None, *, check=lambda: None, archive=None, repair=
         # Archived old datasets are not needed to compute a new publication.
         shutil.copytree(live/'concordance',output/'concordance',copy_function=copy,
                         ignore=lambda directory,names: ['legacy'] if Path(directory).name=='metadata' and 'legacy' in names else [])
-    for name in ('fixtures.csv','player_ids.csv','team_ids.csv','match_ids.csv','coverage.json','dataset-manifest.json','read_dataset.R','read_concordances.R','README.md'):
+    for name in ('fixtures.csv','player_ids.csv','team_ids.csv','match_ids.csv','coverage.json','dataset-manifest.json','read_dataset.R','read_concordances.R','README.md','id-resolution.json'):
         if (live/name).is_file():copy(live/name,output/name)
     if (live/'concordances').is_dir():
         shutil.copytree(live/'concordances',output/'concordances',copy_function=copy)

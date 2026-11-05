@@ -36,6 +36,8 @@ class RHandoffTests(unittest.TestCase):
                 'competition':'Premier League','season':'2024-2025','field':'possession','value':52.5}]).to_csv(target/'team_match_stats.csv',index=False)
             pd.DataFrame([{'match_id':'100','competition':'Premier League','season':'2024-2025','date':'2024-08-10',
                 'kickoff_utc':'2024-08-10T12:30:00+00:00','home_team_id':'1','away_team_id':'2'}]).to_csv(target/'fixtures.csv',index=False)
+        from dataset_identity import annotate
+        annotate(self.dataset)
         create_review(self.dataset);return create(self.dataset)
 
     def run_r(self,code):
@@ -101,6 +103,23 @@ cat('Dataset-only R handoff verified\\n')
 ds=suppressWarnings(read_dataset(root));x=read_dataset_table(ds,'player_match_stats')
 t=read_dataset_table(ds,'team_match_stats')
 stopifnot(x$team_id=='9',!is.na(x$team_entity_id),x$team_entity_id==t$team_entity_id)''')
+
+    def test_r_preserves_python_fixture_recoveries_and_unresolved_conflicts(self):
+        from dataset_identity import annotate
+        self.write()
+        path=self.dataset/'raw_data/premier-league/2024-2025/player_match_stats.csv'
+        frame=pd.read_csv(path,dtype=str);frame['team_id']='unknown';frame.to_csv(path,index=False)
+        annotate(self.dataset);create_review(self.dataset);create(self.dataset);self.relocated()
+        self.run_r('''root='R project with spaces/dataset';source(file.path(root,'read_dataset.R'))
+ds=suppressWarnings(read_dataset(root));x=read_dataset_table(ds,'player_match_stats')
+stopifnot(!anyNA(x$team_entity_id),x$team_id=='unknown',x$identity_resolution_status=='resolved')''')
+        # Rebuild a separate copy whose native team/opponent contradict each other.
+        shutil.rmtree(self.base/'R project with spaces');self.write()
+        frame=pd.read_csv(path,dtype=str);frame['opponent_id']='1';frame.to_csv(path,index=False)
+        annotate(self.dataset);create_review(self.dataset);create(self.dataset);self.relocated()
+        self.run_r('''root='R project with spaces/dataset';source(file.path(root,'read_dataset.R'))
+ds=suppressWarnings(read_dataset(root));x=suppressWarnings(read_dataset_table(ds,'player_match_stats'))
+stopifnot(all(is.na(x$team_entity_id)),all(is.na(x$opponent_entity_id)),x$identity_resolution_status=='conflict')''')
 
     def test_empty_season_inventory_loads_and_extra_or_corrupt_files_are_rejected(self):
         self.write(stats=False);self.relocated()

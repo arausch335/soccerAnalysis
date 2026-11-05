@@ -7,6 +7,7 @@ from collection.storageTransfer import digest,safe_path
 from storage.pandasStore import atomic_json
 
 FORMAT='soccer-r-dataset-v1'
+IDENTITY_PRODUCER=Path(__file__).with_name('dataset_identity.py')
 ASSETS={'read_concordances.R':'analysis/read_concordances.R',
         'read_dataset.R':'analysis/read_dataset.R','README.md':'docs/R_DATASET.md'}
 
@@ -21,8 +22,11 @@ def current(dataset):
     dataset=Path(dataset)
     try:
         value=json.loads((dataset/'dataset-manifest.json').read_text())
-        if value.get('format')!=FORMAT or value.get('producer_digest')!=digest(Path(__file__)):return False
+        if (value.get('format')!=FORMAT or value.get('producer_digest')!=digest(Path(__file__))
+                or value.get('identity_producer_digest')!=digest(IDENTITY_PRODUCER)):return False
         if any(not (dataset/name).is_file() or (dataset/name).read_bytes()!=content for name,content in _assets().items()):return False
+        identities=json.loads((dataset/'id-resolution.json').read_text())
+        if identities.get('producer_digest')!=digest(IDENTITY_PRODUCER) or identities.get('concordance_digest')!=digest(dataset/'concordance/metadata/manifest.json'):return False
         known={row['path']:row for row in value['files']}
         for name in ('coverage.json','concordance/metadata/manifest.json'):
             if known[name]['sha256']!=digest(dataset/name):return False
@@ -73,12 +77,13 @@ def create(dataset,source_root=None):
                        'competition':first.get('competition') or settings.get('competition') or competition_labels.get((path.parent.parent.name,path.parent.name),path.parent.parent.name),
                        'season':first.get('season') or path.parent.name,'id_namespace':namespace,'columns':columns})
     paths=[*publication_files(base),*(dataset/item['path'] for item in tables),dataset/'coverage.json',*(dataset/name for name in ASSETS)]
+    if (dataset/'id-resolution.json').is_file():paths.append(dataset/'id-resolution.json')
     files=[]
     for path in sorted(paths):
         relative=path.relative_to(dataset).as_posix();safe_path(relative,'dataset')
         if path.is_symlink():raise ValueError('R handoff cannot contain symbolic links')
         files.append({'path':relative,'size':path.stat().st_size,'sha256':digest(path)})
-    manifest={'format':FORMAT,'producer_digest':digest(Path(__file__)),'created_at':review['generated_at'],'structurally_valid':True,
+    manifest={'format':FORMAT,'producer_digest':digest(Path(__file__)),'identity_producer_digest':digest(IDENTITY_PRODUCER),'created_at':review['generated_at'],'structurally_valid':True,
               'integration_confirmed':validation['ready_for_R'],'files':files,'tables':tables,
               'r_packages':['arrow','jsonlite','digest'],'coverage':review['summary']}
     atomic_json(dataset/'dataset-manifest.json',manifest,indent=2)

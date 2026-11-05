@@ -58,3 +58,24 @@ A successful explicit package includes `read_dataset.R`, `read_concordances.R`,
 every public file and records native ID namespaces for each season table. Main
 verifies this handoff before installing it. Copying the dataset folder to a new
 R project requires no Python checkout. See [the bundled R guide](R_DATASET.md).
+
+## Canonical IDs and missing schedules
+
+Python adds `match_entity_id`, `team_entity_id`, `opponent_entity_id` and, for
+player tables, `player_entity_id` directly to season exports. Season fixture
+tables receive home/away canonical team IDs. Native IDs remain unchanged. The
+resolver follows all saved provider aliases and registry redirects, independently
+of which native ID the public reference lists first. It can recover a missing
+team/opponent from that exact fixture’s side, unique exact name or known opposing
+team. It does not use global fuzzy names or overwrite contradictory identities.
+
+Every package includes `id-resolution.json` with per-file counts and sample
+unresolved/conflicting rows. Coverage review and the Dataset page distinguish
+these canonical join gaps from missing optional provider IDs. Unchanged annotated
+CSVs retain their contents and timestamps.
+
+A saved job without `config.json` or `schedule.json` is deferred. Other available
+seasons can package successfully; any previous export is retained. Deferred
+seasons appear in `coverage.json` and remain pending on MSI. A missing schedule
+is never represented as a complete zero-match season. When saved inputs arrive,
+the next explicit incremental package processes the season.

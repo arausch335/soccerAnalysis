@@ -53,7 +53,7 @@ class PackageDatasetTests(unittest.TestCase):
                                     '--dataset-root', str(self.output)])
         self.assertEqual(code, 0)
         self.assertEqual((self.output / 'concordance/metadata/compiled/fixtures.csv').read_bytes(), before)
-        self.assertEqual({p.name for p in self.output.iterdir()}, {'concordance','coverage.json','.dataset-install.lock','dataset-manifest.json','read_dataset.R','read_concordances.R','README.md'})
+        self.assertEqual({p.name for p in self.output.iterdir()}, {'concordance','coverage.json','.dataset-install.lock','dataset-manifest.json','read_dataset.R','read_concordances.R','README.md','id-resolution.json'})
         fixtures = read_table(self.output / 'concordance', 'fixtures/fixtures')
         self.assertEqual(tuple(fixtures.columns), CORE_COLUMNS)
         self.assertEqual(fixtures.match_entity_id.tolist(), [self.match_id])

@@ -540,7 +540,7 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
                     build_match_ids=True, reuse_cache=True):
     """Write combined provider ID tables at the top level of ``output_root``."""
     if not build_player_ids and not build_team_ids and not build_match_ids: return {}
-    sources = discover_collections(Path(data_root), 'config.json')
+    sources = [p for p in discover_collections(Path(data_root), 'config.json') if (p/'schedule.json').is_file()]
     if not sources: raise ValueError(f'No saved collections found under {Path(data_root)}')
     player_rows = {};
     team_rows = {};
@@ -851,6 +851,8 @@ def _build_reference_csvs(root, output, settings, *, offline=False, reuse_ids=Tr
         from providers.reep import refresh
         value = refresh(root, output, config.PROJECT_ROOT / 'ensemble_data')
         print(f"Reep {value['release']}: retained {len(value['rows'])} typed bridges.", flush=True)
+    if not any((p/'schedule.json').is_file() for p in discover_collections(root,'config.json')):
+        return {}
     written = build_id_tables(root, output,
                              build_player_ids=settings['BUILD_PLAYER_IDS'],
                              build_team_ids=settings['BUILD_TEAM_IDS'],
@@ -906,16 +908,13 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
     print('Dataset types: ' + ', '.join([*tables, *reference_names]), flush=True)
     failures = []
     if tables:
-        requested = names
-        selected = (list(requested) if requested else
-                    [collection_name(path) for path in discover_collections(root, 'job.json')])
+        from collection.datasetInputs import selected_inputs
+        selected,deferred=selected_inputs(root,names)
+        for item in deferred:
+            print('Deferred dataset: '+item['collection']+'; missing '+', '.join(item['missing_inputs'])+'; previous exports retained.',flush=True)
         if not selected and not (compiled/'fixtures.csv').is_file():
             from concordance.publication import exists
-            if not exists(output): raise ValueError(f'No saved seasons or compiled fixtures found under {root} and {output}')
-        selected = list(dict.fromkeys(selected))
-        for name in selected:
-            if not (collection_directory(root, name) / 'job.json').is_file():
-                raise ValueError(f'Unknown saved season: {name}')
+            if not exists(output):raise ValueError('No saved seasons with schedules or compiled fixture catalogue available; deferred seasons need saved inputs')
         for index, name in enumerate(selected, 1):
             source = collection_directory(root, name)
             previous = season_state.get(name, {})

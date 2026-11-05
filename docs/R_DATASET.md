@@ -30,6 +30,12 @@ chunks. Seasons load on demand; loading the catalogue does not load every stat
 row into memory. A missing table or selection is an error, not an empty result.
 The first full verification reads all files and can take a little time.
 
+Python packaging writes canonical match/team/opponent/player ID columns directly
+into the season CSVs and records recovery, unresolved and conflict counts in
+`id-resolution.json`. Registry aliases and redirects apply to every provider and
+season. Team fallback uses only the same fixture’s sides, exact names or its
+known opponent. Contradictory provider IDs remain flagged for review.
+
 `read_dataset_table` preserves native IDs as strings, preserves numeric statistics,
 combines differing season columns by name, and adds `match_entity_id`,
 `player_entity_id`, `team_entity_id` and `opponent_entity_id` where applicable.
@@ -38,7 +44,8 @@ These canonical columns join to `entity_id` in the concordance ID tables;
 Historical provider aliases are followed through the saved identity registry.
 Native IDs use the table's declared baseline namespace; team statistics use their
 row's `provider_team_id`/`provider` for team identity. Missing links remain NA and
-produce a warning. Never join native ID numbers across providers without their
+produce a warning. The reader preserves Python’s fixture-backed recoveries and
+checks them against the canonical ID tables; it does not silently overwrite conflicts. Never join native ID numbers across providers without their
 namespace. Team statistics are long format (period/group/field/value); players
 are wide format. A team can have multiple rows per match and provider.
 
