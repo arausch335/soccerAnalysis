@@ -347,6 +347,8 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
     root,dataset=Path(root),Path(dataset);target=Path(output) if output is not None else folder(dataset);target.parent.mkdir(parents=True,exist_ok=True)
     rows=list(rows)
     match_rows,team_rows=fixture_references(rows)
+    from .teamNamespace import repair as repair_team_namespaces
+    teams,namespace_repairs=repair_team_namespaces(teams,team_rows,registry)
     names=(snapshot(root) or {}).get('names',{})
     tables={'fixtures/extra':arrow_table(rows,EXTRA_COLUMNS,typed=True)}
     used={RENAMES.get(k,k) for k in (*CORE_COLUMNS,*EXTRA_COLUMNS)}
@@ -370,7 +372,8 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
             stage=Path(temporary)/'bundle';stage.mkdir();manifest={'format':FORMATS[data_format],'data_format':data_format,'built_at':datetime.now(timezone.utc).isoformat(),
                 'registry_format':state['format'],'registry_version':registry_version(registry.value) if registry else '',
                 'ready_for_R':bool(confirmed),'integration_confirmed':bool(confirmed),'chunk_rows':chunk_rows,'tables':{},
-                'name_priority':['reep','sofascore','fotmob','whoscored']}
+                'name_priority':['reep','sofascore','fotmob','whoscored'],
+                'team_namespace_repairs':len(namespace_repairs)}
             # Preserve private compiler inputs and archived legacy exports during atomic replacement.
             if (target/'metadata').is_dir():
                 from collection.storageTransfer import link_or_copy

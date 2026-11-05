@@ -145,9 +145,11 @@ def snapshot_inputs(origin, snapshot):
     from collection.paths import discover_collections
     origin, snapshot = Path(origin).resolve(), Path(snapshot).resolve()
     sources = {str(p.resolve()):source_signature(p) for p in discover_collections(snapshot,'config.json')}
+    from collection.datasetIndexCache import source_signature as id_signature
+    id_sources={str(p.resolve()):id_signature(p) for p in discover_collections(snapshot,'config.json')}
     identity = {p.relative_to(snapshot).as_posix():file_stamp(p)
                 for p in (snapshot/'_system/identity').glob('*.json')}
-    token = _snapshot.set({'origin':origin,'snapshot':snapshot,'sources':sources,'identity':identity})
+    token = _snapshot.set({'origin':origin,'snapshot':snapshot,'sources':sources,'id_sources':id_sources,'identity':identity})
     try:
         yield
     finally:

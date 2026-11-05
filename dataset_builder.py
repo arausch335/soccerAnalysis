@@ -145,9 +145,10 @@ def _fixture_team_names(path):
         for record in reader:
             for side in ('home', 'away'):
                 provider_key='fotmob_'+side+'_team_id'
-                identifier = _identifier(record.get(provider_key) if provider_key in record else record[side + '_team_id'])
+                identifier = _identifier(record.get(provider_key) if provider_key in record else
+                                         record[side + '_team_id'] if record.get('baseline_provider')=='fotmob' else '')
                 name = str(record[side + '_team']).strip()
-                if provider_key in record and not identifier:continue
+                if not identifier:continue
                 if not identifier or not name:
                     raise ValueError(f'{path} contains a blank {side} team ID or name')
                 names.setdefault(identifier, Counter())[name] += 1
@@ -382,36 +383,45 @@ def _cached_provider_fixtures(source, provider):
 
 
 def _checkpoint_id_rows(source, events, competition, season, baseline, player_rows, team_rows, match_rows):
-    """Concordance stays complete when foreground CSV exports are deferred."""
+    """Read compact identity tables; never reconstruct events/actions/domain objects."""
     markers=sorted(source.glob('match_checkpoints/*/CURRENT.json'))
     if not markers:return False
+    def records(path):
+        with path.open(encoding='utf-8-sig',newline='') as stream:return list(csv.DictReader(stream))
     for marker in markers:
-        dataset=PandasStore(marker.parent).from_csv()
-        for match in dataset.matches.values():
-            mid=_identifier(match.id)
+        folder=PandasStore(marker.parent).current_directory
+        names={row['id']:json.loads(row['name']) for row in records(folder/'teams.csv')}
+        people={row['id']:json.loads(row['name']) for row in records(folder/'players.csv')}
+        appearances=records(folder/'performances.csv')
+        for match in records(folder/'matches.csv'):
+            mid=_identifier(match['id'])
             if mid not in events:continue
+            metadata=json.loads(match.get('metadata') or '{}')
+            namespace=metadata.get('id_namespace',baseline)
+            if namespace!=baseline:raise ValueError('Checkpoint and collection ID namespaces disagree')
             match_row=match_rows.get((competition,season,baseline,mid))
             if match_row is not None:
-                for provider,pid in match.metadata.get('provider_match_ids',{}).items():
+                for provider,pid in metadata.get('provider_match_ids',{}).items():
                     if provider in ('sofascore','fotmob','whoscored'):match_row['_ids'][provider+'_id'].append(pid)
             for side in ('home','away'):
-                team=getattr(match,side+'_team');tid=_identifier(team.id)
+                tid=_identifier(match[side+'_team_id']);team_name=names.get(tid,'')
                 row=_id_row(team_rows,(competition,season,tid),{
-                    'competition':competition,'season':season,'team_name':team.name})
+                    'competition':competition,'season':season,'team_name':team_name})
                 row['_ids'][baseline+'_id'].append(tid)
                 for provider in ('fotmob','whoscored'):
-                    row['_ids'][provider+'_id'].append(_provider_team_id(source,match.metadata,provider,side))
-                lineup=getattr(match,side+'_lineup')
-                for appearance in lineup.players if lineup else ():
-                    player=appearance.player;pid=_identifier(player.id)
-                    row=_id_row(player_rows,(competition,season,team.name,pid),{
-                        'competition':competition,'season':season,'team_name':team.name,
-                        'player_name':canonical_player_name(player.name)})
-                    row['_ids'][baseline+'_id'].append(pid)
-                    for provider,entry in appearance.stats.raw.get('_providers',{}).items():
-                        if provider not in ('sofascore','fotmob','whoscored'):continue
-                        linked=_reviewed_provider_player_id(provider,pid,entry.get('id'))
-                        if linked:row['_ids'][provider+'_id'].append(linked)
+                    if provider!=baseline:row['_ids'][provider+'_id'].append(_provider_team_id(source,metadata,provider,side))
+            for appearance in appearances:
+                if _identifier(appearance['match_id'])!=mid:continue
+                pid=_identifier(appearance['player_id']);team_name=names.get(appearance['team_id'],'')
+                row=_id_row(player_rows,(competition,season,team_name,pid),{
+                    'competition':competition,'season':season,'team_name':team_name,
+                    'player_name':canonical_player_name(people.get(pid,''))})
+                row['_ids'][baseline+'_id'].append(pid)
+                stats=json.loads(appearance.get('raw_stats') or '{}')
+                for provider,entry in stats.get('_providers',{}).items():
+                    if provider not in ('sofascore','fotmob','whoscored'):continue
+                    linked=_reviewed_provider_player_id(provider,pid,entry.get('id'))
+                    if linked:row['_ids'][provider+'_id'].append(linked)
     return True
 
 
@@ -429,7 +439,8 @@ def _source_id_rows(source, player_rows, team_rows, match_rows, review_root=None
               if is_qualification_event(event,competition)==competition.endswith(' Qualifiers')}
 
     if (source / 'player_match_stats.csv').exists():
-        stats = pd.read_csv(source / 'player_match_stats.csv', dtype=str, keep_default_na=False)
+        stats = pd.read_csv(source / 'player_match_stats.csv', dtype=str, keep_default_na=False,
+                            usecols=lambda name:name in {'match_id','team','player_id','player_name'})
         required = {'match_id', 'team', 'player_id', 'player_name'}
         if not required.issubset(stats.columns):
             raise ValueError(f'{source.name}/player_match_stats.csv is missing ID columns')
@@ -445,7 +456,8 @@ def _source_id_rows(source, player_rows, team_rows, match_rows, review_root=None
             row['_ids'][baseline_column].append(player_id)
 
     if (source / 'identities.csv').exists():
-        identities = pd.read_csv(source / 'identities.csv', dtype=str, keep_default_na=False)
+        identities = pd.read_csv(source / 'identities.csv', dtype=str, keep_default_na=False,
+                                 usecols=lambda name:name in {'match_id','team','player_id','provider','provider_player_id'})
         required = {'match_id', 'team', 'player_id', 'provider', 'provider_player_id'}
         if not required.issubset(identities.columns):
             raise ValueError(f'{source.name}/identities.csv is missing ID columns')
@@ -482,7 +494,7 @@ def _source_id_rows(source, player_rows, team_rows, match_rows, review_root=None
                                            'team_name': str(team.get('name') or '').strip()})
             row['_ids'][baseline_column].append(team_id)
             for provider in ('fotmob', 'whoscored'):
-                reviewed = REVIEWED_TEAM_IDS.get((provider, team_id))
+                reviewed = REVIEWED_TEAM_IDS.get((provider, team_id)) if baseline=='sofascore' else None
                 if reviewed: row['_ids'][provider + '_id'].append(reviewed)
 
     # Fixture indexes cover matches whose detailed response or player lineup is
@@ -552,11 +564,12 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
     from collection import datasetIndexCache as indexing
     recipe_id=indexing.recipe()
     context=tracking.identity_context(data_root)
+    indexed=reused=0
     for number, source in enumerate(sources, 1):
         try:
             key=tracking.digest(str(tracking.logical_root(source).resolve()))
             cache=Path(output_root)/'id_cache'/(key+'.json')
-            signature=tracking.digest([tracking.source_signature(source),recipe_id,context])
+            signature=tracking.digest([indexing.source_signature(source),recipe_id,context])
             durable=indexing.cache_path(data_root,source,signature)
             saved=indexing.load(durable,signature) if reuse_cache else None
             durable_hit=saved is not None
@@ -567,15 +580,18 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
                 _source_id_rows(source, *contributions, data_root)
                 saved={'signature':signature, 'rows':[
                     [[list(key),row] for key,row in rows.items()] for rows in contributions]}
-                if signature!=tracking.digest([tracking.source_signature(source),recipe_id,tracking.identity_context(data_root)]):
+                if signature!=tracking.digest([indexing.source_signature(source),recipe_id,tracking.identity_context(data_root)]):
                     raise ValueError('Source data or identity rules changed during ID indexing; retry')
+                indexed+=1
             else:
+                reused+=1
                 print(f'Reusing IDs [{number}/{len(sources)}]: {source.parent.name}/{source.name}', flush=True)
             # This checkpoint certifies only a completed source projection. It does
             # not advance the successful build state or replace any public output.
-            if not durable_hit:indexing.save(durable,saved)
-            from storage.pandasStore import atomic_json
-            atomic_json(cache,saved)
+            if not durable_hit:
+                indexing.save(durable,saved)
+                from storage.pandasStore import atomic_json
+                atomic_json(cache,saved)
         except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
             if on_source_error is None:raise
             on_source_error(source,exc)
@@ -587,6 +603,7 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
                 else:
                     for column,values in row['_ids'].items():
                         destination[key]['_ids'][column].extend(values)
+    print(f'ID observations: indexed {indexed} season(s); reused {reused} cached season(s).',flush=True)
     _backfill_unambiguous_ids(player_rows);
     _backfill_unambiguous_ids(team_rows)
     output = Path(output_root);

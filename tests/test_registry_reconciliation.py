@@ -161,7 +161,10 @@ class SharedRegistryTests(unittest.TestCase):
                                           ('2021-2022','Yakine','2','20','200'),('2022-2023','Yakine','2','21','200')]:
                 row=dataset_builder._id_row(players,(season,sofa),{'competition':'La Liga','season':season,'team_name':'Club','player_name':name})
                 row['_ids']={'sofascore_id':[sofa],'fotmob_id':[fot],'whoscored_id':[who]}
-        with patch('dataset_builder.discover_collections',return_value=[self.root/'la-liga/2021-2022']),patch('dataset_builder._source_id_rows',side_effect=source):
+        saved=self.root/'la-liga/2021-2022'
+        atomic_json(saved/'config.json',{'competition':'La Liga','season':'2021/2022'})
+        atomic_json(saved/'schedule.json',{'events':[]})
+        with patch('dataset_builder.discover_collections',return_value=[saved]),patch('dataset_builder._source_id_rows',side_effect=source):
             written=dataset_builder.build_id_tables(self.root,self.base/'dataset',build_team_ids=False,build_match_ids=False)
         rows=pd.read_csv(written['player IDs'],dtype=str,keep_default_na=False)
         self.assertEqual(len(rows),4);self.assertEqual(set(rows.entity_id),{'rp-one','rp-two'})

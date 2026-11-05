@@ -47,7 +47,7 @@ class ReviewedClubProfiles(unittest.TestCase):
         import csv
         from dataset_builder import _atomic_copy,_fixture_team_names
         source=self.root/'source.csv';target=self.root/'copy.csv'
-        source.write_text('season,team_id,team,opponent_id,opponent\n2024/25,37426,FC Viitorul Constanța,1,Other\n')
+        source.write_text('match_id,season,team_id,team,opponent_id,opponent\n1,2024/25,37426,FC Viitorul Constanța,1,Other\n')
         original=source.read_bytes();_atomic_copy(source,target,'2024-2025',baseline='sofascore')
         with target.open() as f:row=next(csv.DictReader(f))
         self.assertEqual((row['team_id'],row['team']),('3294','Farul Constanța'))

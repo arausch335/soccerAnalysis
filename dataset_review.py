@@ -116,7 +116,8 @@ def create_review(dataset,*,deferred_seasons=(),package_diagnostic=None):
             'package_diagnostic':package_diagnostic,
             'identity_resolution':json.loads((dataset/'id-resolution.json').read_text())['summary'] if (dataset/'id-resolution.json').is_file() else None,
             'identities':ids,'seasons':[groups[k] for k in sorted(groups)],'files':files,
-            'quality':{**quality,'fotmob_statistic_conflict_examples':conflict_examples}}
+            'quality':{**quality,'fotmob_statistic_conflict_examples':conflict_examples,
+                       'team_namespace_repairs':manifest.get('team_namespace_repairs',0)}}
     after=[(p.relative_to(dataset).as_posix(),p.stat().st_size,p.stat().st_mtime_ns) for p in _files(dataset)]
     if before!=after or before_manifest!=digest(manifest_path(base)):
         raise ValueError('Dataset changed during coverage review; previous review retained; retry')
@@ -153,6 +154,8 @@ def print_review(review,report=print):
     for kind,row in review['identities'].items():
         report(f"  {kind.title()} identities: {row['total']:,}; all three provider IDs {row['all_three']:,}; "+'; '.join(f'{p} {n:,}' for p,n in row['providers'].items()),flush=True)
     if review['quality'].get('unlinked_match_keys'):report(f"Review needed: {review['quality']['unlinked_match_keys']} packaged match keys could not be linked to catalogue fixtures.",flush=True)
+    if review['quality'].get('team_namespace_repairs'):
+        report(f"Team namespace repair: {review['quality']['team_namespace_repairs']} invalid duplicate references quarantined; valid fixture identities retained. Evidence is in concordance/metadata/team_ids.",flush=True)
     if review['quality'].get('fotmob_statistic_conflict_rows'):
         report(f"Review needed: {review['quality']['fotmob_statistic_conflict_rows']} player rows contain conflicting FotMob statistics. Disputed components are blank; details are in the season CSVs and coverage.json.",flush=True)
     report('Coverage saved to coverage.json; open the Dataset page in the local dashboard for season details.',flush=True)

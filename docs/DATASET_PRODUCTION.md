@@ -147,3 +147,29 @@ fields, components and original group values in
 each issue. The published `coverage.json` counts affected rows and includes up to
 20 examples; the post-publication review prints a warning. The dataset folder
 alone therefore retains the row-level evidence needed in R.
+
+## Incremental identity indexing and namespace repair
+
+ID observations are cached per saved season. Their fingerprint covers identity
+projection functions and identity dependencies, rather than all statistics,
+storage and packaging code. Map/event additions do not invalidate ID caches.
+Changed identity inputs, identity rules or approved identity decisions still
+require reindexing the affected scope. A combined reference update reads cached
+observations from unchanged seasons and prints the actual indexed/reused counts.
+
+On a cache miss, checkpoint indexing reads compact match/team/player identity
+tables and provider links. It never reconstructs action/event/domain objects.
+Flat exports are read with only their identity columns. Checkpoint identity
+links remain available even when flat exports are stale or incomplete. The first
+upgrade to this fingerprint needs one compact scan; ordinary one-season packages
+then reuse other seasons' observations.
+
+Legacy fixtures without a declared FotMob namespace cannot supply generic IDs
+to a FotMob-keyed reference. Publication also quarantines an unused extra team
+record when explicit fixture evidence proves its alleged FotMob ID is the
+SofaScore ID of the same club and supplies that club's different true FotMob ID.
+Numeric collisions, names alone, ambiguous targets and actual fixture uses
+cannot trigger that repair. Valid canonical IDs are never merged or renumbered.
+The original references and verified targets are retained in the
+`namespace_quarantine` field of `concordance/metadata/team_ids`; the final coverage
+review reports the repair count.
