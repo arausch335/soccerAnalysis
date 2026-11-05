@@ -27,7 +27,7 @@ def resolve_dataset(dataset_root, data_root=None, *, report=print):
 
     dataset=Path(dataset_root).expanduser().resolve()
     source_root=Path(data_root).expanduser().resolve() if data_root is not None else None
-    if not dataset.is_dir():raise ValueError('No local dataset found; run python main.py --package first')
+    if not dataset.is_dir():raise ValueError('No completed local dataset found at '+str(dataset)+'. Run python main.py --package first; a failed package may have created only temporary exports.')
     if source_root is not None and (source_root==dataset or source_root in dataset.parents or dataset in source_root.parents):
         raise ValueError('Data and dataset roots must be separate directories')
     with ExitStack() as locks:

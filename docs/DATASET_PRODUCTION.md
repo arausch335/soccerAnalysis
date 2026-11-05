@@ -100,3 +100,18 @@ failed resolution pass leaves the live files untouched; installation starts only
 after validation succeeds. The next `--package` reuses the repaired season
 outputs and publishes the verified result. `--package` continues to include ID
 resolution automatically.
+
+## First package and interrupted runs
+
+`--resolve-ids` needs an installed dataset. For the first dataset, run
+`python main.py --package` and wait for **Dataset package complete**. That command
+already resolves IDs. A failed first package leaves no installed dataset.
+
+Completed season exports are retained privately under
+`data/_system/cache/dataset-exports` before global ID building or publication.
+A later incremental attempt reuses unchanged completed exports even if the prior
+package failed or was interrupted. Cached files are checked by checksum and
+matched to their saved input signature, code, tables and identity decisions.
+Changed or corrupt inputs/exports are rebuilt; `--rebuild` explicitly bypasses
+this cache. Incomplete seasons are not cached or marked published. The global
+success checkpoint still advances only after the final package is verified.

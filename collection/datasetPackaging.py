@@ -42,7 +42,9 @@ def package_saved(root,output,names=None,*,references_only=False,mode='increment
             before=state_path.read_bytes() if state_path.exists() else None
             with tracking.snapshot_inputs(root,source):
                 code=build_dataset(source,staged,names,references_only=references_only,mode=mode,concordance_format=concordance_format)
-                if code:return code
+                if code:
+                    report('Dataset package did not complete; no new dataset was installed. Completed season exports are cached for the next --package attempt.',flush=True)
+                    return code
                 eligible,deferred=selected_inputs(source,names)
                 review=load_review(staged)
                 current=archive.publication() if archive else None

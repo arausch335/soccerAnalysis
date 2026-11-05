@@ -58,6 +58,11 @@ This updates local CSV IDs, coverage, the ID audit and R handoff files. It uses
 saved mappings, stays incremental and does not start collection or publish.
 `--package` already includes this step and publishes the dataset on MSI.
 
+For a first dataset, finish `--package` before using `--resolve-ids`; packaging
+already includes ID resolution. Wait for **Dataset package complete** before
+copying the dataset. Completed season exports are cached for failed/interrupted
+retries.
+
 The default is incremental: only new or changed saved seasons are processed.
 To explicitly select either mode:
 

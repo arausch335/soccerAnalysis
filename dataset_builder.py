@@ -930,16 +930,26 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
             needs_inputs = True
             print(f'[{index}/{len(selected)}] Building dataset: {name}', flush=True)
             try:
-                # Fixture-only builds read schedules without exporting other CSVs.
-                if any(name != 'fixtures' for name in tables):
-                    code = collect(['export', '--data-root', str(root), '--name', name,
-                                    '--no-compile-events'])
-                    if code:
-                        failures.append(name)
-                        continue
-                destination = package_collection(collection_directory(root, name), output / 'raw_data',
-                                                 replace=True, tables=tables)
-                print(f'Packaged dataset: {destination}', flush=True)
+                from dataset_export_cache import key as export_key,restore as restore_export,save as save_export
+                saved_settings=json.loads((source/'config.json').read_text())
+                destination=output/'raw_data'/_slug(saved_settings['competition'])/_season_directory(saved_settings['season'])
+                export_signature=export_key(root,source,recipe_id,tables)
+                restored=mode=='incremental' and restore_export(root,source,destination,export_signature,tables=tables)
+                if restored:
+                    print(f'[{index}/{len(selected)}] Reused completed season export: {name}',flush=True)
+                else:
+                    # Fixture-only builds read schedules without exporting other CSVs.
+                    if any(table != 'fixtures' for table in tables):
+                        code = collect(['export', '--data-root', str(root), '--name', name,
+                                        '--no-compile-events'])
+                        if code:
+                            failures.append(name)
+                            continue
+                    destination = package_collection(source, output/'raw_data',replace=True,tables=tables)
+                    # Cache only a completed export. This is separate from the
+                    # successful global publication checkpoint below.
+                    save_export(root,source,destination,export_key(root,source,recipe_id,tables),tables=tables)
+                print(f'Prepared season export (not yet installed): {destination}', flush=True)
                 season_state[name] = {'inputs':tracking.source_signature(source),
                                       'recipe':recipe_id, 'root':str(tracking.logical_root(root)),
                                       'outputs':tracking.season_outputs(source, output, tables)}
