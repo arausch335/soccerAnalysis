@@ -230,21 +230,40 @@ def _canonical_team_reference(source_teams,fixtures_path):
         records.extend(fixtures)
     from providers.teamProfiles import canonical_team_id
     crosswalk=_team_crosswalk()
+    from concordance.teamNamespace import clean_provider_ids,valid_native_team_id
     result=[]
     for row in records:
-        native={p+'_id':_identifier(row.get(p+'_id')) or '' for p in ('sofascore','fotmob','whoscored')}
+        cleaned=clean_provider_ids(row)
+        native={p+'_id':cleaned[p+'_id'] for p in ('sofascore','fotmob','whoscored')}
         if not any(native.values()):continue
-        native={column:canonical_team_id(column.removesuffix('_id'),value) if value else '' for column,value in native.items()}
-        fotmob=native['fotmob_id']
+        fotmob=native['fotmob_id'];conflicts=[];candidates={}
         for column in ('sofascore_id','whoscored_id'):
             verified=_identifier(VERIFIED_TEAM_ID_OVERRIDES.get(fotmob,{}).get(column)) or _identifier(crosswalk.get(fotmob,{}).get(column))
             if verified:verified=canonical_team_id(column.removesuffix('_id'),verified)
+            if verified and not valid_native_team_id(verified):
+                invalid=json.loads(cleaned.get('invalid_provider_ids') or '{}')
+                invalid['reviewed_'+column]=verified
+                cleaned['invalid_provider_ids']=json.dumps(invalid,sort_keys=True)
+                verified=''
             if verified and native[column] and verified!=native[column]:
-                raise ValueError('Conflicting reviewed team mapping: '+column+' for FotMob '+fotmob)
-            if verified:native[column]=verified
+                conflicts.append({'provider':column.removesuffix('_id'),'observed_id':native[column],
+                                  'reviewed_id':verified,'fotmob_id':fotmob,
+                                  'withheld_providers':['fotmob','whoscored'] if column=='sofascore_id' else ['whoscored']})
+                # Keep the observed baseline identity; withhold disputed peer links.
+                if column=='sofascore_id':native['fotmob_id']=native['whoscored_id']=''
+                else:native[column]=''
+            elif verified:native[column]=verified
         name=row.get('team_name') or next((row.get(p+'_name') for p in ('reep','sofascore','fotmob','whoscored') if row.get(p+'_name')),'')
-        result.append({'team_name':name,**native})
-    return pd.DataFrame(result,columns=TEAM_ID_COLUMNS).drop_duplicates(ignore_index=True)
+        item={'team_name':name,**native}
+        if cleaned.get('invalid_provider_ids'):item['invalid_provider_ids']=cleaned['invalid_provider_ids']
+        if any(conflict['provider']=='sofascore' for conflict in conflicts):
+            item['fotmob_id']=item['whoscored_id']=''
+        if conflicts:
+            item.update(identity_status='conflict',provider_id_candidates=json.dumps(candidates,sort_keys=True),
+                        reviewed_mapping_conflicts=json.dumps(conflicts,sort_keys=True))
+        result.append(item)
+    columns=[*TEAM_ID_COLUMNS,'identity_status','provider_id_candidates','invalid_provider_ids','reviewed_mapping_conflicts']
+    return pd.DataFrame(result,columns=columns).fillna('').drop_duplicates(ignore_index=True)
 
 
 def standardize_fixture_team_names(fixtures_path, team_ids_path):
@@ -658,7 +677,7 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
     frames = {kind: pending[kind + ' IDs'][0] for kind in ('player','team','match')
               if kind + ' IDs' in pending}
     written.update(export_concordance(frames, data_root, output,
-                                     source_teams=source_teams if build_team_ids else None))
+                                     source_teams=None))
     return written
 
 
@@ -689,6 +708,8 @@ def export_concordance(frames, data_root, output, *, source_teams=None):
             if kind == 'team':
                 from providers.teamProfiles import canonical_record
                 resolved=canonical_record(resolved,reference=True)
+                from concordance.teamNamespace import clean_provider_ids
+                resolved=clean_provider_ids(resolved)
                 key = (resolved['reep_id'],) if resolved['reep_id'] and resolved['identity_status']=='linked' else tuple(resolved[p+'_id'] for p in ('sofascore','fotmob','whoscored'))
                 if key in seen:
                     continue

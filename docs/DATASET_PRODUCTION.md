@@ -173,3 +173,16 @@ cannot trigger that repair. Valid canonical IDs are never merged or renumbered.
 The original references and verified targets are retained in the
 `namespace_quarantine` field of `concordance/metadata/team_ids`; the final coverage
 review reports the repair count.
+
+## Imported team names in ID columns
+
+Provider team IDs must be positive numeric IDs. An imported name (for example
+`Union Brescia` in a WhoScored ID field) is retained as audit evidence, excluded
+from usable IDs, and replaced only when an existing reviewed mapping supplies
+a valid ID. Legacy nonnumeric registry aliases are quarantined in the published
+registry. Real numeric disagreements between observations and reviewed mappings
+withhold the disputed links and appear in the final coverage review, rather than
+blocking all completed season exports. The original candidates remain in
+`concordance/metadata/team_ids`. Correct baseline canonical identities and other
+clubs' provider links remain intact. These publication repairs do not invalidate
+completed per-season ID observation caches.

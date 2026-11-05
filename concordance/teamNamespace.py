@@ -55,3 +55,41 @@ def repair(references,fixtures,registry=None):
             result.append({**row,'namespace_quarantine':json.dumps(audits[entity],ensure_ascii=False,sort_keys=True)})
             present.add(entity)
     return result,list(quarantined.values())
+
+
+def valid_native_team_id(value):
+    """All three supported providers use positive numeric team identifiers."""
+    value=str(value or '')
+    return bool(value and value.isascii() and value.isdecimal() and value.strip('0'))
+
+
+def clean_provider_ids(row):
+    """Retain invalid imported values as audit evidence, never usable IDs."""
+    from providers.teamProfiles import canonical_team_id
+    row=dict(row);invalid={}
+    for provider in ('sofascore','fotmob','whoscored'):
+        key=provider+'_id';value=canonical_team_id(provider,str(row.get(key,'')).strip())
+        if value and not valid_native_team_id(value):
+            invalid[key]=value;row[key]=''
+        else:row[key]=value
+    if invalid:row['invalid_provider_ids']=json.dumps(invalid,ensure_ascii=False,sort_keys=True)
+    return row
+
+
+def quarantine_invalid_registry_ids(registry):
+    if registry is None:return 0
+    count=0
+    for token in list(registry.value['aliases']):
+        kind,provider,native=token.split('|',2)
+        if kind=='team' and not valid_native_team_id(native):
+            registry.withhold(kind,provider,native,'invalid_native_team_id');count+=1
+    return count
+
+
+def reviewed_conflicts(value,depth=0):
+    """Flatten the JSON audit values accumulated across published references."""
+    if depth>24:raise ValueError('Reviewed team conflict audit is too deeply nested')
+    if not value:return []
+    if isinstance(value,str):return reviewed_conflicts(json.loads(value),depth+1)
+    if isinstance(value,list):return [row for item in value for row in reviewed_conflicts(item,depth+1)]
+    return [value] if isinstance(value,dict) and value.get('provider') else []

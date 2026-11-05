@@ -59,6 +59,9 @@ def create_review(dataset,*,deferred_seasons=(),package_diagnostic=None):
             for row in records:
                 for p in ('sofascore','fotmob','whoscored'):
                     if row.get(p+'_id'):native[str(row[p+'_id'])].add(str(row['entity_id']))
+    team_metadata=read_table(base,'metadata/team_ids').fillna('')
+    mapping_conflicts=[{'entity_id':str(row['entity_id']),'details':str(row['reviewed_mapping_conflicts'])}
+        for row in team_metadata.to_dict('records') if row.get('reviewed_mapping_conflicts')]
     # Collection calls these Qualifiers; the catalogue uses Qualification.
     # Resolve the reviewed naming aliases before using provider IDs to link.
     def competition_key(name):
@@ -117,7 +120,10 @@ def create_review(dataset,*,deferred_seasons=(),package_diagnostic=None):
             'identity_resolution':json.loads((dataset/'id-resolution.json').read_text())['summary'] if (dataset/'id-resolution.json').is_file() else None,
             'identities':ids,'seasons':[groups[k] for k in sorted(groups)],'files':files,
             'quality':{**quality,'fotmob_statistic_conflict_examples':conflict_examples,
-                       'team_namespace_repairs':manifest.get('team_namespace_repairs',0)}}
+                       'team_namespace_repairs':manifest.get('team_namespace_repairs',0),
+                       'invalid_team_provider_ids':manifest.get('invalid_team_provider_ids',0),
+                       'reviewed_team_mapping_conflict_entities':len(mapping_conflicts),
+                       'reviewed_team_mapping_conflict_examples':mapping_conflicts[:20]}}
     after=[(p.relative_to(dataset).as_posix(),p.stat().st_size,p.stat().st_mtime_ns) for p in _files(dataset)]
     if before!=after or before_manifest!=digest(manifest_path(base)):
         raise ValueError('Dataset changed during coverage review; previous review retained; retry')
@@ -156,6 +162,10 @@ def print_review(review,report=print):
     if review['quality'].get('unlinked_match_keys'):report(f"Review needed: {review['quality']['unlinked_match_keys']} packaged match keys could not be linked to catalogue fixtures.",flush=True)
     if review['quality'].get('team_namespace_repairs'):
         report(f"Team namespace repair: {review['quality']['team_namespace_repairs']} invalid duplicate references quarantined; valid fixture identities retained. Evidence is in concordance/metadata/team_ids.",flush=True)
+    if review['quality'].get('invalid_team_provider_ids'):
+        report(f"Team ID audit: {review['quality']['invalid_team_provider_ids']} nonnumeric provider aliases quarantined; original values retained in metadata.",flush=True)
+    if review['quality'].get('reviewed_team_mapping_conflict_entities'):
+        report(f"Review needed: {review['quality']['reviewed_team_mapping_conflict_entities']} team identities have observed/reviewed ID disagreements. Disputed links are withheld; details are in coverage.json and concordance/metadata/team_ids.",flush=True)
     if review['quality'].get('fotmob_statistic_conflict_rows'):
         report(f"Review needed: {review['quality']['fotmob_statistic_conflict_rows']} player rows contain conflicting FotMob statistics. Disputed components are blank; details are in the season CSVs and coverage.json.",flush=True)
     report('Coverage saved to coverage.json; open the Dataset page in the local dashboard for season details.',flush=True)

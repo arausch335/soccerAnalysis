@@ -204,6 +204,9 @@ def fixture_references(rows):
 
 def identities(rows,kind,*,registry=None,published_names=None):
     """One row per identity; all profile/context/check information stays in metadata."""
+    if kind=='team':
+        from .teamNamespace import clean_provider_ids
+        rows=[clean_provider_ids(row) for row in rows]
     groups=defaultdict(list)
     for row in rows:
         if row.get('entity_id'):groups[text(row['entity_id'])].append(row)
@@ -211,8 +214,22 @@ def identities(rows,kind,*,registry=None,published_names=None):
     for entity,items in sorted(groups.items()):
         result={key:'' for key in (*ID_COLUMNS,*NAME_COLUMNS)};result['entity_id']=entity
         audit={'entity_id':entity};native_aliases=defaultdict(set)
+        blocked=set();conflicts=[]
+        if kind=='team':
+            from .teamNamespace import reviewed_conflicts
+            conflicts=[record for row in items for record in reviewed_conflicts(row.get('reviewed_mapping_conflicts'))]
+            blocked={provider for record in conflicts for provider in record.get('withheld_providers',[])}
+            if registry:
+                for provider in blocked:
+                    values={text(row.get(provider+'_id')) for row in items if text(row.get(provider+'_id'))}
+                    values.update(record[key] for record in conflicts if record['provider']==provider
+                                  for key in ('observed_id','reviewed_id'))
+                    for native in values:
+                        if registry.lookup(kind,provider,native)==entity:
+                            registry.withhold(kind,provider,native,'reviewed_team_mapping_disagreement')
         for key in ID_COLUMNS[1:]:
             values={text(r.get(key)) for r in items if text(r.get(key))}
+            if key.removesuffix('_id') in blocked:values=set()
             if key.endswith('_id') and key[:-3] in PROVIDERS:
                 provider=key[:-3]
                 values={v for v in values if registry is None or registry.lookup(kind,provider,v)==entity}
@@ -246,7 +263,12 @@ def identities(rows,kind,*,registry=None,published_names=None):
         for r in items:
             aliases=r.get('provider_aliases')
             if aliases:
-                for key,values in json.loads(aliases).items():native_aliases[key].update(values)
+                for key,values in json.loads(aliases).items():
+                    if key.removesuffix('_id') in blocked:continue
+                    if kind=='team':
+                        from .teamNamespace import valid_native_team_id
+                        values=[value for value in values if valid_native_team_id(value)]
+                    native_aliases[key].update(values)
         audit['provider_aliases']=json.dumps({k:sorted(v) for k,v in native_aliases.items()},sort_keys=True)
         ids.append(result);details.append(audit)
     return ids,details
@@ -347,7 +369,8 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
     root,dataset=Path(root),Path(dataset);target=Path(output) if output is not None else folder(dataset);target.parent.mkdir(parents=True,exist_ok=True)
     rows=list(rows)
     match_rows,team_rows=fixture_references(rows)
-    from .teamNamespace import repair as repair_team_namespaces
+    from .teamNamespace import repair as repair_team_namespaces,quarantine_invalid_registry_ids
+    invalid_team_ids=quarantine_invalid_registry_ids(registry)
     teams,namespace_repairs=repair_team_namespaces(teams,team_rows,registry)
     names=(snapshot(root) or {}).get('names',{})
     tables={'fixtures/extra':arrow_table(rows,EXTRA_COLUMNS,typed=True)}
@@ -373,7 +396,7 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
                 'registry_format':state['format'],'registry_version':registry_version(registry.value) if registry else '',
                 'ready_for_R':bool(confirmed),'integration_confirmed':bool(confirmed),'chunk_rows':chunk_rows,'tables':{},
                 'name_priority':['reep','sofascore','fotmob','whoscored'],
-                'team_namespace_repairs':len(namespace_repairs)}
+                'team_namespace_repairs':len(namespace_repairs),'invalid_team_provider_ids':invalid_team_ids}
             # Preserve private compiler inputs and archived legacy exports during atomic replacement.
             if (target/'metadata').is_dir():
                 from collection.storageTransfer import link_or_copy
