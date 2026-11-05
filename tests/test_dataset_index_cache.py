@@ -1,5 +1,8 @@
 from pathlib import Path
 import tempfile
+import os
+from pathlib import PureWindowsPath
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -37,3 +40,41 @@ class DatasetIndexCacheTests(unittest.TestCase):
         expected=cache.cache_path(origin,origin/'premier-league/2024-2025','signature')
         with tracking.snapshot_inputs(origin,snapshot):
             self.assertEqual(cache.cache_path(snapshot,snapshot/'premier-league/2024-2025','signature'),expected)
+
+
+class WindowsCachePathTests(unittest.TestCase):
+    def test_cache_origin_uses_long_path_normalization_before_hash_subdirectories(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)/'data'
+            normalized=Path(temporary)/'normalized'
+            with patch('collection.datasetIndexCache.full_path',return_value=normalized) as normalize:
+                path=cache.cache_path(root,root/'serie-a/2025-2026','a'*64)
+            normalize.assert_called_once_with(root.resolve())
+            self.assertEqual(path.parent.parent,normalized/'_system/cache/dataset-ids')
+
+    def test_windows_drive_and_network_paths_keep_extended_prefix(self):
+        from storage import layout
+        class WindowsPath(PureWindowsPath):
+            def expanduser(self):return self
+            def resolve(self):return self
+        for original,expected in [
+                (r'C:\Users\Alexander\data',r'\\?\C:\Users\Alexander\data'),
+                (r'\\server\share\data',r'\\?\UNC\server\share\data'),
+                (r'\\?\C:\Users\Alexander\data',r'\\?\C:\Users\Alexander\data')]:
+            with self.subTest(original=original),patch.object(layout,'Path',WindowsPath),patch.object(layout,'os',SimpleNamespace(name='nt')):
+                self.assertEqual(str(layout.full_path(original)),expected)
+
+    def test_deep_cache_atomic_write_and_reload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)/('nested-project-'*8)/'data'
+            source=root/'serie-a/2025-2026';signature='a'*64
+            path=cache.cache_path(root,source,signature)
+            self.assertGreater(len(str(path))+37,260)
+            if os.name=='nt':self.assertTrue(str(path).startswith('\\\\?\\'))
+            saved={'signature':signature,'rows':[[],[],[]]}
+            cache.save(path,saved)
+            self.assertEqual(cache.load(path,signature)['rows'],saved['rows'])
+            self.assertFalse(list(path.parent.glob('*.tmp')))
+            changed={**saved,'rows':[[[['Premier League','2024-2025','1'],{'_ids':{'sofascore_id':['1']}}]],[],[]]}
+            cache.save(path,changed)
+            self.assertEqual(cache.load(path,signature)['rows'],changed['rows'])

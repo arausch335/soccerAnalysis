@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from storage.pandasStore import atomic_json
+from storage.layout import full_path
 from concordance import package_state as tracking
 
 FORMAT='soccer-dataset-id-cache-v2'
@@ -32,7 +33,9 @@ def recipe():
 
 
 def cache_path(root,source,signature):
-    origin=tracking.logical_root(Path(root).resolve()).resolve()
+    # The JSON writer adds a UUID suffix: a normal cache path may fit Windows'
+    # limit while its atomic temporary path does not. Keep the extended prefix.
+    origin=full_path(tracking.logical_root(Path(root).resolve()))
     key=tracking.digest(str(tracking.logical_root(Path(source).resolve()).resolve()))
     return origin/'_system/cache/dataset-ids'/key/(signature+'.json')
 
