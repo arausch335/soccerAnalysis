@@ -592,7 +592,7 @@ def build_id_tables(data_root, output_root, *, build_player_ids=True, build_team
                 indexing.save(durable,saved)
                 from storage.pandasStore import atomic_json
                 atomic_json(cache,saved)
-        except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
+        except (OSError, ValueError, KeyError, csv.Error, pd.errors.ParserError) as exc:
             if on_source_error is None:raise
             on_source_error(source,exc)
             continue
@@ -1003,7 +1003,7 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
                 season_state[name] = {'inputs':tracking.source_signature(source),
                                       'recipe':recipe_id, 'root':str(tracking.logical_root(root)),
                                       'outputs':tracking.season_outputs(source, output, tables)}
-            except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
+            except (OSError, ValueError, KeyError, csv.Error, pd.errors.ParserError) as exc:
                 failed(source,exc)
     if failures and (not allow_partial or not diagnostic['completed']):return 2
     if not needs_references:
@@ -1036,7 +1036,7 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
                 'source_inputs':{p.relative_to(root).as_posix():tracking.source_signature(p) for p in sources if p not in failed_sources},
                 'global':tracking.global_signature(root, compiled, sources, settings, recipe_id),
                 'publication':tracking.publication_outputs(output)})
-        except (OSError, ValueError, KeyError, pd.errors.ParserError) as exc:
+        except (OSError, ValueError, KeyError, csv.Error, pd.errors.ParserError) as exc:
             print(f'Failed combined ID tables: {exc}', flush=True)
             diagnostic['fatal_error']=str(exc).replace(str(root),str(tracking.logical_root(root)))
             return 2
