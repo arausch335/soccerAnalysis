@@ -63,3 +63,25 @@ folder again, run `verify_dataset("dataset")`. Do not edit packaged files by han
 `python main.py --resolve-ids` repairs an existing local dataset and refreshes
 its audits and R checksums without rebuilding season exports. Use `--package`
 when you want to rebuild/publish saved data.
+
+## Complete provider team bridges
+
+`team_ids` has one representative native ID per provider and canonical team. It
+is not a complete lookup when a club has multiple accepted provider profiles.
+Use the Python-exported alias metadata through the bundled reader instead:
+
+```r
+team_bridge <- subset(ds$concordance$team_bridge, provider == "whoscored")
+# provider_team_id -> entity_team_id, both character columns
+```
+
+The bridge contains every accepted alias, including IDs learned from validated
+matched fixture sides. A link learned at home also applies to away appearances.
+Python collects both sides before adding links, and rejects conflicting claims,
+existing contradictory mappings and explicitly withheld aliases. No global name
+matching, hard-coded team ID or new canonical identity is used. Recovery counts
+and conflict examples are included in `coverage.json`; recovered evidence is in
+`concordance/metadata/team_ids`. The R report no longer needs to infer these links
+when it uses `team_bridge`. Rebuild the reference bundle on MSI with
+`python main.py --package --references-only` to update an existing dataset without
+re-exporting season statistics.

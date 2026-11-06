@@ -137,7 +137,32 @@ read_concordances <- function(concordance_root = "dataset/concordance", require_
       if (entity %in% allowed) entity else NA_character_
     }, character(1), USE.NAMES = FALSE)
   }
+  # Python exports all usable provider aliases in team identity metadata.
+  # The main ID table intentionally has only one representative per provider.
+  bridge_rows <- list()
+  for (i in seq_len(nrow(ids$team_ids))) {
+    entity <- ids$team_ids$entity_id[i]
+    where <- match(entity, details$team_ids$entity_id)
+    encoded <- if (!is.na(where) && "provider_aliases" %in% names(details$team_ids)) details$team_ids$provider_aliases[where] else NA_character_
+    aliases <- if (!is.na(encoded) && nzchar(encoded)) jsonlite::fromJSON(encoded) else list()
+    for (provider in c("sofascore", "fotmob", "whoscored")) {
+      primary <- ids$team_ids[[paste0(provider, "_id")]][i]
+      native <- unique(c(primary, unlist(aliases[[paste0(provider, "_id")]], use.names = FALSE)))
+      native <- as.character(native[!is.na(native) & nzchar(native)])
+      if (!length(native)) next
+      resolved <- resolve_provider_ids("team", provider, native)
+      keep <- (!is.na(resolved) & resolved == entity) | (is.na(resolved) & native == primary & !is.na(primary))
+      native <- native[keep & !is.na(keep)]
+      if (length(native)) bridge_rows[[length(bridge_rows) + 1L]] <- data.frame(
+        provider = provider, provider_team_id = native, entity_team_id = entity, stringsAsFactors = FALSE)
+    }
+  }
+  team_bridge <- if (length(bridge_rows)) unique(do.call(rbind, bridge_rows)) else data.frame(
+    provider = character(), provider_team_id = character(), entity_team_id = character())
+  if (anyDuplicated(paste(team_bridge$provider, team_bridge$provider_team_id, sep = "|")))
+    stop("Provider team bridge has contradictory identities")
+  rownames(team_bridge) <- NULL
   c(list(fixtures = fixtures, extra = extra, metadata = metadata), ids,
-    list(identity_metadata = details, registry = registry_rows, entities = entities, manifest = manifest,
+    list(identity_metadata = details, team_bridge = team_bridge, registry = registry_rows, entities = entities, manifest = manifest,
          resolve_provider_ids = resolve_provider_ids))
 }

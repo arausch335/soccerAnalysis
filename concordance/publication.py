@@ -207,6 +207,8 @@ def identities(rows,kind,*,registry=None,published_names=None):
     if kind=='team':
         from .teamNamespace import clean_provider_ids
         rows=[clean_provider_ids(row) for row in rows]
+    from .teamBridge import registry_team_aliases
+    known_team_aliases=registry_team_aliases(registry) if kind=='team' else {}
     groups=defaultdict(list)
     for row in rows:
         if row.get('entity_id'):groups[text(row['entity_id'])].append(row)
@@ -233,6 +235,10 @@ def identities(rows,kind,*,registry=None,published_names=None):
             if key.endswith('_id') and key[:-3] in PROVIDERS:
                 provider=key[:-3]
                 values={v for v in values if registry is None or registry.lookup(kind,provider,v)==entity}
+                if kind=='team' and provider not in blocked:
+                    aliases=known_team_aliases.get(entity,{}).get(key,set())
+                    if not values:values=set(aliases)
+                    native_aliases[key].update(aliases)
                 native_aliases[key].update(values)
             if key=='alex_id' and registry is not None:values={registry.follow(v) for v in values}
             if key=='reep_id':values={v for v in values if v==entity}
@@ -269,6 +275,10 @@ def identities(rows,kind,*,registry=None,published_names=None):
                         from .teamNamespace import valid_native_team_id
                         values=[value for value in values if valid_native_team_id(value)]
                     native_aliases[key].update(values)
+        if kind=='team' and registry:
+            for key,values in native_aliases.items():
+                provider=key.removesuffix('_id')
+                native_aliases[key]={v for v in values if registry.lookup('team',provider,v)==entity and provider not in blocked}
         audit['provider_aliases']=json.dumps({k:sorted(v) for k,v in native_aliases.items()},sort_keys=True)
         ids.append(result);details.append(audit)
     return ids,details
@@ -372,6 +382,13 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
     from .teamNamespace import repair as repair_team_namespaces,quarantine_invalid_registry_ids
     invalid_team_ids=quarantine_invalid_registry_ids(registry)
     teams,namespace_repairs=repair_team_namespaces(teams,team_rows,registry)
+    from .teamBridge import recover_fixture_aliases
+    team_bridge_audit=recover_fixture_aliases(rows,registry)
+    recovered_by_entity=defaultdict(list)
+    for item in team_bridge_audit['recovered']:recovered_by_entity[item['entity_team_id']].append(item)
+    for item in team_rows:
+        if item['entity_id'] in recovered_by_entity:
+            item['fixture_team_aliases']=json.dumps(recovered_by_entity[item['entity_id']],sort_keys=True)
     names=(snapshot(root) or {}).get('names',{})
     tables={'fixtures/extra':arrow_table(rows,EXTRA_COLUMNS,typed=True)}
     used={RENAMES.get(k,k) for k in (*CORE_COLUMNS,*EXTRA_COLUMNS)}
@@ -396,7 +413,9 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
                 'registry_format':state['format'],'registry_version':registry_version(registry.value) if registry else '',
                 'ready_for_R':bool(confirmed),'integration_confirmed':bool(confirmed),'chunk_rows':chunk_rows,'tables':{},
                 'name_priority':['reep','sofascore','fotmob','whoscored'],
-                'team_namespace_repairs':len(namespace_repairs),'invalid_team_provider_ids':invalid_team_ids}
+                'team_namespace_repairs':len(namespace_repairs),'invalid_team_provider_ids':invalid_team_ids,
+                'fixture_team_bridge':{'recovered_aliases':len(team_bridge_audit['recovered']),
+                    'conflicting_aliases':len(team_bridge_audit['conflicts']),'conflict_examples':team_bridge_audit['conflicts'][:20]}}
             # Preserve private compiler inputs and archived legacy exports during atomic replacement.
             if (target/'metadata').is_dir():
                 from collection.storageTransfer import link_or_copy

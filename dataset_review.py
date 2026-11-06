@@ -60,6 +60,8 @@ def create_review(dataset,*,deferred_seasons=(),package_diagnostic=None):
                 for p in ('sofascore','fotmob','whoscored'):
                     if row.get(p+'_id'):native[str(row[p+'_id'])].add(str(row['entity_id']))
     team_metadata=read_table(base,'metadata/team_ids').fillna('')
+    bridge_aliases=sum(len(values) for row in team_metadata.to_dict('records')
+        for values in json.loads(row.get('provider_aliases') or '{}').values())
     mapping_conflicts=[{'entity_id':str(row['entity_id']),'details':str(row['reviewed_mapping_conflicts'])}
         for row in team_metadata.to_dict('records') if row.get('reviewed_mapping_conflicts')]
     # Collection calls these Qualifiers; the catalogue uses Qualification.
@@ -123,7 +125,8 @@ def create_review(dataset,*,deferred_seasons=(),package_diagnostic=None):
                        'team_namespace_repairs':manifest.get('team_namespace_repairs',0),
                        'invalid_team_provider_ids':manifest.get('invalid_team_provider_ids',0),
                        'reviewed_team_mapping_conflict_entities':len(mapping_conflicts),
-                       'reviewed_team_mapping_conflict_examples':mapping_conflicts[:20]}}
+                       'reviewed_team_mapping_conflict_examples':mapping_conflicts[:20],
+                       'fixture_team_bridge':manifest.get('fixture_team_bridge',{}),'team_bridge_aliases':bridge_aliases}}
     after=[(p.relative_to(dataset).as_posix(),p.stat().st_size,p.stat().st_mtime_ns) for p in _files(dataset)]
     if before!=after or before_manifest!=digest(manifest_path(base)):
         raise ValueError('Dataset changed during coverage review; previous review retained; retry')
@@ -166,6 +169,13 @@ def print_review(review,report=print):
         report(f"Team ID audit: {review['quality']['invalid_team_provider_ids']} nonnumeric provider aliases quarantined; original values retained in metadata.",flush=True)
     if review['quality'].get('reviewed_team_mapping_conflict_entities'):
         report(f"Review needed: {review['quality']['reviewed_team_mapping_conflict_entities']} team identities have observed/reviewed ID disagreements. Disputed links are withheld; details are in coverage.json and concordance/metadata/team_ids.",flush=True)
+    if review['quality'].get('team_bridge_aliases'):
+        report(f"Team bridge: {review['quality']['team_bridge_aliases']} accepted provider aliases; available in R as ds$concordance$team_bridge.",flush=True)
+    bridge=review['quality'].get('fixture_team_bridge',{})
+    if bridge.get('recovered_aliases'):
+        report(f"Fixture team bridge: recovered {bridge['recovered_aliases']} provider aliases for use at home or away.",flush=True)
+    if bridge.get('conflicting_aliases'):
+        report(f"Review needed: {bridge['conflicting_aliases']} fixture team aliases had conflicting or withheld evidence; no conflicting mapping was overwritten. See coverage.json.",flush=True)
     if review['quality'].get('fotmob_statistic_conflict_rows'):
         report(f"Review needed: {review['quality']['fotmob_statistic_conflict_rows']} player rows contain conflicting FotMob statistics. Disputed components are blank; details are in the season CSVs and coverage.json.",flush=True)
     report('Coverage saved to coverage.json; open the Dataset page in the local dashboard for season details.',flush=True)

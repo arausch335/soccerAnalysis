@@ -186,3 +186,19 @@ blocking all completed season exports. The original candidates remain in
 `concordance/metadata/team_ids`. Correct baseline canonical identities and other
 clubs' provider links remain intact. These publication repairs do not invalidate
 completed per-season ID observation caches.
+
+## Fixture-based team bridge recovery
+
+Publication recovers missing provider team aliases from both home and away sides
+of validated fixtures whose provider match IDs already resolve to the canonical
+match. A side mapping becomes a global provider/team link for that existing
+canonical team. Recovery never mints/merges/renames canonical IDs or overrides
+contradictory/withheld mappings. Multiple fixture claims for the same provider ID
+are flagged rather than selected by frequency. All accepted registry aliases are
+exported in `metadata/team_ids.provider_aliases`, independently of the single
+representative ID in `team_ids`. The bundled reader exposes this complete bridge
+as `ds$concordance$team_bridge` with columns `provider`, `provider_team_id`,
+`entity_team_id`. See the bundled R guide for using it. The manifest and coverage
+review record recovery/conflict counts and examples. An existing dataset can be
+updated with `python main.py --package --references-only`; ordinary `--package`
+also includes this step.
