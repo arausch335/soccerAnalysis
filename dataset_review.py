@@ -126,7 +126,8 @@ def create_review(dataset,*,deferred_seasons=(),package_diagnostic=None):
                        'invalid_team_provider_ids':manifest.get('invalid_team_provider_ids',0),
                        'reviewed_team_mapping_conflict_entities':len(mapping_conflicts),
                        'reviewed_team_mapping_conflict_examples':mapping_conflicts[:20],
-                       'fixture_team_bridge':manifest.get('fixture_team_bridge',{}),'team_bridge_aliases':bridge_aliases}}
+                       'fixture_team_bridge':manifest.get('fixture_team_bridge',{}),'team_bridge_aliases':bridge_aliases,
+                       'unlinked_identity_references':manifest.get('unlinked_identity_references',{})}}
     after=[(p.relative_to(dataset).as_posix(),p.stat().st_size,p.stat().st_mtime_ns) for p in _files(dataset)]
     if before!=after or before_manifest!=digest(manifest_path(base)):
         raise ValueError('Dataset changed during coverage review; previous review retained; retry')
@@ -167,6 +168,9 @@ def print_review(review,report=print):
         report(f"Team namespace repair: {review['quality']['team_namespace_repairs']} invalid duplicate references quarantined; valid fixture identities retained. Evidence is in concordance/metadata/team_ids.",flush=True)
     if review['quality'].get('invalid_team_provider_ids'):
         report(f"Team ID audit: {review['quality']['invalid_team_provider_ids']} nonnumeric provider aliases quarantined; original values retained in metadata.",flush=True)
+    unlinked=review['quality'].get('unlinked_identity_references',{})
+    if unlinked.get('quarantined_count'):
+        report(f"Review needed: {unlinked['quarantined_count']} unused identity references have no accepted provider link and were quarantined. Full original records are in coverage.json and concordance/metadata/manifest.json; fixtures and exported data were checked before exclusion.",flush=True)
     if review['quality'].get('reviewed_team_mapping_conflict_entities'):
         report(f"Review needed: {review['quality']['reviewed_team_mapping_conflict_entities']} team identities have observed/reviewed ID disagreements. Disputed links are withheld; details are in coverage.json and concordance/metadata/team_ids.",flush=True)
     if review['quality'].get('team_bridge_aliases'):

@@ -207,8 +207,8 @@ def identities(rows,kind,*,registry=None,published_names=None):
     if kind=='team':
         from .teamNamespace import clean_provider_ids
         rows=[clean_provider_ids(row) for row in rows]
-    from .teamBridge import registry_team_aliases
-    known_team_aliases=registry_team_aliases(registry) if kind=='team' else {}
+    from .identityReferences import accepted_aliases
+    known_aliases=accepted_aliases(registry,kind)
     groups=defaultdict(list)
     for row in rows:
         if row.get('entity_id'):groups[text(row['entity_id'])].append(row)
@@ -235,8 +235,8 @@ def identities(rows,kind,*,registry=None,published_names=None):
             if key.endswith('_id') and key[:-3] in PROVIDERS:
                 provider=key[:-3]
                 values={v for v in values if registry is None or registry.lookup(kind,provider,v)==entity}
-                if kind=='team' and provider not in blocked:
-                    aliases=known_team_aliases.get(entity,{}).get(key,set())
+                if provider not in blocked:
+                    aliases=known_aliases.get(entity,{}).get(key,set())
                     if not values:values=set(aliases)
                     native_aliases[key].update(aliases)
                 native_aliases[key].update(values)
@@ -351,7 +351,8 @@ def validate(base,*,require_integration=False):
         if frame.entity_id.isna().any() or frame.entity_id.duplicated().any():raise ValueError('Missing or duplicate concordance identity')
         canonical=frame.reep_id.fillna(frame.alex_id)
         if canonical.isna().any() or not frame.entity_id.equals(canonical):raise ValueError('Canonical ID differs from Reep/Alex identity')
-        if frame[[p+'_id' for p in PROVIDERS]].isna().all(axis=1).any():raise ValueError('Identity has no real provider ID')
+        missing=frame[[p+'_id' for p in PROVIDERS]].isna().all(axis=1)
+        if missing.any():raise ValueError(f'Identity has no real provider ID: {kind}_ids, {int(missing.sum())} rows; entity IDs: '+', '.join(frame.loc[missing,'entity_id'].head(10)))
         for p in PROVIDERS:
             known=frame.dropna(subset=[p+'_id'])
             if known[p+'_id'].duplicated().any():raise ValueError('Provider ID maps to different entities')
@@ -377,7 +378,7 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
     from providers.reep import snapshot
     from .sync import version as registry_version
     root,dataset=Path(root),Path(dataset);target=Path(output) if output is not None else folder(dataset);target.parent.mkdir(parents=True,exist_ok=True)
-    rows=list(rows)
+    rows=list(rows);entities=list(entities)
     match_rows,team_rows=fixture_references(rows)
     from .teamNamespace import repair as repair_team_namespaces,quarantine_invalid_registry_ids
     invalid_team_ids=quarantine_invalid_registry_ids(registry)
@@ -394,14 +395,18 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
     used={RENAMES.get(k,k) for k in (*CORE_COLUMNS,*EXTRA_COLUMNS)}
     metadata_columns=['match_entity_id','source_home_team','source_away_team',*sorted({k for r in rows for k in r}-used-{'source_home_team','source_away_team','match_entity_id'})]
     tables['fixtures/metadata']=arrow_table(rows,metadata_columns)
+    quarantined=[]
+    from .identityReferences import separate_unlinked
     for kind,items in [('match',[*matches,*match_rows]),('team',[*teams,*team_rows]),('player',list(players))]:
         ids,details=identities(items,kind,registry=registry,published_names=names)
+        ids,details,audit=separate_unlinked(kind,ids,details,items,rows,entities,dataset)
+        quarantined.extend(audit)
         tables[kind+'_ids']=arrow_table(ids,(*ID_COLUMNS,*NAME_COLUMNS))
         tables['metadata/'+kind+'_ids']=arrow_table(details,['entity_id',*sorted({k for r in details for k in r}-{'entity_id'})])
     canonical_names={r['entity_id']:r['entity_name'] for r in tables['team_ids'].to_pylist()}
     core_rows=[{**{c:r.get(RENAMES.get(c,c)) for c in CORE_COLUMNS},**{side+'_team':canonical_names.get(r.get(side+'_entity_id')) or r.get(side+'_team','') for side in ('home','away')}} for r in rows]
     tables['fixtures/fixtures']=arrow_table(core_rows,CORE_COLUMNS,typed=True)
-    entities=list(entities);tables['entities']=arrow_table(entities,sorted({k for r in entities for k in r}) or ['relationship_id','from_entity_id','to_entity_id'])
+    tables['entities']=arrow_table(entities,sorted({k for r in entities for k in r}) or ['relationship_id','from_entity_id','to_entity_id'])
     state=registry.value if registry else {'format':'soccer-alex-ids-v1','aliases':{},'published':{},'redirects':{},'anchors':{}}
     registry_rows=[{'section':section,'key':key,'value':json.dumps(value,ensure_ascii=False,sort_keys=True)}
         for section,values in sorted(state.items()) if isinstance(values,dict) for key,value in sorted(values.items())]
@@ -414,6 +419,7 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
                 'ready_for_R':bool(confirmed),'integration_confirmed':bool(confirmed),'chunk_rows':chunk_rows,'tables':{},
                 'name_priority':['reep','sofascore','fotmob','whoscored'],
                 'team_namespace_repairs':len(namespace_repairs),'invalid_team_provider_ids':invalid_team_ids,
+                'unlinked_identity_references':{'quarantined_count':len(quarantined),'quarantined':quarantined},
                 'fixture_team_bridge':{'recovered_aliases':len(team_bridge_audit['recovered']),
                     'conflicting_aliases':len(team_bridge_audit['conflicts']),'conflict_examples':team_bridge_audit['conflicts'][:20]}}
             # Preserve private compiler inputs and archived legacy exports during atomic replacement.
@@ -478,12 +484,20 @@ def refresh(root,dataset,*,rows=None,confirmed=False,chunk_rows=CHUNK_ROWS,outpu
     registry=Registry(registry_path,seed=seed) if registry_path.is_file() or seed.is_file() else None
     if report:report('Loaded the saved identity registry',flush=True)
     references={kind:[] for kind in ('match','team','player')}
+    previous_audit=[]
+    if exists(dataset):
+        previous=json.loads(manifest_path(folder(dataset)).read_text(encoding='utf-8'))
+        previous_audit=previous.get('unlinked_identity_references',{}).get('quarantined',[])
     for kind in references:
         for parent in ('fixture_concordance','concordance',''):
             path=dataset/parent/(kind+'_ids.csv')
             if path.is_file():
                 with path.open(encoding='utf-8-sig',newline='') as stream:references[kind].extend(csv.DictReader(stream))
         if exists(dataset):references[kind].extend(reference_rows(dataset,kind))
+        # Keep quarantined evidence across reference-only refreshes, and allow
+        # an explicitly restored registry mapping to make it usable again.
+        for item in previous_audit:
+            if item['kind']==kind:references[kind].extend(item['references'])
         for row in references[kind]:
             if registry and row.get('entity_id'):
                 row['entity_id']=registry.canonical(row['entity_id'])

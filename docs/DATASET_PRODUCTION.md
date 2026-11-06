@@ -17,6 +17,18 @@ Failed/deferred input revisions remain pending. The final console diagnostic and
 Run `--package` again after fixing the inputs. A shared concordance validation or
 installation failure still returns an error and cannot publish an invalid bundle.
 
+Publication recovers missing representative IDs from accepted registry aliases.
+An old reference whose provider links were withdrawn or reassigned is quarantined
+only if no fixture, exported canonical column or entity relationship uses it.
+The full original reference is retained in `concordance/metadata/manifest.json`
+and `coverage.json`, and the final review reports the count. Used identities still
+require an accepted provider link; failures name the identity, table, observed IDs
+and referencing files. No IDs are invented or redirected to resolve a conflict.
+For a failed reference publication, pull the fix and run
+`python main.py --package --references-only` to refresh concordances and the R
+handoff without rerunning season exports. A first failed package with no installed
+dataset may need the ordinary `--package` retry to install its cached exports.
+
 Public concordance tables default to Parquet directories:
 
 ```text
