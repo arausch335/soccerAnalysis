@@ -85,3 +85,21 @@ and conflict examples are included in `coverage.json`; recovered evidence is in
 when it uses `team_bridge`. Rebuild the reference bundle on MSI with
 `python main.py --package --references-only` to update an existing dataset without
 re-exporting season statistics.
+
+## Player aliases from saved lineups
+
+Reference publication also repairs missing WhoScored player links when saved
+Sofascore and WhoScored lineups have a unique matching normalized name on the
+same team in the same validated fixture. It reuses the existing canonical
+player, including bench/event players without populated statistics. Names on
+the opposite team, ambiguous names, contradictory fixture claims and rejected
+or withheld provider links cannot create a mapping.
+
+Recovered links are saved in the exported identity registry and
+`metadata/player_ids`; recovery/conflict counts appear in `coverage.json`.
+Read them through `ds$concordance$resolve_provider_ids("player", "whoscored", ids)`.
+The report does not need a player-specific override. Run
+`python main.py --package --references-only` on the machine with the saved raw
+lineups, copy the refreshed dataset folder, then reload it in R. Missing lineup
+evidence stays unresolved and requires identity review.
+
