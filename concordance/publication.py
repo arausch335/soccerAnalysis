@@ -378,13 +378,20 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
     from providers.reep import snapshot
     from .sync import version as registry_version
     root,dataset=Path(root),Path(dataset);target=Path(output) if output is not None else folder(dataset);target.parent.mkdir(parents=True,exist_ok=True)
-    rows=list(rows);entities=list(entities)
+    rows=list(rows);entities=list(entities);players=list(players)
     match_rows,team_rows=fixture_references(rows)
     from .teamNamespace import repair as repair_team_namespaces,quarantine_invalid_registry_ids
     invalid_team_ids=quarantine_invalid_registry_ids(registry)
     teams,namespace_repairs=repair_team_namespaces(teams,team_rows,registry)
     from .teamBridge import recover_fixture_aliases
     team_bridge_audit=recover_fixture_aliases(rows,registry)
+    # Event players can lack the provider link in old performance checkpoints.
+    from .playerBridge import recover_lineup_aliases
+    player_bridge_audit=recover_lineup_aliases(root,rows,players,registry)
+    player_evidence=defaultdict(list)
+    for item in player_bridge_audit['recovered']:player_evidence[item['entity_player_id']].append(item)
+    players=[{**r,**({'lineup_player_aliases':json.dumps(player_evidence[r['entity_id']],sort_keys=True)}
+                    if r.get('entity_id') in player_evidence else {})} for r in players]
     recovered_by_entity=defaultdict(list)
     for item in team_bridge_audit['recovered']:recovered_by_entity[item['entity_team_id']].append(item)
     for item in team_rows:
@@ -421,7 +428,9 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
                 'team_namespace_repairs':len(namespace_repairs),'invalid_team_provider_ids':invalid_team_ids,
                 'unlinked_identity_references':{'quarantined_count':len(quarantined),'quarantined':quarantined},
                 'fixture_team_bridge':{'recovered_aliases':len(team_bridge_audit['recovered']),
-                    'conflicting_aliases':len(team_bridge_audit['conflicts']),'conflict_examples':team_bridge_audit['conflicts'][:20]}}
+                    'conflicting_aliases':len(team_bridge_audit['conflicts']),'conflict_examples':team_bridge_audit['conflicts'][:20]},
+                'fixture_player_bridge':{'recovered_aliases':len(player_bridge_audit['recovered']),
+                    'conflicting_aliases':len(player_bridge_audit['conflicts']),'conflict_examples':player_bridge_audit['conflicts'][:20]}}
             # Preserve private compiler inputs and archived legacy exports during atomic replacement.
             if (target/'metadata').is_dir():
                 from collection.storageTransfer import link_or_copy
@@ -466,7 +475,7 @@ def compiled_signature(root,dataset):
 
 
 def refresh(root,dataset,*,rows=None,confirmed=False,chunk_rows=CHUNK_ROWS,output=None,report=None,data_format=None):
-    """Publish already compiled fixtures/references; never start a collection scan."""
+    """Publish compiled references, recovering missing links from saved lineups."""
     import csv
     from .registry import Registry
     from .layout import prepare
@@ -511,3 +520,4 @@ def refresh(root,dataset,*,rows=None,confirmed=False,chunk_rows=CHUNK_ROWS,outpu
         if compiled_signature(root,dataset)!=before:raise ValueError('Compiled fixtures or identities changed during export; previous concordance publication preserved; retry')
     return publish(root,dataset,rows,matches=references['match'],teams=references['team'],players=references['player'],
         entities=entities,registry=registry,confirmed=confirmed,chunk_rows=chunk_rows,output=output,check=unchanged,data_format=data_format)
+
