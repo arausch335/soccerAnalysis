@@ -80,6 +80,11 @@ def global_signature(root, compiled, sources, settings, recipe_id):
     paths = ([root/name for name in context['identity']] if context and root.resolve()==context['snapshot']
              else list((root/'_system/identity').glob('*.json')))
     paths.extend(compiled.glob('*.csv'))
+    # Provider-only caches without collection metadata still drive lineup recovery.
+    for directory in root.glob('*/*/raw'):
+        if (directory.parent/'config.json').is_file():continue
+        for provider in ('sofascore','whoscored'):
+            paths.extend((directory/provider).glob('*.json'))
     for directory in ('concordance','fixture_concordance'):
         paths.extend(p for p in (compiled/directory).rglob('*')
                      if p.is_file() and p.suffix in ('.csv','.json'))
@@ -154,3 +159,4 @@ def snapshot_inputs(origin, snapshot):
         yield
     finally:
         _snapshot.reset(token)
+

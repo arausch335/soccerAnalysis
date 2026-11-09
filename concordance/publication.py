@@ -275,10 +275,11 @@ def identities(rows,kind,*,registry=None,published_names=None):
                         from .teamNamespace import valid_native_team_id
                         values=[value for value in values if valid_native_team_id(value)]
                     native_aliases[key].update(values)
-        if kind=='team' and registry:
+        if registry:
             for key,values in native_aliases.items():
                 provider=key.removesuffix('_id')
-                native_aliases[key]={v for v in values if registry.lookup('team',provider,v)==entity and provider not in blocked}
+                native_aliases[key]={v for v in values if provider in PROVIDERS and provider not in blocked
+                                     and registry.lookup(kind,provider,v)==entity}
         audit['provider_aliases']=json.dumps({k:sorted(v) for k,v in native_aliases.items()},sort_keys=True)
         ids.append(result);details.append(audit)
     return ids,details
@@ -430,7 +431,9 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
                 'fixture_team_bridge':{'recovered_aliases':len(team_bridge_audit['recovered']),
                     'conflicting_aliases':len(team_bridge_audit['conflicts']),'conflict_examples':team_bridge_audit['conflicts'][:20]},
                 'fixture_player_bridge':{'recovered_aliases':len(player_bridge_audit['recovered']),
-                    'conflicting_aliases':len(player_bridge_audit['conflicts']),'conflict_examples':player_bridge_audit['conflicts'][:20]}}
+                    'conflicting_aliases':len(player_bridge_audit['conflicts']),
+                    'conflict_examples':player_bridge_audit['conflicts'][:20],
+                    'skipped_evidence':dict(player_bridge_audit.get('skipped',{}))}}
             # Preserve private compiler inputs and archived legacy exports during atomic replacement.
             if (target/'metadata').is_dir():
                 from collection.storageTransfer import link_or_copy

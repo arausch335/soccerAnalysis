@@ -195,7 +195,15 @@ def snapshot_data(root, output, *, check=lambda:None):
     excluded=removed_seasons()
     for directory in sorted(root.glob('*/*')):
         if directory.relative_to(root).as_posix() in excluded:continue
-        if directory.relative_to(root).parts[0]=='_system' or not (directory/'job.json').is_file():continue
+        if directory.relative_to(root).parts[0]=='_system':continue
+        if not (directory/'job.json').is_file():
+            # Standalone event caches can still supply identity evidence for a
+            # fixture already in the compiled catalogue.
+            if len(directory.name)==9 and directory.name[4]=='-' and directory.name.replace('-','').isdigit():
+                for provider in ('sofascore','whoscored'):
+                    for source in (directory/'raw'/provider).glob('*.json'):
+                        if source.is_file():pin(source)
+            continue
         for source in directory.glob('*'):
             if source.is_file() and source.suffix in ('.csv','.json'):pin(source)
         stores=[*(directory/'match_checkpoints').glob('*'),directory/'dataset']
@@ -218,3 +226,4 @@ def snapshot_data(root, output, *, check=lambda:None):
             with closing(sqlite3.connect(readonly_uri(source),uri=True)) as incoming,closing(sqlite3.connect(target)) as outgoing:
                 incoming.backup(outgoing,pages=64,progress=lambda *args:check())
         elif source.suffix=='.json':pin(source)
+

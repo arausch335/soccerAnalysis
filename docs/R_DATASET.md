@@ -89,17 +89,27 @@ re-exporting season statistics.
 ## Player aliases from saved lineups
 
 Reference publication also repairs missing WhoScored player links when saved
-Sofascore and WhoScored lineups have a unique matching normalized name on the
-same team in the same validated fixture. It reuses the existing canonical
+Sofascore and WhoScored lineups identify the same player on the same team in a
+validated fixture. It prefers a unique normalized name. Where the given name
+differs, it requires a shared surname and a shirt number unique on both
+lineups. Older fixture rows without a validation label can use an accepted
+match alias after checking the raw match date, team sides and known scores.
+The bridge reuses the existing canonical
 player, including bench/event players without populated statistics. Names on
 the opposite team, ambiguous names, contradictory fixture claims and rejected
 or withheld provider links cannot create a mapping.
 
 Recovered links are saved in the exported identity registry and
-`metadata/player_ids`; recovery/conflict counts appear in `coverage.json`.
+`metadata/player_ids`; recovery, conflict and skipped evidence counts appear in
+`coverage.json`.
 Read them through `ds$concordance$resolve_provider_ids("player", "whoscored", ids)`.
 The report does not need a player-specific override. Run
 `python main.py --package --references-only` on the machine with the saved raw
 lineups, copy the refreshed dataset folder, then reload it in R. Missing lineup
 evidence stays unresolved and requires identity review.
+
+To inspect a particular missing ID on a machine with the raw cache and bundle,
+run `python -m concordance.playerBridge --match-id MATCH_ID --player-id PLAYER_ID`.
+This command reports the published link and available lineup evidence without
+changing the dataset.
 

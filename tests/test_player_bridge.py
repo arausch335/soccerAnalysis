@@ -80,6 +80,44 @@ class PlayerBridgeTests(unittest.TestCase):
     def test_no_player_is_created_when_missing_from_the_published_references(self):
         self.players=[];self.assertEqual(self.recover()['recovered'],[])
 
+    def test_alias_only_fixture_is_revalidated_against_the_raw_match(self):
+        row = self.rows[0]
+        row['whoscored_fixture_check'] = 'bridge_only'
+        del row['whoscored_match_id']
+        centre = self.who['matchCentreData']
+        centre['events'] = [{'teamId': 111, 'playerId': 366705}]
+        for side in ('home', 'away'):
+            centre[side]['scores'] = {'fulltime': 0}
+        self.cache.fetch('whoscored', 'match/300', lambda: self.who, refresh=True)
+        row['home_score'] = 1
+        self.assertEqual(self.recover()['skipped']['fixture_validation_failed'], 1)
+        row['home_score'] = 0
+        self.assertEqual(len(self.recover()['recovered']), 1)
+
+    def test_unique_shirt_and_surname_handle_different_given_names(self):
+        self.sofa['home']['players'][0]['shirtNumber'] = 19
+        who = self.who['matchCentreData']['home']['players'][0]
+        who.update(name='Georgios Masouras', shirtNo=19)
+        self.raw()
+        result = self.recover()
+        self.assertEqual(result['recovered'][0]['examples'][0]['method'],
+                         'unique_shirt_and_shared_name_token')
+
+    def test_unregistered_same_name_teammate_still_blocks_ambiguous_claim(self):
+        self.sofa['home']['players'].append({'player': {'id': 555, 'name': 'Giorgos Masouras'}})
+        self.raw()
+        result = self.recover()
+        self.assertFalse(result['recovered'])
+        self.assertEqual(result['conflicts'][0]['reason'], 'ambiguous_lineup_name')
+
+    def test_event_actor_missing_from_roster_can_use_same_match_name_dictionary(self):
+        centre = self.who['matchCentreData']
+        centre['home']['players'] = []
+        centre['events'] = [{'teamId': 111, 'playerId': 366705}]
+        centre['playerIdNameDictionary'] = {'366705': 'Giorgos Masouras'}
+        self.raw()
+        self.assertEqual(len(self.recover()['recovered']), 1)
+
     def test_withheld_and_previously_assigned_ids_are_preserved(self):
         token='player|whoscored|366705'
         self.registry.value['withheld']={token:'review rejected'}
@@ -128,8 +166,12 @@ class PlayerBridgeTests(unittest.TestCase):
         from collection.datasetPackaging import package_saved
         with patch('concordance.playerBridge.recover_lineup_aliases',return_value={'recovered':[],'conflicts':[]}):
             self.case.write(players=self.players)
-        atomic_json(self.source/'job.json',{'competition':'Premier League','season':'2024/2025'})
+        # A canonical provider-only cache need not have a combined job.json.
+        self.cache.path('whoscored','match/300').unlink()
         with patch('dataset_builder.package_collection',side_effect=AssertionError('Unexpected season export')):
+            self.assertEqual(package_saved(self.case.root,self.case.dataset,references_only=True,
+                                           report=lambda *a,**k:None),0)
+            self.raw()
             result=package_saved(self.case.root,self.case.dataset,references_only=True,report=lambda *a,**k:None)
         self.assertEqual(result,0)
         from concordance.registry import Registry
