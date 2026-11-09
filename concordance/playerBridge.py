@@ -16,6 +16,46 @@ from providers.scores import whoscored_scores
 from .identityReferences import accepted_aliases
 
 
+# FC Nantes' official match sheet names Paolo as Ajaccio's No. 32.
+# https://www.fcnantes.com/articles/20222023/fdm-filinfo.php?num=32
+# FotMob identifies him as 1306227; SofaScore's lineup points to his brother.
+REVIEWED_EVENT_PLAYERS = (
+    ('1643776', '470769', '1306227', '1152852', 'Paolo Lebas'),
+)
+
+
+def reviewed_event_players(rows, registry):
+    """Publish reviewed non-SofaScore identities for fixtures in this bundle."""
+    if registry is None:
+        return []
+    matches = {row['entity_id'] for row in rows if row.get('entity_id')
+               and row.get('whoscored_fixture_check') in (None, '', 'missing', 'bridge_only', 'validated')}
+    players = []
+    holds = registry.value.get('withheld', {})
+    for match, who, fot, rejected_sofa, name in REVIEWED_EVENT_PLAYERS:
+        if registry.lookup('match', 'whoscored', match) not in matches:
+            continue
+        native = {'whoscored_id': who, 'fotmob_id': fot}
+        links = [('whoscored', who), ('fotmob', fot)]
+        tokens = [f'player|{provider}|{pid}' for provider, pid in links]
+        if any(holds.get(token) not in (None, 'ambiguous_provider_link') for token in tokens):
+            raise ValueError(f'Reviewed event player {name} has an unresolved identity hold')
+        rejected = registry.lookup('player', 'sofascore', rejected_sofa)
+        owners = {token: registry.lookup('player', provider, pid)
+                  for token, (provider, pid) in zip(tokens, links)}
+        if len(set(owners.values()) - {'', rejected}) > 1:
+            raise ValueError(f'Reviewed event player {name} has conflicting canonical identities')
+        for token, owner in owners.items():
+            if rejected and owner == rejected:
+                registry.value['aliases'].pop(token)
+        identity = registry.assign('player', native)
+        for token in tokens:
+            holds.pop(token, None)
+        players.append({**identity, **native, 'whoscored_name': name, 'fotmob_name': name,
+                        'reviewed_event_player_match_id': match})
+    return players
+
+
 def _cached_match(cache, row, aliases, provider, prefix, registry):
     entity = row['entity_id']
     explicit = str(row.get(provider + '_match_id') or '')
