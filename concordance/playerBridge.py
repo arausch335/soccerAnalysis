@@ -104,7 +104,9 @@ def recover_lineup_aliases(root, rows, players, registry, *, trace_player=None):
             if entity in allowed:
                 aliases[entity].add(alias)
     match_aliases = accepted_aliases(registry, 'match')
-    claims = defaultdict(lambda: {'entities': set(), 'examples': []})
+    withheld = registry.value.get('withheld', {})
+    claims = defaultdict(lambda: {'entities': set(), 'examples': [], 'confirmed_shirt_match': False})
+    disputed = set()
     rejected = REJECTED_PLAYER_ID_LINKS | rejected_player_links(root)
     bridges = index(root)
     for row in rows:
@@ -193,10 +195,12 @@ def recover_lineup_aliases(root, rows, players, registry, *, trace_player=None):
                 example = {'match_entity_id': match, 'provider_match_id': who, 'side': side,
                            'player_name': who_players[native][0], 'method': method}
                 if not baseline_id:
+                    disputed.add(native)
                     conflicts.append({'provider_player_id': native, 'reason': method, **example})
                     continue
                 entity = registry.lookup('player', 'sofascore', baseline_id)
                 if entity not in aliases:
+                    disputed.add(native)
                     skipped['no_published_sofascore_player'] += 1
                     continue
                 approved = (REVIEWED_MATCH_PLAYER_IDS.get(('whoscored', int(who) if who.isdigit() else who, native))
@@ -205,32 +209,49 @@ def recover_lineup_aliases(root, rows, players, registry, *, trace_player=None):
                 if (('whoscored', native, baseline_id) in rejected
                         or (approved is not None and str(approved) != baseline_id)
                         or bridges.same('player', 'whoscored', native, 'sofascore', baseline_id) is False):
+                    disputed.add(native)
                     conflicts.append({'provider_player_id': native,
                                       'reason': 'rejected_or_conflicting_player_link', **example})
                     continue
                 claim = claims[native]
                 claim['entities'].add(entity)
+                # A quarantine needs stronger evidence than a new name-only link.
+                if (withheld.get('player|whoscored|' + native) == 'ambiguous_provider_link'
+                        and validation == 'validated' and baseline.get('confirmed') is True
+                        and method == 'unique_lineup_name'):
+                    shirt = sofa_players[baseline_id][1]
+                    known = {bridges.canonical_id(v) for v in bridges.ids('player', 'whoscored', native)}
+                    if (shirt and who_players[native][1] == shirt and (not known or known == {entity})
+                            and all(sum(number == shirt for _, number in roster.values()) == 1
+                                    for roster in (sofa_players, who_players))):
+                        claim['confirmed_shirt_match'] = True
                 if len(claim['examples']) < 3:
                     claim['examples'].append(example)
     # Collect every fixture claim before accepting a global provider alias.
     for native, claim in sorted(claims.items()):
         token = 'player|whoscored|' + native
         targets = claim['entities']
+        held = withheld.get(token)
+        releasable = (held == 'ambiguous_provider_link' and claim['confirmed_shirt_match']
+                      and native not in disputed)
         if len(targets) != 1:
             reason = 'conflicting_lineup_identities'
-        elif token in registry.value.get('withheld', {}):
+        elif token in withheld and not releasable:
             reason = 'withheld_provider_mapping'
         else:
             entity = next(iter(targets))
             existing = registry.lookup('player', 'whoscored', native)
             if existing and existing != entity:
                 reason = 'existing_mapping_disagrees'
-            elif existing == entity:
+            elif existing == entity and not releasable:
                 continue
             else:
+                if releasable:
+                    withheld.pop(token)
                 registry.value['aliases'][token] = min(aliases[entity])
                 recovered.append({'provider': 'whoscored', 'provider_player_id': native,
-                                  'entity_player_id': entity, 'examples': claim['examples']})
+                                  'entity_player_id': entity, 'examples': claim['examples'],
+                                  **({'cleared_withheld_reason': held} if releasable else {})})
                 continue
         conflicts.append({'provider_player_id': native, 'candidate_entities': sorted(targets),
                           'reason': reason, 'examples': claim['examples']})
@@ -256,9 +277,10 @@ def main():
     rows = [row for row in wide_rows(args.dataset_root)
             if (match and row['entity_id'] == match)
             or row.get('whoscored_match_id') == args.match_id]
-    result = {'fixture_rows': len(rows), 'match_entity_id': match}
+    result = {'scope': 'single_fixture_diagnostic', 'fixture_rows': len(rows), 'match_entity_id': match}
     if args.player_id:
         result['published_player_entity_id'] = registry.lookup('player', 'whoscored', args.player_id)
+        result['withheld_reason'] = registry.value.get('withheld', {}).get('player|whoscored|' + args.player_id)
     result.update(recover_lineup_aliases(args.data_root, rows,
                   reference_rows(args.dataset_root, 'player'), registry, trace_player=args.player_id))
     print(json.dumps(result, indent=2))

@@ -431,6 +431,8 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
                 'fixture_team_bridge':{'recovered_aliases':len(team_bridge_audit['recovered']),
                     'conflicting_aliases':len(team_bridge_audit['conflicts']),'conflict_examples':team_bridge_audit['conflicts'][:20]},
                 'fixture_player_bridge':{'recovered_aliases':len(player_bridge_audit['recovered']),
+                    'cleared_automatic_holds':sum(bool(item.get('cleared_withheld_reason'))
+                                                  for item in player_bridge_audit['recovered']),
                     'conflicting_aliases':len(player_bridge_audit['conflicts']),
                     'conflict_examples':player_bridge_audit['conflicts'][:20],
                     'skipped_evidence':dict(player_bridge_audit.get('skipped',{}))}}

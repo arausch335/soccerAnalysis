@@ -94,10 +94,11 @@ validated fixture. It prefers a unique normalized name. Where the given name
 differs, it requires a shared surname and a shirt number unique on both
 lineups. Older fixture rows without a validation label can use an accepted
 match alias after checking the raw match date, team sides and known scores.
-The bridge reuses the existing canonical
-player, including bench/event players without populated statistics. Names on
-the opposite team, ambiguous names, contradictory fixture claims and rejected
-or withheld provider links cannot create a mapping.
+The bridge reuses the existing canonical player, including bench/event players
+without populated statistics. It clears an automatic `ambiguous_provider_link`
+hold only if a validated fixture has a confirmed SofaScore lineup, a unique
+exact name and matching unique shirt number on the same side, and no competing
+lineup or identity evidence. Manual rejections and other holds stay in force.
 
 Recovered links are saved in the exported identity registry and
 `metadata/player_ids`; recovery, conflict and skipped evidence counts appear in
@@ -110,6 +111,7 @@ evidence stays unresolved and requires identity review.
 
 To inspect a particular missing ID on a machine with the raw cache and bundle,
 run `python -m concordance.playerBridge --match-id MATCH_ID --player-id PLAYER_ID`.
-This command reports the published link and available lineup evidence without
-changing the dataset.
+This command reports the published link and available evidence for one fixture
+without changing the dataset. Packaging checks for competing claims across
+fixtures before clearing a hold.
 

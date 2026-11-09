@@ -120,6 +120,10 @@ class PlayerBridgeTests(unittest.TestCase):
 
     def test_withheld_and_previously_assigned_ids_are_preserved(self):
         token='player|whoscored|366705'
+        self.sofa['confirmed'] = True
+        self.sofa['home']['players'][0]['shirtNumber'] = 11
+        self.who['matchCentreData']['home']['players'][0]['shirtNo'] = 11
+        self.raw()
         self.registry.value['withheld']={token:'review rejected'}
         self.assertEqual(self.recover()['conflicts'][0]['reason'],'withheld_provider_mapping')
         del self.registry.value['withheld']
@@ -127,13 +131,37 @@ class PlayerBridgeTests(unittest.TestCase):
         result=self.recover();self.assertEqual(result['conflicts'][0]['reason'],'existing_mapping_disagrees')
         self.assertEqual(self.registry.lookup('player','whoscored','366705'),self.players[1]['entity_id'])
 
+    def test_confirmed_lineup_releases_automatic_hold_in_the_published_registry(self):
+        token = 'player|whoscored|366705'
+        self.registry.withhold('player', 'whoscored', '366705', 'ambiguous_provider_link')
+        self.assertEqual(self.recover()['conflicts'][0]['reason'], 'withheld_provider_mapping')
+        self.sofa['confirmed'] = True
+        self.sofa['home']['players'][0]['shirtNumber'] = 11
+        self.who['matchCentreData']['home']['players'][0]['shirtNo'] = 11
+        self.raw()
+        manifest = self.case.write(players=self.players)
+        registry = read_registry(self.case.dataset/'concordance')
+        self.assertNotIn(token, registry.get('withheld', {}))
+        self.assertEqual(registry['published'][registry['aliases'][token]], self.players[0]['entity_id'])
+        self.assertEqual(manifest['fixture_player_bridge']['cleared_automatic_holds'], 1)
+
     def test_rejected_pairs_cannot_be_reintroduced_by_names(self):
+        self.registry.withhold('player', 'whoscored', '366705', 'ambiguous_provider_link')
+        self.sofa['confirmed'] = True
+        self.sofa['home']['players'][0]['shirtNumber'] = 11
+        self.who['matchCentreData']['home']['players'][0]['shirtNo'] = 11
+        self.raw()
         with patch('concordance.playerBridge.REJECTED_PLAYER_ID_LINKS',{('whoscored','366705','592560')}):
             result=self.recover()
         self.assertEqual(result['recovered'],[])
         self.assertEqual(result['conflicts'][0]['reason'],'rejected_or_conflicting_player_link')
 
     def test_contradictory_fixture_claims_are_collected_before_acceptance(self):
+        self.registry.withhold('player', 'whoscored', '366705', 'ambiguous_provider_link')
+        self.sofa['confirmed'] = True
+        self.sofa['home']['players'][0]['shirtNumber'] = 11
+        self.who['matchCentreData']['home']['players'][0]['shirtNo'] = 11
+        self.raw()
         who=deepcopy(self.who);who['matchCentreData']['home']['players'][0]['name']='Giannis Masouras'
         sofa=deepcopy(self.sofa);sofa['home']['players']=sofa['away']['players']
         self.raw(1,sofa,who);result=self.recover()
