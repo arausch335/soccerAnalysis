@@ -181,6 +181,26 @@ class PlayerBridgeTests(unittest.TestCase):
         self.assertIn('366705',details.lineup_player_aliases)
         self.assertEqual(int(read_table(base,'fixtures/fixtures').has_player_stats.sum()),1)
 
+    def test_reviewed_event_player_is_published_separately_from_wrong_sofascore_player(self):
+        victor = self.registry.assign('player', {'sofascore_id': '1152852', 'fotmob_id': '1306227'})
+        self.players.append({**victor, 'sofascore_id': '1152852', 'sofascore_name': 'Victor Lebas'})
+        self.registry.withhold('player', 'whoscored', '470769', 'ambiguous_provider_link')
+        fixture = self.rows[0]
+        self.registry.value['aliases']['match|whoscored|1643776'] = fixture['alex_match_id']
+        fixture['whoscored_match_id'] = '1643776'
+        base = self.case.dataset/'concordance'
+
+        for _ in range(2):
+            self.case.write(players=self.players)
+            validate(base)
+            saved = read_table(base, 'player_ids').set_index('entity_id')
+            paolo = saved[saved.whoscored_id == '470769'].iloc[0]
+            self.assertNotEqual(paolo.name, victor['entity_id'])
+            self.assertEqual((paolo.entity_name, paolo.fotmob_id), ('Paolo Lebas', '1306227'))
+            self.assertFalse(paolo.sofascore_id)
+            self.assertEqual(saved.loc[victor['entity_id']].sofascore_id, '1152852')
+            self.assertNotIn('player|whoscored|470769', read_registry(base).get('withheld', {}))
+
     def test_representative_id_and_additional_accepted_alias_are_both_retained(self):
         self.registry.assign('player',{'sofascore_id':'592560','whoscored_id':'10'},'rp2ea21959b1f5da')
         self.players[0]['whoscored_id']='10'
