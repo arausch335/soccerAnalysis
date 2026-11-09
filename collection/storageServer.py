@@ -327,6 +327,10 @@ class StorageServer:
                 try:
                     worker,role=self.authenticate();url=urlsplit(self.path);parts=url.path.strip('/').split('/')
                     if self.command=='GET' and parts==['v1','status']:return self.reply(archive.status())
+                    if self.command=='POST' and parts==['v1','raw-inventory']:
+                        if role!='consumer':raise PermissionError('Only consumers can verify raw inventory')
+                        from .rawInventory import REQUEST_BYTES, verify_batch
+                        return self.reply(verify_batch(root,json.loads(self.body(REQUEST_BYTES))))
                     if role=='consumer' and self.command=='GET':
                         publication=archive.publication()
                         if parts==['v1','diagnostics']:return self.reply(archive.diagnostics())

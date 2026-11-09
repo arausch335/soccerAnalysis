@@ -612,6 +612,40 @@ copies automatically. No raw files are sent from MSI to Main. Transfer state,
 receipts and temporary files live under `data/_system/storage/`; do not delete
 that directory while an upload, incorporation or build is pending.
 
+### Free disk space on Main
+
+Update Main and MSI to the same Git revision and start the normal MSI worker.
+From Main, preview the copies that MSI currently holds:
+
+```bash
+python -m tools.raw_inventory
+```
+
+Main checks provider response files under `data/<competition>/<season>/raw/`.
+MSI checks the same paths on disk and confirms only matching sizes and SHA-256
+checksums. Only file metadata travels through the existing private Tailscale
+storage connection. Busy MSI batches are skipped and can be checked again later.
+
+To reclaim the previewed space, stop Main and run:
+
+```bash
+python -m tools.raw_inventory --apply
+```
+
+The apply run checks both devices again. Before Main removes any files, MSI
+keeps verified hard links under `data/_system/storage/retained-raw/`, and Main
+saves the relative paths and checksums under `data/_system/storage/raw-prune/`.
+Hard links require MSI's active archive and retention folder to be on the same
+volume. If MSI is unreachable or retention fails, Main does not start deleting.
+To restore a removed file, copy the retained object named by its checksum on
+MSI back to the relative path in Main's receipt. Keep the retention folder as
+part of the MSI backup.
+
+The cleanup covers only provider response files. Main's prepared dataset,
+checkpoints, fixture history, and review state are outside its scope. Main's
+local coverage can fall after cleanup because its checkpoints may reference
+removed raw files. Use MSI for rebuilding from the archive.
+
 ### Authority and safe assignment handoffs
 
 There is one command path for supervised collection:

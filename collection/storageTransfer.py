@@ -117,11 +117,11 @@ class NoRedirect(HTTPRedirectHandler):
 class Peer:
     def __init__(self,url,token,*,headers=None):self.url=url.rstrip('/');self.token=token;self.headers=headers or {}
 
-    def request(self,path,value=None,*,method=None,data=None):
+    def request(self,path,value=None,*,method=None,data=None,timeout=15):
         if value is not None:data=encode(value)
         headers={**self.headers,'Authorization':'Bearer '+self.token,'Content-Type':'application/json' if value is not None else 'application/octet-stream'}
         req=Request(self.url+path,data=data,headers=headers,method=method or ('POST' if data is not None else 'GET'))
-        with build_opener(ProxyHandler({}),NoRedirect()).open(req,timeout=15) as response:
+        with build_opener(ProxyHandler({}),NoRedirect()).open(req,timeout=timeout) as response:
             body=response.read(MAX_MANIFEST+1)
         if len(body)>MAX_MANIFEST:raise ValueError('Storage reply too large')
         return json.loads(body)
