@@ -127,6 +127,7 @@ def create_review(dataset,*,deferred_seasons=(),package_diagnostic=None):
                        'reviewed_team_mapping_conflict_entities':len(mapping_conflicts),
                        'reviewed_team_mapping_conflict_examples':mapping_conflicts[:20],
                        'fixture_team_bridge':manifest.get('fixture_team_bridge',{}),'team_bridge_aliases':bridge_aliases,
+                       'fixture_player_bridge':manifest.get('fixture_player_bridge',{}),
                        'unlinked_identity_references':manifest.get('unlinked_identity_references',{})}}
     after=[(p.relative_to(dataset).as_posix(),p.stat().st_size,p.stat().st_mtime_ns) for p in _files(dataset)]
     if before!=after or before_manifest!=digest(manifest_path(base)):
@@ -180,6 +181,11 @@ def print_review(review,report=print):
         report(f"Fixture team bridge: recovered {bridge['recovered_aliases']} provider aliases for use at home or away.",flush=True)
     if bridge.get('conflicting_aliases'):
         report(f"Review needed: {bridge['conflicting_aliases']} fixture team aliases had conflicting or withheld evidence; no conflicting mapping was overwritten. See coverage.json.",flush=True)
+    players=review['quality'].get('fixture_player_bridge',{})
+    if players.get('recovered_aliases'):
+        report(f"Player bridge: recovered {players['recovered_aliases']} WhoScored aliases from matched lineup sides.",flush=True)
+    if players.get('conflicting_aliases'):
+        report(f"Review needed: {players['conflicting_aliases']} player lineup links had ambiguous, conflicting or withheld evidence. See coverage.json.",flush=True)
     if review['quality'].get('fotmob_statistic_conflict_rows'):
         report(f"Review needed: {review['quality']['fotmob_statistic_conflict_rows']} player rows contain conflicting FotMob statistics. Disputed components are blank; details are in the season CSVs and coverage.json.",flush=True)
     report('Coverage saved to coverage.json; open the Dataset page in the local dashboard for season details.',flush=True)
@@ -198,3 +204,4 @@ def print_package_diagnostic(diagnostic,report=print,*,published=True):
     if diagnostic.get('fatal_error'):report('  Publication validation failed: '+diagnostic['fatal_error'],flush=True)
     if failed or deferred:
         report('Next step: fix the listed inputs, then run python main.py --package. Incremental mode reuses completed work.',flush=True)
+
