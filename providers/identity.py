@@ -82,6 +82,8 @@ REVIEWED_PROVIDER_PLAYER_ID_ALIASES = {
 REJECTED_PLAYER_ID_LINKS = {
     ('fotmob','1197006','1191206'), # Álvaro Fernández != César Fernández
     ('fotmob','1152741','1133106'), # Adam Toula != Daniel Toula
+    ('fotmob','1306227','1152852'), # Paolo Lebas and Victor Lebas are distinct
+    ('whoscored','470769','1152852'), # Same incorrect SofaScore lineup link
 }
 
 # Provider team pages reviewed after cached fixture indexes were exhausted.
