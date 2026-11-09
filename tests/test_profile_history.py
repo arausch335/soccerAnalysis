@@ -70,18 +70,20 @@ class ProfileHistoryTests(unittest.TestCase):
         with TemporaryDirectory() as tmp,identity_scope(tmp):
             start=date(2020,1,1);end=start+timedelta(days=1000)
             left=profile('fotmob',77,career=[{'club':'AEK Athens','start':str(start),'end':str(end)}])
-            # With 30 days of date tolerance, 770 actual + 30 tolerated = 800/1000.
+            # Symmetric comparison counts the 30-day tolerance on one side only.
             right=profile('sofascore',7,career=[
-                {'club':'AEK Athens','start':str(start),'end':str(start+timedelta(days=770))},
-                {'club':'Other','start':str(start+timedelta(days=770)),'end':str(end)}])
+                {'club':'AEK Athens','start':str(start),'end':str(start+timedelta(days=584))},
+                {'club':'Other','start':str(start+timedelta(days=584)),'end':str(end)}])
             score=compare_careers(left,right,root=tmp,as_of=end)
-            # Symmetric comparison also counts the Other stint's unmatched days.
-            self.assertEqual(score['similarity_percent'],78.5)
+            self.assertEqual(score['similarity_percent'],59.9)
             self.assertEqual(score['state'],'conflict')
-            right['career'][0]['end']=right['career'][1]['start']=str(start+timedelta(days=790))
+            right['career'][0]['end']=right['career'][1]['start']=str(start+timedelta(days=585))
             score=compare_careers(left,right,root=tmp,as_of=end)
-            self.assertEqual(score['similarity_percent'],80.5)
+            self.assertEqual(score['similarity_percent'],60)
             self.assertEqual(score['state'],'match')
+            p=investigated(source=left,baseline=right)
+            store=ReviewStore(tmp);store.ingest([p])
+            self.assertEqual(player_link('fotmob',77,tmp),'7')
             p=investigated();p['investigation']['source']['career'].reverse()
             for row in p['investigation']['source']['career']:
                 row['club']='Other' if row['club']=='AEK Athens' else 'AEK Athens'
@@ -97,7 +99,7 @@ class ProfileHistoryTests(unittest.TestCase):
 
     def test_high_history_similarity_never_overrides_birthday_conflict_or_manual_rejection(self):
         with TemporaryDirectory() as tmp,identity_scope(tmp):
-            p=investigated();p['investigation']['source']['birth_date']='2002-07-04'
+            p=investigated();p['investigation']['source']['birth_date']='2002-07-18'
             store=ReviewStore(tmp);store.ingest([p])
             self.assertEqual(assess_profiles(p,tmp)['career_similarity']['similarity_percent'],100)
             self.assertIsNone(player_link('fotmob',77,tmp))

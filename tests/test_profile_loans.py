@@ -53,7 +53,8 @@ class LoanHistoryTests(unittest.TestCase):
     def test_explicit_permanent_or_unbounded_unknown_move_is_not_exempt(self):
         self.source['career'][1]['is_loan']=False
         result=self.score();self.assertEqual(result['loan_excluded_days'],0)
-        self.assertEqual(result['state'],'conflict')
+        self.assertLess(result['similarity_percent'],100)
+        self.assertEqual(result['similarity_percent'],result['unadjusted_similarity_percent'])
         self.source['career']=self.source['career'][:2]
         self.source['career'][1].pop('is_loan');self.source['career'][1].pop('loan_parent_club');self.source['career'][1]['end']='2024-01-01'
         result=self.score();self.assertEqual(result['loan_excluded_days'],0)

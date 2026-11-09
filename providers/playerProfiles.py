@@ -8,7 +8,8 @@ from urllib.parse import urlsplit
 from .httpClient import ProviderError
 
 HOSTS={'sofascore':'www.sofascore.com','fotmob':'www.fotmob.com','whoscored':'www.whoscored.com'}
-PROFILE_SCHEMA=4
+PROFILE_SCHEMA=5
+BIRTHDAY_TOLERANCE_DAYS=14
 
 
 def _object(value,label):
@@ -95,6 +96,11 @@ def sofa_profile(pid,payload,history):
             'sources':[f'https://www.sofascore.com/api/v1/player/{pid}',f'https://www.sofascore.com/api/v1/player/{pid}/transfer-history']}
 
 
+def _fotmob_team_id(value):
+    # Historical clubs can have a name and dates but no assigned FotMob ID.
+    return str(value) if value and str(value)!='-1' else None
+
+
 def fotmob_profile(pid,p):
     p=_object(p,'FotMob profile')
     if str(p.get('id'))!=str(pid):raise ProviderError('FotMob profile belongs to another player')
@@ -111,14 +117,14 @@ def fotmob_profile(pid,p):
         if participant not in (None,'') and str(participant)!=str(pid):
             raise ProviderError('FotMob career row identifies another player')
         if row.get('team') and not row.get('hasUncertainData'):
-            career.append({'club':row['team'],'club_id':str(row['teamId']) if row.get('teamId') else None,
+            career.append({'club':row['team'],'club_id':_fotmob_team_id(row.get('teamId')),
                            'start':day(row.get('startDate')),'end':day(row.get('endDate')),
                            'is_loan':loan_status(row),'transfer_type':row.get('transferType')})
     birthday=day(p.get('birthDate'))
     if birthday=='0001-01-01':birthday=None  # Provider placeholder for an unknown birthday.
+    team=_object(p.get('primaryTeam'),'FotMob current team')
     return {'provider':'fotmob','id':str(pid),'name':p.get('name',''),'birth_date':birthday,
-            'club':_object(p.get('primaryTeam'),'FotMob current team').get('teamName'),
-            'club_id':str(p['primaryTeam']['teamId']) if _object(p.get('primaryTeam'),'FotMob current team').get('teamId') else None,'career':career,
+            'club':team.get('teamName'),'club_id':_fotmob_team_id(team.get('teamId')),'career':career,
             'sources':[f'https://www.fotmob.com/players/{pid}']}
 
 
@@ -202,8 +208,10 @@ def assess_profiles(proposal,root=None):
     if not left or not right:return value
     checked_profile(left,proposal['provider'],proposal['source_id']);checked_profile(right,'sofascore',proposal['target_id'])
     same=club_matcher(root)
-    if left.get('birth_date') and right.get('birth_date'):
-        checks['birthday']='match' if left['birth_date']==right['birth_date'] else 'conflict'
+    birthdays=left.get('birth_date'),right.get('birth_date')
+    if all(birthdays) and '0001-01-01' not in birthdays:
+        difference=abs(date.fromisoformat(birthdays[0])-date.fromisoformat(birthdays[1])).days
+        checks['birthday']='match' if difference<=BIRTHDAY_TOLERANCE_DAYS else 'conflict'
     if left.get('club') and right.get('club'):
         checks['club']='match' if same(left,right,proposal['provider'],'sofascore') else 'conflict'
     career=compare_careers(left,right,root=root,same_club=same)
@@ -249,7 +257,8 @@ class ProfileVerifier:
         for p in proposals:
             if p['kind']!='player':continue
             left=self.profile(p['provider'],p['source_id']);right=self.profile('sofascore',p['target_id'])
-            investigation={'workflow':'main-profile-review-v1','checked_at':stamp(),'status':'checked','errors':[v['error'] for v in (left,right) if 'error' in v]}
+            investigation={'workflow':'main-profile-review-v1','profile_schema':PROFILE_SCHEMA,
+                           'checked_at':stamp(),'status':'checked','errors':[v['error'] for v in (left,right) if 'error' in v]}
             if 'error' not in left:investigation['source']=left
             if 'error' not in right:investigation['baseline']=right
             for name,value in ((p['provider'],left),('sofascore',right)):
@@ -279,6 +288,10 @@ def needs_profile_check(proposal):
     if all(evidence.get(side) for side in ('source','baseline')) and any(
             evidence[side].get('profile_schema')!=PROFILE_SCHEMA for side in ('source','baseline')):return True
     if not evidence.get('errors'):return False
+    # A former FotMob parser rejected entire profiles containing placeholder club IDs.
+    if (proposal.get('provider')=='fotmob' and not evidence.get('source') and
+            evidence.get('profile_schema')!=PROFILE_SCHEMA and 'Invalid club ID' in evidence['errors']):
+        return True
     # Revisit failed checks inherited from the former worker workflow once.
     if evidence.get('workflow')!='main-profile-review-v1':return True
     try:

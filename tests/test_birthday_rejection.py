@@ -23,12 +23,18 @@ class BirthdayRuleTests(unittest.TestCase):
             for left,right in [(first,after),(after,first)]:
                 self.assertIn('one calendar month',birthday_rejection_reason(candidate(left,right)))
 
-    def test_missing_birthdays_and_timezone_sized_differences_stay_for_review(self):
-        for left,right in [(None,'1998-04-07'),('1998-04-07',None),('1998-04-06','1998-04-07')]:
+    def test_missing_birthdays_stay_for_review(self):
+        for left,right in [(None,'1998-04-07'),('1998-04-07',None),('0001-01-01','1998-04-07')]:
             self.assertIsNone(birthday_rejection_reason(candidate(left,right)))
             with TemporaryDirectory() as root,identity_scope(root):
                 store=ReviewStore(root);store.ingest([candidate(left,right)])
                 self.assertEqual(store.snapshot()['total'],1);self.assertEqual(store.snapshot()['decisions'],[])
+
+    def test_fourteen_day_difference_can_confirm_in_either_direction(self):
+        for left,right in [('1999-12-31','2000-01-14'),('2000-01-14','1999-12-31')]:
+            with TemporaryDirectory() as root,identity_scope(root):
+                store=ReviewStore(root);store.ingest([candidate(left,right)])
+                self.assertEqual(store.snapshot()['decisions'][0]['action'],'confirm')
 
     def test_large_birthday_difference_rejects_even_without_club_or_career(self):
         with TemporaryDirectory() as root,identity_scope(root):
@@ -42,7 +48,7 @@ class BirthdayRuleTests(unittest.TestCase):
     def test_human_confirmation_and_rejection_are_preserved(self):
         for action in ('confirm','reject'):
             with TemporaryDirectory() as root,identity_scope(root):
-                store=ReviewStore(root);p=candidate('1990-01-01','1990-01-02');store.ingest([p]);pid=store.snapshot()['pending'][0]['id']
+                store=ReviewStore(root);p=candidate('1990-01-01','1990-01-16');store.ingest([p]);pid=store.snapshot()['pending'][0]['id']
                 store.decide(pid,action);p=candidate('1990-01-01','1995-05-01');store.ingest([p]);store.auto_confirm()
                 self.assertEqual(store.snapshot()['decisions'][0]['action'],action)
                 self.assertEqual(store.snapshot()['decisions'][0]['review_method'],'manual')

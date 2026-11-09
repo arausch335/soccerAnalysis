@@ -131,6 +131,33 @@ class PlayerProfileTests(unittest.TestCase):
                 self.assertIsNone(value['club']);self.assertEqual(value['career'],[])
         with self.assertRaises(ProviderError):fotmob_profile(77,{'id':77,'primaryTeam':'bad shape'})
 
+    def test_fotmob_placeholder_club_id_preserves_dated_stint_and_retries_cached_error(self):
+        from providers.identityReview import stamp
+        from providers.playerProfiles import PROFILE_SCHEMA,needs_profile_check
+        with TemporaryDirectory() as tmp,identity_scope(tmp):
+            fot=Mock()
+            fot.player_profile.side_effect=lambda pid:fotmob_profile(pid,{
+                'id':pid,'birthDate':'2002-07-03','primaryTeam':{'teamId':34,'teamName':'AEK Athens'},
+                'careerHistory':{'careerItems':{'senior':{'teamEntries':[
+                    {'team':'Primeiro de Agosto','teamId':-1,'startDate':'2020-07-01','endDate':'2023-01-01'},
+                    {'team':'AEK Athens','teamId':34,'startDate':'2023-01-01'}]}}}})
+            sofa=Mock();sofa.player_profile.return_value=profile('sofascore',7)
+            verifier=ProfileVerifier({'fotmob':fot,'sofascore':sofa},tmp,lambda *a:None)
+            error={'error':'Invalid club ID','profile_schema':PROFILE_SCHEMA-1}
+            with verifier.store.connect() as db:
+                db.execute('INSERT INTO profiles VALUES(?,?,?,?)',('fotmob','77',json.dumps(error),'2099'))
+            old=proposal(investigation={'workflow':'main-profile-review-v1','checked_at':stamp(),
+                                        'errors':[error['error']]})
+            self.assertTrue(needs_profile_check(old))
+            self.assertFalse(needs_profile_check({**old,'investigation':{
+                **old['investigation'],'profile_schema':PROFILE_SCHEMA}}))
+            evidence=verifier.investigate([old])[0]['investigation']
+            self.assertEqual(evidence['source']['club_id'],'34')
+            stint=evidence['source']['career'][0]
+            self.assertEqual((stint['club'],stint['club_id'],stint['start'],stint['end']),
+                             ('Primeiro de Agosto',None,'2020-07-01','2023-01-01'))
+            self.assertEqual(player_link('fotmob',77),'7')
+
     def test_sofascore_null_team_and_transfer_destination_do_not_crash(self):
         value=sofa_profile(7,{'player':{'id':7,'team':None}},
             {'transferHistory':[{'player':{'id':7},'transferTo':None,'toTeamName':'Former Club','transferDateTimestamp':1609459200}]})

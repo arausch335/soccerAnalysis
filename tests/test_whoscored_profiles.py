@@ -60,7 +60,7 @@ class WhoScoredProfileTests(unittest.TestCase):
             self.assertEqual(result['checks']['birthday'],'match');self.assertEqual(result['checks']['club'],'missing')
             self.assertTrue(any('current club' in e for e in result['errors']))
             self.assertEqual(ReviewStore(root).snapshot()['decisions'],[])
-            sofa.player_profile.return_value=profile('sofascore',862062,birth_date='1998-04-06')
+            sofa.player_profile.return_value=profile('sofascore',862062,birth_date='1998-04-22')
             result=verifier.investigate([{**p,'target_id':'862062'}])[0]['investigation']
             self.assertEqual(result['checks']['birthday'],'conflict')
             self.assertEqual(result['status'],'conflict')

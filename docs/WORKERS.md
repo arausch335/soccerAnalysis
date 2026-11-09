@@ -411,9 +411,9 @@ same connected Chrome extension when needed. Soccer Collector 0.7.0 adds only
 public player profiles, transfer history, and career-table reads to its existing
 provider allowlists. Prepare and reload the extension after pulling this update.
 
-An identity is automatically confirmed only when the full birth dates and current
-clubs agree and dated career histories score at least 80% agreement. Club
-comparison uses the existing project/Reep IDs and reviewed club groups before
+An identity is automatically confirmed only when the birth dates are within
+14 days, current clubs agree, and dated career histories score at least 60%
+agreement. Club comparison uses the existing project/Reep IDs and reviewed club groups before
 approved display-name aliases. Profiles retain native club IDs so different
 provider names for an identified club count as the same club.
 The score weights matching club-days in the period both providers cover, allows
@@ -454,6 +454,7 @@ profile read does not trigger the long match-verification reload workflow.
 
 A missing current club (`primaryTeam: null` on FotMob) or missing career data
 remains missing evidence. It cannot automatically confirm a player identity.
+FotMob career entries with a placeholder club ID retain their club name and dates.
 Malformed optional profile responses are saved as lookup errors for review;
 match collection continues instead of stopping the worker.
 
@@ -805,10 +806,10 @@ one match row per fixture pair. Existing review decisions remain unchanged.
 Player proposals with two known birthdays more than one calendar month apart are
 automatically rejected and removed from manual review. The limit is measured
 from the earlier birthday to the same day of the next month (clamped at month
-end). Equal-to-one-month, smaller differences, and missing birthdays remain for
-review; they never establish an automatic match. Existing human decisions are
-preserved. Automatic birthday rejections keep their dates and reason in reviewed
-history and are shared with workers like other rejected identity pairs.
+end). Differences of 15 days through that limit, and missing birthdays, require
+manual review. Existing human decisions are preserved. Automatic birthday
+rejections keep their dates and reason in reviewed history and are shared with
+workers like other rejected identity pairs.
 
 
 MSI incorporates every fully received raw upload in its background maintenance

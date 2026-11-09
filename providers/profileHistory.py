@@ -2,8 +2,8 @@
 from datetime import date,timedelta
 from functools import lru_cache
 
-VERSION=4
-THRESHOLD=80
+VERSION=5
+THRESHOLD=60
 DATE_TOLERANCE=30
 
 
