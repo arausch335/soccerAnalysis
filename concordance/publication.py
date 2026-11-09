@@ -387,7 +387,8 @@ def publish(root,dataset,rows,*,matches=(),teams=(),players=(),entities=(),regis
     from .teamBridge import recover_fixture_aliases
     team_bridge_audit=recover_fixture_aliases(rows,registry)
     # Event players can lack the provider link in old performance checkpoints.
-    from .playerBridge import recover_lineup_aliases
+    from .playerBridge import recover_lineup_aliases, reviewed_event_players
+    players.extend(reviewed_event_players(rows,registry))
     player_bridge_audit=recover_lineup_aliases(root,rows,players,registry)
     player_evidence=defaultdict(list)
     for item in player_bridge_audit['recovered']:player_evidence[item['entity_player_id']].append(item)
