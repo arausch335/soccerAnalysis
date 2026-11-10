@@ -109,7 +109,7 @@ def _install_dataset(peer,manifest,output,staging_root,*,exclude=()):
             else:peer.download(item['sha256'],incoming)
             if incoming.stat().st_size!=item['size'] or digest(incoming)!=item['sha256']:raise ValueError('Dataset file differs from manifest')
         if (stage/'dataset-manifest.json').is_file():
-            from dataset_handoff import verify
+            from dataset_pipeline.handoff import verify
             verify(stage)
         canonical_bundle=stage/'concordance'
         canonical_publication=(canonical_bundle/'metadata/manifest.json').is_file()
@@ -371,7 +371,7 @@ class StorageAgent:
         from .inventoryCache import InventoryInterrupted
         from filelock import Timeout
         from .backgroundImports import import_parts, snapshot_data
-        from dataset_builder import build_dataset
+        from dataset_pipeline.build import build_dataset
         check=Checkpoint(self.stop);check();changed=False
         if not self.server:return changed
         archive=self.server.archive

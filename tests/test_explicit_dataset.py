@@ -8,13 +8,13 @@ from unittest.mock import patch
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 from collection.datasetPackaging import package_saved
 from collection.storageAgent import StorageAgent,install_dataset
 from collection.storageServer import Archive
 from collection.workerIdentity import ensure_identity
 from concordance import publication as pub
-from dataset_review import create_review,load_review
+from dataset_pipeline.review import create_review,load_review
 from storage.pandasStore import atomic_json
 from tests.test_providers import Sofa
 from tests.test_parquet_concordances import ParquetTests
@@ -38,7 +38,7 @@ class ExplicitDatasetTests(unittest.TestCase):
         self.saved_match();archive=Archive(self.root);archive.schedule_build('premier-league/2024-2025')
         agent=StorageAgent(self.root,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.output,log=lambda _:None)
         agent.server=SimpleNamespace(archive=archive)
-        with patch('dataset_builder.build_dataset',side_effect=AssertionError('automatic build')),patch.object(archive,'publish',side_effect=AssertionError('automatic publication')):
+        with patch('dataset_pipeline.build.build_dataset',side_effect=AssertionError('automatic build')),patch.object(archive,'publish',side_effect=AssertionError('automatic publication')):
             agent.maintenance_once()
         self.assertIsNone(archive.publication());self.assertEqual(archive.status()['pending_builds'],1)
         self.assertEqual(agent.maintenance_status['state'],'awaiting_package')
@@ -54,7 +54,7 @@ class ExplicitDatasetTests(unittest.TestCase):
         manifest=archive.publication();self.assertIn('coverage.json',{f['path'] for f in manifest['files']})
         self.assertTrue((self.output/'concordance/fixtures/part-00000.parquet').is_file())
         archive.schedule_build('premier-league/2024-2025')
-        with patch('dataset_builder._source_id_rows',side_effect=AssertionError('unchanged IDs')),patch('dataset_builder.package_collection',side_effect=AssertionError('unchanged export')),patch('dataset_review.create_review',side_effect=AssertionError('unchanged review')):
+        with patch('dataset_pipeline.build._source_id_rows',side_effect=AssertionError('unchanged IDs')),patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('unchanged export')),patch('dataset_pipeline.review.create_review',side_effect=AssertionError('unchanged review')):
             self.assertEqual(package_saved(self.root,self.output,report=lambda *a,**k:None),0)
         self.assertEqual(archive.publication(),manifest)
         self.assertEqual(archive.status()['pending_builds'],0)

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import re
 
-from dataset_builder import _id_row, _reviewed_provider_player_id
+from dataset_pipeline.build import _id_row, _reviewed_provider_player_id
 from providers.reep import PROVIDERS
 from storage.pandasStore import PandasStore
 

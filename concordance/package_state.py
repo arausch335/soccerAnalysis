@@ -27,8 +27,8 @@ def recipe():
     """Code and reviewed reference changes also invalidate cached projections."""
     import config
     project = config.PROJECT_ROOT
-    paths = [project/'dataset_builder.py']
-    for directory in ('collection', 'providers', 'fixtures', 'concordance', 'storage', 'config'):
+    paths = []
+    for directory in ('dataset_pipeline', 'collection', 'providers', 'fixtures', 'concordance', 'storage', 'config'):
         paths.extend(p for p in (project/directory).rglob('*')
                      if p.is_file() and p.suffix in ('.py', '.json', '.yaml'))
     def content(path):
@@ -65,7 +65,7 @@ def source_signature(source):
 
 
 def season_outputs(source, output, tables):
-    import dataset_builder
+    import dataset_pipeline.build as dataset_builder
     if not (Path(source)/'config.json').is_file():
         return {'unavailable':None}
     settings = json.loads((Path(source)/'config.json').read_text(encoding='utf-8'))

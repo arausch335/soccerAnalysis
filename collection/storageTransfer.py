@@ -10,6 +10,7 @@ import sqlite3
 from urllib.request import Request,build_opener,ProxyHandler,HTTPRedirectHandler
 from uuid import uuid4
 
+from storage.checksums import file_digest as digest
 from storage.pandasStore import atomic_json
 
 FORMAT='soccer-data-transfer-v1'
@@ -20,13 +21,6 @@ FIXTURE_REQUIRED_PATHS = frozenset({'fixtures.csv', *(f'fixture_concordance/{nam
     'match_ids.csv', 'team_ids.csv', 'team_aliases.csv', 'issues.csv', 'coverage.csv', 'manifest.json'))})
 FIXTURE_DATASET_PATHS = FIXTURE_REQUIRED_PATHS | {'fixture_concordance/attempts.csv','concordance/team_history.csv',
     'fixture_concordance/alex_registry.json','fixture_concordance/id_redirects.csv','fixture_concordance/registry_conflicts.csv'}
-
-
-def digest(path):
-    value=hashlib.sha256()
-    with Path(path).open('rb') as stream:
-        for block in iter(lambda:stream.read(CHUNK),b''):value.update(block)
-    return value.hexdigest()
 
 
 def encode(value):return json.dumps(value,sort_keys=True,separators=(',',':')).encode()

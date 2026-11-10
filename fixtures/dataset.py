@@ -23,7 +23,7 @@ from collection.files import atomic_csv
 from collection.selection import (COMPETITIONS as COLLECTION_COMPETITIONS,
                                   months_between,
                                   season_key)
-from dataset_builder import FIXTURE_COLUMNS, _cached_provider_fixtures, fixtures_from_events
+from dataset_pipeline.build import FIXTURE_COLUMNS, _cached_provider_fixtures, fixtures_from_events
 from providers.events import whoscored_fixture
 from providers.scores import final_score
 from providers.httpClient import ProviderError

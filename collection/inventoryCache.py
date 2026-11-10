@@ -22,7 +22,7 @@ def rules_version(root,worker):
     files=['collection/inventoryCache.py','collection/ensembleProgress.py','collection/completion.py','collection/qualifiers.py',
            'collection/whoScoredData.py','collection/legacyFotmobRows.py','collection/selection.py',
            'providers/identity.py','providers/identityReview.py','providers/reep.py',
-           'providers/concordance/teams.json','review_data.py','storage/pandasStore.py']
+           'concordance/reference_data/teams.json','collection/coverage.py','storage/pandasStore.py']
     files.extend(str(p.relative_to(project)) for p in sorted((project/'models').rglob('*.py')))
     files.extend(['providers/fotMobLoader.py','providers/providerLoader.py','providers/matchLoader.py',
                   'providers/events.py','providers/scores.py','providers/matchComparison.py','providers/statistics.py'])

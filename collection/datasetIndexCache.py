@@ -17,7 +17,7 @@ def recipe():
     project=config.PROJECT_ROOT
     # Hash the projection functions, not the whole builder (which also packages
     # CSVs, resolves statistics and publishes the dataset).
-    path=project/'dataset_builder.py'
+    path=project/'dataset_pipeline/build.py'
     functions={'_identifier','_season_directory','_reviewed_provider_player_id','_id_row',
                '_provider_team_id','_cached_provider_fixtures','_checkpoint_id_rows','_source_id_rows'}
     projection=[]
@@ -26,7 +26,7 @@ def recipe():
                     if isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef)) and node.name in functions]
     paths=[project/'providers'/name for name in ('identity.py','identityReview.py','teamProfiles.py',
            'teamScope.py','events.py','team_crosswalk.py')]
-    paths.extend((project/'providers/concordance').glob('*.json'))
+    paths.extend((project/'concordance/reference_data').glob('*.json'))
     paths.extend(project/'collection'/name for name in (
         'selection.py','qualifiers.py','whoScoredData.py','legacyFotmobRows.py'))
     return tracking.digest(['identity-projection-v3',projection,

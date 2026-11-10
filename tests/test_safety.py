@@ -121,9 +121,6 @@ class SafetyTests(unittest.TestCase):
             summary,dribbles=extract_dribble_features(match,player,folder,{})
             self.assertEqual(summary['dribble_map_source'],'whoscored')
             self.assertEqual(len(dribbles),1);self.assertFalse(dribbles[0]['successful'])
-            from analysis.render_maps import render
-            # The saved baseline has no maps: rendering must show missing data.
-            self.assertTrue(render(folder,1,7).exists())
 
 
 if __name__=='__main__':unittest.main()

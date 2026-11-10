@@ -24,7 +24,7 @@ from providers.events import fotmob_fixture
 from providers.safeClient import SafeFotMobClient, SafeSofaScoreClient
 from collection.files import atomic_csv
 from collection.selection import resolve_sofascore_season
-from dataset_builder import FIXTURE_COLUMNS, fixtures_from_events
+from dataset_pipeline.build import FIXTURE_COLUMNS, fixtures_from_events
 from storage.pandasStore import atomic_json
 
 

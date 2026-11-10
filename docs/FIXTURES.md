@@ -216,7 +216,7 @@ saved provider fixture agree on teams, date and score. Corrections are recorded
 in `dataset/concordance/reconciliation/score_repairs.csv`.
 
 Human-confirmed alternate club profiles are listed by provider ID in
-`providers/concordance/team_profiles.json`. They share one project identity,
+`concordance/reference_data/team_profiles.json`. They share one project identity,
 while source fixtures retain their original provider IDs and names. New club
 references prefer the first listed profile; old IDs remain valid aliases.
 This does not create a global name alias for similarly named clubs.

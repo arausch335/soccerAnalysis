@@ -65,7 +65,7 @@ class StorageRecoveryTests(unittest.TestCase):
         calls=[]
         def build(root,output,names):
             calls.extend(names);(output/'match_ids.csv').write_text('sofascore_id\n1\n');return 0
-        with patch('dataset_builder.build_dataset',side_effect=build),patch('collection.backgroundImports.snapshot_data',wraps=__import__('collection.backgroundImports',fromlist=['snapshot_data']).snapshot_data) as snapshot:
+        with patch('dataset_pipeline.build.build_dataset',side_effect=build),patch('collection.backgroundImports.snapshot_data',wraps=__import__('collection.backgroundImports',fromlist=['snapshot_data']).snapshot_data) as snapshot:
             agent.maintenance_once(package=True)
         self.assertEqual(calls,['premier-league-2024-25']);self.assertEqual(snapshot.call_count,1)
         self.assertIsNotNone(archive.publication());self.assertEqual(archive.builds(),[])
@@ -85,7 +85,7 @@ class StorageRecoveryTests(unittest.TestCase):
         calls=[]
         def build(root,output,names):
             calls.extend(names);(output/'match_ids.csv').write_text('sofascore_id\n1\n');return 0
-        with patch('dataset_builder.build_dataset',side_effect=build):self.assertTrue(agent.maintenance_once(package=True))
+        with patch('dataset_pipeline.build.build_dataset',side_effect=build):self.assertTrue(agent.maintenance_once(package=True))
         self.assertEqual(calls,['premier-league-2024-25']);self.assertEqual(archive.builds(),[second])
 
     def test_diagnostic_api_exposes_metadata_to_consumer_and_rejects_producer(self):

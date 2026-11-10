@@ -6,8 +6,8 @@ from unittest.mock import patch
 import pandas as pd
 
 from concordance.publication import identities,read_table,validate
-from dataset_review import create_review,print_review,load_review
-from dataset_handoff import create,verify
+from dataset_pipeline.review import create_review,print_review,load_review
+from dataset_pipeline.handoff import create,verify
 from tests import test_parquet_concordances as fixtures
 
 
@@ -109,7 +109,7 @@ class UnlinkedReferenceTests(unittest.TestCase):
         row.update(self.registry.assign('team',row))
         self.case.write(teams=[row])
         self.registry.withhold('team','fotmob','99999','reviewed_rejection');self.registry.save()
-        with patch('dataset_builder.package_collection',side_effect=AssertionError('season export during reference repair')):
+        with patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('season export during reference repair')):
             for index in range(2):
                 # Force a real refresh, rather than the unchanged-package shortcut.
                 self.registry.value.setdefault('withheld',{})[f'team|whoscored|{80000+index}']='unrelated_review'

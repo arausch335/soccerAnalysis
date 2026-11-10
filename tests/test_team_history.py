@@ -89,7 +89,7 @@ class TeamHistoryTests(unittest.TestCase):
         cleaned=canonical_frame(frame,reference=True)
         self.assertEqual(len(cleaned),1)
         self.assertEqual(cleaned.iloc[0].fotmob_id,'')
-        from dataset_builder import export_concordance
+        from dataset_pipeline.build import export_concordance
         paths=export_concordance({'team':frame},self.root,self.output)
         with paths['team concordance'].open() as stream:rows=list(csv.DictReader(stream))
         self.assertEqual(len(rows),1)

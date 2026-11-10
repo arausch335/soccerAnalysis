@@ -1,7 +1,6 @@
 """Shared Parquet/CSV publisher and validator for dataset fixtures and identity tables."""
 from collections import Counter,defaultdict
 from datetime import datetime,timezone,date
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -9,6 +8,7 @@ import shutil
 import tempfile
 from uuid import uuid4
 
+from storage.checksums import file_digest as digest
 from filelock import FileLock
 import pandas as pd
 import pyarrow as pa
@@ -17,39 +17,13 @@ import pyarrow.parquet as pq
 from providers.reep import PROVIDERS
 from storage.pandasStore import atomic_json,atomic_replace
 
+from .tables import (
+    CHUNK_ROWS, CORE_COLUMNS, EXTRA_COLUMNS, ID_COLUMNS, LOOKUP, NAME_COLUMNS,
+    RENAMES, TABLES, flag, fixture_rows, identity_rows, text,
+)
+
 FORMATS={'csv':'soccer-concordance-csv-v1','parquet':'soccer-concordance-parquet-v2'}
 FORMAT=FORMATS['parquet']
-CHUNK_ROWS=50_000
-ID_COLUMNS=('entity_id','alex_id','reep_id','sofascore_id','fotmob_id','whoscored_id')
-NAME_COLUMNS=('entity_name','reep_name','sofascore_name','fotmob_name','whoscored_name')
-CORE_COLUMNS=('match_entity_id','date','kickoff_utc','season','competition','matchweek','round_name','status','awarded',
-    'home_team_entity_id','home_team','away_team_entity_id','away_team','home_score','away_score','winner_code','has_player_stats')
-EXTRA_COLUMNS=('match_entity_id','venue','city','competition_phase','competition_note','competition_type','competition_country','is_scheduled_for_scraping')
-RENAMES={'match_entity_id':'entity_id','home_team_entity_id':'home_entity_id','away_team_entity_id':'away_entity_id'}
-LOOKUP={**RENAMES,'source_home_team':'home_team','source_away_team':'away_team'}
-TABLES=('fixtures/fixtures','fixtures/extra','fixtures/metadata','match_ids','team_ids','player_ids',
-        'metadata/match_ids','metadata/team_ids','metadata/player_ids','metadata/registry','entities')
-
-
-def text(value):
-    if value is None or value is pd.NA:return ''
-    if isinstance(value,(dict,list,tuple)):return json.dumps(value,ensure_ascii=False,sort_keys=True)
-    if isinstance(value,float) and pd.isna(value):return ''
-    return str(value)
-
-
-def flag(value,*,nullable=False):
-    value=text(value).lower()
-    if not value:return None if nullable else False
-    if value not in ('true','false'):raise ValueError('Invalid boolean fixture field: '+value)
-    return value=='true'
-
-
-def digest(path):
-    result=hashlib.sha256()
-    with Path(path).open('rb') as stream:
-        for chunk in iter(lambda:stream.read(1024**2),b''):result.update(chunk)
-    return result.hexdigest()
 
 
 def folder(dataset):
@@ -148,26 +122,11 @@ def read_table(base,name):
 
 
 def wide_rows(dataset):
-    """Reconstruct the internal linkage view without exposing it as the fixture table."""
-    base=folder(dataset)
-    core=read_table(base,'fixtures/fixtures').rename(columns=RENAMES)
-    extra=read_table(base,'fixtures/extra').rename(columns={'match_entity_id':'entity_id'})
-    metadata=read_table(base,'fixtures/metadata').rename(columns={'match_entity_id':'entity_id'})
-    result=core.merge(extra,on='entity_id',validate='one_to_one').merge(metadata,on='entity_id',validate='one_to_one')
-    for side in ('home','away'):
-        key='source_'+side+'_team'
-        if key in result:result[side+'_team']=result.pop(key)
-    for column in result:
-        if column=='date':result[column]=result[column].map(lambda v:v.isoformat() if pd.notna(v) else '')
-        elif column=='kickoff_utc':result[column]=result[column].map(lambda v:v.isoformat() if pd.notna(v) else '')
-        else:result[column]=result[column].map(text)
-    return result.to_dict('records')
+    return fixture_rows(folder(dataset), read_table)
 
 
 def reference_rows(dataset,kind):
-    if not exists(dataset):return []
-    base=folder(dataset);ids=read_table(base,kind+'_ids');details=read_table(base,'metadata/'+kind+'_ids')
-    return ids.merge(details,on='entity_id',how='left',validate='one_to_one').map(text).to_dict('records')
+    return identity_rows(folder(dataset), kind, read_table) if exists(dataset) else []
 
 
 def read_registry(base):

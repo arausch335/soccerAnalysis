@@ -13,7 +13,7 @@ from collection.ensembleProgress import PortableProgress
 from collection.workerIdentity import ensure_identity
 from storage.pandasStore import PandasStore,atomic_json
 from tests import test_providers as fixtures
-from dataset_builder import _fixtures
+from dataset_pipeline.build import _fixtures
 
 
 class EuropeanSofa(fixtures.Sofa):

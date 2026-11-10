@@ -1,4 +1,5 @@
 """Offline, journaled ingestion of another computer's complete data folder."""
+from storage.checksums import file_digest as digest
 from storage.layout import full_path
 from storage.layout import system_path
 from contextlib import contextmanager
@@ -22,13 +23,6 @@ from .workerIdentity import ensure_identity, read_worker_id, read_origins, save_
 MACHINE_STATE={'_system','safety','browser_profiles','http_sessions','.ensemble-computer.json','identity.json','worker_runtime','reporting.json'}
 STATUS={'not_attempted':0,'pending':0,'elsewhere':0,'failed':1,'partial':2,'visible_only':2,
         'deferred':3,'unavailable':3,'complete':4}
-
-
-def digest(path):
-    result=hashlib.sha256()
-    with Path(path).open('rb') as source:
-        for chunk in iter(lambda:source.read(1024*1024),b''):result.update(chunk)
-    return result.hexdigest()
 
 
 def merge_value(old, new):

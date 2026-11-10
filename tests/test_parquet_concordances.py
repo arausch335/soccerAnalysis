@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from concordance.parquet import publish,validate,read_table,wide_rows,CORE_COLUMNS,EXTRA_COLUMNS,ID_COLUMNS,NAME_COLUMNS,digest
+from concordance.publication import publish,validate,read_table,wide_rows,CORE_COLUMNS,EXTRA_COLUMNS,ID_COLUMNS,NAME_COLUMNS,digest
 from concordance.registry import Registry
 from providers.reep import install,FORMAT,_digest
 from storage.pandasStore import atomic_json

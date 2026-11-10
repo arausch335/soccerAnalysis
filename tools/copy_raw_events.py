@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Copy saved raw event JSONs to an SD card using only Python's standard library.
 
-Preview: python3 copy_raw_events.py --dry-run
-Copy:    python3 copy_raw_events.py /Volumes/YOUR_SD_CARD
+Preview: python -m tools.copy_raw_events --dry-run
+Copy:    python -m tools.copy_raw_events /Volumes/YOUR_SD_CARD
 
 Outputs go into SD_CARD/raw-events/, preserving paths relative to data/.
 Original JSON bytes (including the provider envelope) are preserved.
@@ -18,7 +18,7 @@ import shutil
 import sys
 import tempfile
 
-DEFAULT_SOURCE = Path('/Users/Alexander/PycharmProjects/soccerAnalysis/data')
+DEFAULT_SOURCE = Path('data')
 EVENT_TYPES = {
     'whoscored': {'match'},
     'fotmob': {'match'},

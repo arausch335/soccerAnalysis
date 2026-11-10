@@ -43,7 +43,7 @@ FIXTURE_COLUMNS = (
     'status', 'awarded', 'home_team_id', 'home_team', 'away_team_id', 'away_team',
     'home_score', 'away_score', 'winner_code', 'venue', 'city', 'competition_phase', 'competition_note')
 TEAM_NAME_OVERRIDES = {'9788': 'Borussia Mönchengladbach'}
-TEAM_CROSSWALK = Path(__file__).resolve().parent / 'providers' / 'team_id_crosswalk.json'
+TEAM_CROSSWALK = config.PROJECT_ROOT / 'providers' / 'team_id_crosswalk.json'
 
 
 def _slug(value):
@@ -998,7 +998,7 @@ def build_dataset(data_root=None, dataset_root=None, names=None, *, references_o
                     diagnostic['completed'].append({'collection':name,'season_path':source.relative_to(root).as_posix(),'state':'unchanged'})
                     continue
                 print(f'[{index}/{len(selected)}] Building dataset: {name}', flush=True)
-                from dataset_export_cache import key as export_key,restore as restore_export,save as save_export
+                from dataset_pipeline.export_cache import key as export_key,restore as restore_export,save as save_export
                 saved_settings=json.loads((source/'config.json').read_text())
                 destination=output/'raw_data'/_slug(saved_settings['competition'])/_season_directory(saved_settings['season'])
                 export_signature=export_key(root,source,recipe_id,tables)

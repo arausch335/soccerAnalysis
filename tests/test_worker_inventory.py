@@ -9,7 +9,7 @@ from unittest.mock import patch
 import main
 from collection.ensemble import ensemble_session
 from collection.ensembleProgress import job_key
-from review_data import build_report
+from collection.coverage import build_report
 from storage.pandasStore import atomic_json
 from tests.test_ensemble import populate, quiet
 

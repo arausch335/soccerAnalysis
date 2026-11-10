@@ -106,7 +106,7 @@ pull, review them normally; do not hard reset or force push. The backups remain
 under `data/_system/workers/legacy-git-backup/`.
 
 New clones can simply use `git pull --ff-only origin main`. Install dependencies
-only if creating an environment: `python -m pip install -r requirements.txt`.
+if the environment definition changed: `conda env update -f environment.yml`.
 This reporting feature adds no package dependencies.
 
 ## 3. Configure Main once
@@ -306,8 +306,8 @@ one worker, or `--data-root PATH` for a specific data folder. `--timeout 20` all
 a longer grace period (maximum 30 seconds). The command runs before worker
 startup, so it can stop the process that currently holds the worker lock.
 
-Install updated dependencies after pulling (`python -m pip install -r
-requirements.txt`); termination uses `psutil` for process discovery on Windows,
+Update dependencies after pulling with `conda env update -f environment.yml`.
+Termination uses `psutil` for process discovery on Windows,
 macOS and Linux. Run termination locally on each worker computer. Main's
 reporting connection does not provide remote Windows process control.
 
@@ -489,7 +489,7 @@ does not invalidate a saved match with matching team IDs. Truly invalid raw
 responses remain untouched and report the failed check (match ID, date, teams,
 finished status, or events) alongside the file path.
 
-`python dataset_builder.py --references-only` uses the saved index without
+`python -m dataset_pipeline.build --references-only` uses the saved index without
 downloading anything. The public exports default to:
 
 - `dataset/concordance/fixtures/part-00000.parquet`
@@ -529,7 +529,7 @@ first, followed by MSI and Headless:
 ```bash
 python main.py --terminate
 git pull --ff-only origin main
-python -m pip install -r requirements.txt
+conda env update -f environment.yml
 ```
 
 On Main:

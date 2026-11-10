@@ -5,9 +5,9 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-import dataset_builder
-from dataset_handoff import current,verify
-from dataset_review import load_review
+import dataset_pipeline.build as dataset_builder
+from dataset_pipeline.handoff import current,verify
+from dataset_pipeline.review import load_review
 from collection.datasetPackaging import package_saved
 from collection.storageServer import Archive
 from collection.workerIdentity import ensure_identity
@@ -33,7 +33,7 @@ class PartialPackageTests(unittest.TestCase):
         return self.original(source,*args,**kwargs)
 
     def test_first_package_publishes_completed_season_then_diagnostic(self):
-        with patch('dataset_builder.package_collection',side_effect=self.fail_one):self.assertEqual(self.build(),0)
+        with patch('dataset_pipeline.build.package_collection',side_effect=self.fail_one):self.assertEqual(self.build(),0)
         self.assertTrue(current(self.output));verify(self.output)
         self.assertTrue((self.output/'raw_data/premier-league/2024-2025/fixtures.csv').is_file())
         self.assertFalse((self.output/'raw_data/bundesliga/2024-2025').exists())
@@ -47,8 +47,8 @@ class PartialPackageTests(unittest.TestCase):
         self.assertIn('Packaging diagnostic', '\n'.join(self.messages))
 
     def test_retry_only_rebuilds_failed_season_and_reuses_completed_id_index(self):
-        with patch('dataset_builder.package_collection',side_effect=self.fail_one):self.assertEqual(self.build(),0)
-        with patch('dataset_builder.package_collection',wraps=self.original) as exports,patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as ids:
+        with patch('dataset_pipeline.build.package_collection',side_effect=self.fail_one):self.assertEqual(self.build(),0)
+        with patch('dataset_pipeline.build.package_collection',wraps=self.original) as exports,patch('dataset_pipeline.build._source_id_rows',wraps=dataset_builder._source_id_rows) as ids:
             self.assertEqual(self.build(),0)
         self.assertEqual([c.args[0].parent.name for c in exports.call_args_list],['bundesliga'])
         self.assertEqual([c.args[0].parent.name for c in ids.call_args_list],['bundesliga'])
@@ -56,9 +56,9 @@ class PartialPackageTests(unittest.TestCase):
         self.assertEqual(load_review(self.output)['summary']['fixtures'],2)
 
     def test_repeated_failure_skips_successful_exports_and_combined_rebuild(self):
-        with patch('dataset_builder.package_collection',side_effect=self.fail_one):self.assertEqual(self.build(),0)
+        with patch('dataset_pipeline.build.package_collection',side_effect=self.fail_one):self.assertEqual(self.build(),0)
         before={p:p.read_bytes() for p in self.output.rglob('*') if p.is_file()}
-        with patch('dataset_builder.package_collection',side_effect=self.fail_one) as exports,patch('dataset_builder._source_id_rows',side_effect=AssertionError('reindex')),patch('concordance.publication.refresh',side_effect=AssertionError('rebuild')),patch('dataset_identity.annotate',side_effect=AssertionError('reannotate')),patch('dataset_review.create_review',side_effect=AssertionError('rescan coverage')):
+        with patch('dataset_pipeline.build.package_collection',side_effect=self.fail_one) as exports,patch('dataset_pipeline.build._source_id_rows',side_effect=AssertionError('reindex')),patch('concordance.publication.refresh',side_effect=AssertionError('rebuild')),patch('dataset_pipeline.identity.annotate',side_effect=AssertionError('reannotate')),patch('dataset_pipeline.review.create_review',side_effect=AssertionError('rescan coverage')):
             self.assertEqual(self.build(),0)
         self.assertEqual(exports.call_count,1)
         self.assertEqual(before,{p:p.read_bytes() for p in before})
@@ -69,7 +69,7 @@ class PartialPackageTests(unittest.TestCase):
         state=json.loads(self.case.state.read_text())['seasons']['bundesliga-2024-25']
         atomic_json(self.bad/'schedule.json',{'events':[event(201),event(202)]})
         atomic_json(self.good/'schedule.json',{'events':[event(101),event(102)]})
-        with patch('dataset_builder.package_collection',side_effect=self.fail_one):self.assertEqual(self.build(),0)
+        with patch('dataset_pipeline.build.package_collection',side_effect=self.fail_one):self.assertEqual(self.build(),0)
         self.assertEqual(old.read_bytes(),before)
         self.assertEqual(json.loads(self.case.state.read_text())['seasons']['bundesliga-2024-25'],state)
         self.assertTrue(load_review(self.output)['package_diagnostic']['failed'][0]['retained_previous'])
@@ -81,10 +81,10 @@ class PartialPackageTests(unittest.TestCase):
         def fail_ids(source,*args):
             if source.parent.name=='bundesliga':raise ValueError('ambiguous saved identity data')
             return original(source,*args)
-        with patch('dataset_builder._source_id_rows',side_effect=fail_ids):self.assertEqual(self.build(),0)
+        with patch('dataset_pipeline.build._source_id_rows',side_effect=fail_ids):self.assertEqual(self.build(),0)
         self.assertFalse((self.output/'raw_data/bundesliga/2024-2025').exists())
         self.assertEqual(load_review(self.output)['package_diagnostic']['failed'][0]['phase'],'ID indexing')
-        with patch('dataset_builder.package_collection',side_effect=AssertionError('repeat export')),patch('dataset_builder._source_id_rows',wraps=original) as ids:
+        with patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('repeat export')),patch('dataset_pipeline.build._source_id_rows',wraps=original) as ids:
             self.assertEqual(self.build(),0)
         self.assertEqual(ids.call_count,1);self.assertEqual(load_review(self.output)['summary']['fixtures'],2)
 
@@ -93,8 +93,8 @@ class PartialPackageTests(unittest.TestCase):
         def fail_ids(source,*args):
             if source.parent.name=='bundesliga':raise ValueError('bad source IDs')
             return original(source,*args)
-        with patch('dataset_builder._source_id_rows',side_effect=fail_ids):self.assertEqual(self.build(),0)
-        with patch('dataset_builder._source_id_rows',side_effect=fail_ids) as ids,patch('dataset_builder.package_collection',side_effect=AssertionError('re-export')),patch('concordance.publication.refresh',side_effect=AssertionError('republish')),patch('dataset_review.create_review',side_effect=AssertionError('rescan')):
+        with patch('dataset_pipeline.build._source_id_rows',side_effect=fail_ids):self.assertEqual(self.build(),0)
+        with patch('dataset_pipeline.build._source_id_rows',side_effect=fail_ids) as ids,patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('re-export')),patch('concordance.publication.refresh',side_effect=AssertionError('republish')),patch('dataset_pipeline.review.create_review',side_effect=AssertionError('rescan')):
             self.assertEqual(self.build(),0)
         self.assertEqual(ids.call_count,1)
 
@@ -122,14 +122,14 @@ class PartialPackageTests(unittest.TestCase):
     def test_archive_acknowledges_only_successful_seasons_after_publication(self):
         ensure_identity(self.root,'msi');archive=Archive(self.root)
         for season in ('premier-league/2024-2025','bundesliga/2024-2025'):archive.schedule_build(season)
-        with patch('dataset_builder.package_collection',side_effect=self.fail_one):self.assertEqual(self.build(),0)
+        with patch('dataset_pipeline.build.package_collection',side_effect=self.fail_one):self.assertEqual(self.build(),0)
         self.assertEqual([r[0] for r in archive.build_jobs()],['bundesliga/2024-2025'])
         self.assertIsNotNone(archive.publication())
         self.assertLess(next(i for i,m in enumerate(self.messages) if 'Dataset published for Main' in m),next(i for i,m in enumerate(self.messages) if 'Packaging diagnostic' in m))
 
     @unittest.skipUnless(shutil.which('Rscript'),'Rscript unavailable')
     def test_partial_bundle_loads_in_r_using_only_dataset_directory(self):
-        with patch('dataset_builder.package_collection',side_effect=self.fail_one):self.assertEqual(self.build(),0)
+        with patch('dataset_pipeline.build.package_collection',side_effect=self.fail_one):self.assertEqual(self.build(),0)
         copied=self.case.base/'R project'/'dataset';shutil.copytree(self.output,copied)
         program="""root=commandArgs(TRUE)[1];source(file.path(root,'read_dataset.R'))
 ds=suppressWarnings(read_dataset(root))
@@ -142,6 +142,6 @@ stopifnot(review$package_diagnostic$status=='partial',nrow(review$package_diagno
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_all_failed_first_package_has_diagnostic_and_no_false_publication(self):
-        with patch('dataset_builder.package_collection',side_effect=OSError('no usable exports')):self.assertEqual(self.build(),2)
+        with patch('dataset_pipeline.build.package_collection',side_effect=OSError('no usable exports')):self.assertEqual(self.build(),2)
         self.assertFalse(self.output.exists())
         self.assertIn('no new dataset published','\n'.join(self.messages))

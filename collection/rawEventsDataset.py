@@ -14,7 +14,7 @@ from .whoScoredData import LEGACY_SUBTREES
 
 
 def package_raw_events(data_root, output, *, competitions=(), seasons=()):
-    from review_data import who_valid
+    from collection.coverage import who_valid
 
     root = Path(data_root).expanduser().resolve(strict=True)
     output = Path(output).expanduser().absolute()

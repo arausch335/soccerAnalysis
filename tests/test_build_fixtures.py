@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 from fixtures.builder import FixtureCompetition, _fotmob_event, build
-from dataset_builder import FIXTURE_COLUMNS
+from dataset_pipeline.build import FIXTURE_COLUMNS
 
 
 class FakeScheduleClient:

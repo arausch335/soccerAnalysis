@@ -1,6 +1,6 @@
 # Team identity and history concordance
 
-The project collects men's football. `providers/concordance/team_scope.json`
+The project collects men's football. `concordance/reference_data/team_scope.json`
 contains reviewed provider profiles that must be excluded. Explicit female
 gender metadata or a women's-team label also prevents a team match. Exclusions
 are scoped to team/provider IDs: an unrelated player with the same number is
@@ -62,7 +62,7 @@ year may still need review. An optional analytical club-history grouping may
 combine successor eras without changing the team that played each match.
 
 The team eras and relationships are reviewed data in
-`providers/concordance/team_history.json`. Keep existing keys/relationship IDs
+`concordance/reference_data/team_history.json`. Keep existing keys/relationship IDs
 stable, add source URLs, and represent unknown dates/IDs as blanks. Actual
 same-team alias decisions stay in `team_profiles.json`, independently of history.
 

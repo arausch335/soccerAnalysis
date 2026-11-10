@@ -7,13 +7,13 @@ from collection.storageTransfer import digest,safe_path
 from storage.pandasStore import atomic_json
 
 FORMAT='soccer-r-dataset-v1'
-IDENTITY_PRODUCER=Path(__file__).with_name('dataset_identity.py')
-ASSETS={'read_concordances.R':'analysis/read_concordances.R',
-        'read_dataset.R':'analysis/read_dataset.R','README.md':'docs/R_DATASET.md'}
+IDENTITY_PRODUCER=Path(__file__).with_name('identity.py')
+ASSETS={'read_concordances.R':'dataset_pipeline/r/read_concordances.R',
+        'read_dataset.R':'dataset_pipeline/r/read_dataset.R','README.md':'docs/R_DATASET.md'}
 
 
 def _assets():
-    root=Path(__file__).resolve().parent
+    root=Path(__file__).resolve().parents[1]
     return {name:(root/source).read_bytes() for name,source in ASSETS.items()}
 
 
@@ -37,7 +37,7 @@ def current(dataset):
 
 def create(dataset,source_root=None):
     from concordance.publication import folder,validate,publication_files,read_table
-    from dataset_review import load_review
+    from dataset_pipeline.review import load_review
     dataset=Path(dataset);base=folder(dataset);validation=validate(base)
     review=load_review(dataset)
     if review['state']!='ready':raise ValueError('A current coverage review is required for the R handoff')
@@ -49,7 +49,7 @@ def create(dataset,source_root=None):
     metadata=read_table(base,'fixtures/metadata').fillna('')
     scope={r['match_entity_id']:(r['competition'],r['season']) for r in core.to_dict('records')}
     namespaces={};competition_labels={}
-    from dataset_builder import _slug
+    from dataset_pipeline.build import _slug
     for row in metadata.to_dict('records'):
         if row['match_entity_id'] not in scope:continue
         competition,season=scope[row['match_entity_id']]

@@ -23,7 +23,7 @@ class InventoryCacheTests(unittest.TestCase):
         first=self.progress();first.scan();expected=deepcopy(first.local_records)
         self.assertGreater(first.scan_summary['validated'],0)
         with patch.object(PandasStore,'from_csv',side_effect=AssertionError('Checkpoint reopened')), \
-             patch('review_data.who_valid',side_effect=AssertionError('WhoScored revalidated')), \
+             patch('collection.coverage.who_valid',side_effect=AssertionError('WhoScored revalidated')), \
              patch('collection.legacyFotmobRows.player_rows',side_effect=AssertionError('FotMob revalidated')):
             second=self.progress();second.scan()
         self.assertEqual(second.local_records,expected)

@@ -1,13 +1,10 @@
-# Run from the repository root: conda env create -f environment.yml
-name: soccer-analysis
+# Run from the repository root so pip can install the local project.
+name: soccerAnalysis
 channels:
   - conda-forge
+  - nodefaults
 dependencies:
   - python=3.11
   - pip
   - pip:
-      - -c constraints-socceraction.txt
-      - -r requirements.txt
-      - -r requirements-role-analysis.txt
-      - socceraction==1.5.3
-      - -e .
+      - "-e .[test]"

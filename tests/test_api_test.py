@@ -6,7 +6,7 @@ from unittest.mock import Mock, MagicMock, patch
 
 import yaml
 import config
-import api_test
+import tools.check_providers as api_test
 from providers.providerProbe import probe_provider
 from providers.safeClient import SafeWhoScoredClient, SafeFotMobClient
 from providers.httpClient import ProviderError, ProviderRequestError
@@ -60,7 +60,7 @@ class ProviderProbeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.dict(api_test.CLIENTS,clients), \
                 patch.object(config,'API_TEST_PROVIDERS',list(clients)), \
-                patch('api_test.probe_provider',side_effect=[(False,'NOT GOOD'),(True,'GOOD'),(True,'GOOD')]) as probe:
+                patch('tools.check_providers.probe_provider',side_effect=[(False,'NOT GOOD'),(True,'GOOD'),(True,'GOOD')]) as probe:
             self.assertEqual(api_test.main(['--data-root',tmp]),2)
             self.assertEqual(probe.call_count,3)
             self.assertEqual([call.args[1] for call in probe.call_args_list],list(clients))
@@ -69,7 +69,7 @@ class ProviderProbeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.object(config,'DATA_ROOT',Path(tmp)), \
                 patch.dict(api_test.CLIENTS,{'fotmob':MagicMock()}), \
-                patch('api_test.probe_provider',return_value=(True,'GOOD')) as probe:
+                patch('tools.check_providers.probe_provider',return_value=(True,'GOOD')) as probe:
             self.assertEqual(api_test.main(['--providers','fotmob','--match-id','88']),0)
             self.assertEqual(probe.call_args.args[1:],('fotmob',88))
             api_test.CLIENTS['fotmob'].assert_called_once_with(Path(tmp).resolve(),'fotmob')

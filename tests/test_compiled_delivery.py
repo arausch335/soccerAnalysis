@@ -40,7 +40,7 @@ class CompiledDeliveryTests(unittest.TestCase):
 
     def test_chunked_parquet_bundle_is_reconciled_and_installed_before_ack(self):
         from tests.test_parquet_concordances import ParquetTests
-        from concordance.parquet import validate,read_table
+        from concordance.publication import validate,read_table
         from collection.compiledDelivery import fixture_files
         case=ParquetTests();case.setUp()
         try:

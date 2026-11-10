@@ -16,7 +16,7 @@ from collection.selection import (season_key, season_label, competition_by_name,
 from collection.seasonRunner import SeasonRunner
 from collection.spatial import (_channel, extract_dribble_features, extract_pass_features,
                                 extract_spatial_features)
-from analysis.pitch_zones import (LEFT_HALF_SPACE_MIN, LEFT_WING_MIN, RIGHT_HALF_SPACE_MAX,
+from collection.pitch_zones import (LEFT_HALF_SPACE_MIN, LEFT_WING_MIN, RIGHT_HALF_SPACE_MAX,
                          RIGHT_WING_MAX, zone_number)
 from storage import PandasStore
 

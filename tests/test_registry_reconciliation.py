@@ -152,7 +152,7 @@ class SharedRegistryTests(unittest.TestCase):
 
     def test_player_id_table_build_continues_with_spelling_aliases_and_conflicts(self):
         from unittest.mock import patch
-        import dataset_builder
+        import dataset_pipeline.build as dataset_builder
         self.install_bridges([
             ['player','sofascore','1','rp-one'],['player','fotmob','10','rp-one'],['player','whoscored','100','rp-one'],
             ['player','sofascore','2','rp-two'],['player','whoscored','200','rp-two']])
@@ -164,7 +164,7 @@ class SharedRegistryTests(unittest.TestCase):
         saved=self.root/'la-liga/2021-2022'
         atomic_json(saved/'config.json',{'competition':'La Liga','season':'2021/2022'})
         atomic_json(saved/'schedule.json',{'events':[]})
-        with patch('dataset_builder.discover_collections',return_value=[saved]),patch('dataset_builder._source_id_rows',side_effect=source):
+        with patch('dataset_pipeline.build.discover_collections',return_value=[saved]),patch('dataset_pipeline.build._source_id_rows',side_effect=source):
             written=dataset_builder.build_id_tables(self.root,self.base/'dataset',build_team_ids=False,build_match_ids=False)
         rows=pd.read_csv(written['player IDs'],dtype=str,keep_default_na=False)
         self.assertEqual(len(rows),4);self.assertEqual(set(rows.entity_id),{'rp-one','rp-two'})
@@ -172,7 +172,7 @@ class SharedRegistryTests(unittest.TestCase):
         self.assertTrue((self.base/'dataset/concordance/registry_conflicts.csv').is_file())
 
     def test_multiple_candidate_ids_within_one_stint_are_not_chosen_by_frequency(self):
-        import dataset_builder
+        import dataset_pipeline.build as dataset_builder
         rows={'one':{'competition':'La Liga','season':'2021-2022','team_name':'Club','player_name':'Yakine',
             '_ids':{'sofascore_id':['1'],'fotmob_id':['20','20','21'],'whoscored_id':['100']}}}
         frame=dataset_builder._finalize_id_rows(rows,dataset_builder.PLAYER_ID_COLUMNS,['player_name'])

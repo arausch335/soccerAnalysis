@@ -13,7 +13,7 @@ LEGACY_SUBTREES=('whoscored_events','whoscored')
 
 
 def validate_match(payload, mid, event):
-    from review_data import who_valid
+    from collection.coverage import who_valid
     if not isinstance(payload,dict) or not who_valid(payload,mid,event):
         raise ValueError('WhoScored match identity, finished status, date, teams or events differ from its fixture')
     return payload
@@ -21,7 +21,7 @@ def validate_match(payload, mid, event):
 
 def integrated_error(match, payload, *, root=None):
     """Use collection's ID-aware team checks when auditing saved event data."""
-    from review_data import who_valid
+    from collection.coverage import who_valid
     from providers.identity import teams_match
     mid=match.metadata.get('provider_match_ids',{}).get('whoscored')
     if not isinstance(payload,dict):return 'payload is not an object'
@@ -128,7 +128,7 @@ def migrate_legacy(root,report=print):
         if saved_schedule is not None and saved_schedule.get('provider')!='whoscored':
             raise ValueError('Legacy WhoScored schedule namespace mismatch')
         events={row['id']:row for row in saved_schedule['events']} if saved_schedule else {}
-        from review_data import who_valid
+        from collection.coverage import who_valid
         raw_targets={}
         for path,relative,_ in files:
             if relative.parts[:2]==('raw','whoscored') or (path.suffix=='.json' and relative.parts[0]=='raw' and len(relative.parts)==2):
@@ -152,7 +152,7 @@ def migrate_legacy(root,report=print):
             if target.exists() and digest(target)!=digest(path):
                 atomic_copy(path,archive/'incoming'/relative)
                 if relative in raw_targets:
-                    from review_data import who_valid
+                    from collection.coverage import who_valid
                     try:previous=json.loads(target.read_text(encoding='utf-8'))
                     except (ValueError,UnicodeError):previous={}
                     incoming=json.loads(path.read_text(encoding='utf-8'))

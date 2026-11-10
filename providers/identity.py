@@ -1,5 +1,5 @@
 """Conservative identity resolution constrained to one match and lineup side."""
-from pathlib import Path
+from concordance import REFERENCE_DATA
 import json
 import re
 import unicodedata
@@ -96,7 +96,7 @@ REVIEWED_TEAM_IDS = {
     ('fotmob','6918'):'47214',   # USL Dunkerque
     ('fotmob','52874'):'6390',   # Red Star FC
 }
-TEAM_ALIASES = json.loads((Path(__file__).parent/'concordance'/'teams.json').read_text(encoding='utf-8'))
+TEAM_ALIASES = json.loads((REFERENCE_DATA / 'teams.json').read_text(encoding='utf-8'))
 
 def words(value):
     value=(value.casefold().replace('ı','i').replace('ø','o').replace('ł','l')

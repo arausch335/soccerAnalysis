@@ -35,7 +35,7 @@ def _valid_path(name):
 
 
 def restore(root,source,output,signature,*,tables):
-    from dataset_builder import SEASON_TABLES
+    from dataset_pipeline.build import SEASON_TABLES
     base=location(root,source,signature)
     try:
         manifest=json.loads((base/'manifest.json').read_text())
@@ -58,7 +58,7 @@ def restore(root,source,output,signature,*,tables):
 
 
 def save(root,source,output,signature,*,tables):
-    from dataset_builder import SEASON_TABLES
+    from dataset_pipeline.build import SEASON_TABLES
     base=location(root,source,signature);base.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.season-export-',dir=base.parent) as temporary:
         stage=Path(temporary)/'cache';stage.mkdir();files=[]

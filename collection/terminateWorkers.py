@@ -40,7 +40,7 @@ def project_command(args,cwd,repository):
     if '-m' in args and cwd and inside(cwd,repository):
         i=args.index('-m')
         module=args[i+1] if i+1<len(args) else ''
-        return module in ('main','dataset_builder','review_data','api_test') or module.startswith(('collection.','fixtures.','tools.','dashboard.'))
+        return module in ('main','dataset_builder','review_data','api_test') or module.startswith(('collection.','fixtures.','tools.','dashboard.','dataset_pipeline.'))
     return False
 
 
@@ -181,7 +181,7 @@ def main(argv=None):
     if not 0<=args.timeout<=30:parser.error('--timeout must be between 0 and 30 seconds')
     try:import psutil
     except ImportError:
-        print('Termination requires psutil. Run python -m pip install "psutil>=5.9,<8", then retry.');return 2
+        print('Termination requires psutil. Update the environment from environment.yml, then retry.');return 2
     repository=Path(__file__).resolve().parent.parent
     default_root=repository/'data'
     try:

@@ -41,7 +41,7 @@ class Resolver:
         self.fixtures={r['match_entity_id']:r for r in read_table(base,'fixtures/fixtures').fillna('').to_dict('records')}
         self.metadata={r['match_entity_id']:r for r in read_table(base,'fixtures/metadata').fillna('').to_dict('records')}
         self.namespaces=defaultdict(set)
-        from dataset_builder import _slug
+        from dataset_pipeline.build import _slug
         for entity,fixture in self.fixtures.items():
             provider=self.metadata[entity].get('baseline_provider')
             key=(_slug(fixture['competition']).replace('-qualification','-qualifiers'),fixture['season'])

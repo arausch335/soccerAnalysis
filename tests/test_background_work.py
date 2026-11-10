@@ -129,7 +129,7 @@ class BackgroundTests(unittest.TestCase):
         for name in ('player_match_stats.csv','identities.csv'):(directory/name).unlink(missing_ok=True)
         import shutil
         shutil.rmtree(directory/'dataset',ignore_errors=True)
-        from dataset_builder import build_id_tables
+        from dataset_pipeline.build import build_id_tables
         output=self.base/'dataset'
         build_id_tables(self.root,output)
         import csv

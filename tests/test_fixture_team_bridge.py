@@ -11,9 +11,9 @@ import pandas as pd
 from concordance.publication import read_table,read_registry,validate
 from concordance.registry import Registry
 from concordance.teamBridge import recover_fixture_aliases
-from dataset_identity import annotate
-from dataset_review import create_review
-from dataset_handoff import create,verify
+from dataset_pipeline.identity import annotate
+from dataset_pipeline.review import create_review
+from dataset_pipeline.handoff import create,verify
 from tests import test_parquet_concordances as fixtures
 
 
@@ -112,7 +112,7 @@ class FixtureTeamBridgeTests(unittest.TestCase):
         create_review(self.case.dataset);create(self.case.dataset);verify(self.case.dataset)
         from collection.datasetPackaging import package_saved
         before=path.read_bytes()
-        with patch('dataset_builder.package_collection',side_effect=AssertionError('season export during reference repair')):
+        with patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('season export during reference repair')):
             self.assertEqual(package_saved(self.case.root,self.case.dataset,references_only=True,report=lambda *a,**k:None),0)
         self.assertEqual(path.read_bytes(),before);verify(self.case.dataset)
         if not shutil.which('Rscript'):return

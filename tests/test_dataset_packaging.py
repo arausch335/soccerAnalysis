@@ -7,7 +7,7 @@ import unittest
 
 import pandas as pd
 
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 
 
 class DatasetManagerTests(unittest.TestCase):
@@ -194,7 +194,7 @@ class DatasetManagerTests(unittest.TestCase):
                                root/'dataset'/'fixtures.csv',index=False)
             output=io.StringIO()
             from unittest.mock import patch
-            with redirect_stdout(output), patch('dataset_builder._team_crosswalk', return_value={
+            with redirect_stdout(output), patch('dataset_pipeline.build._team_crosswalk', return_value={
                     '8194': {'sofascore_id': '2588', 'whoscored_id': '116'}}):
                 dataset_builder.build_id_tables(root/'data',root/'dataset',
                     build_player_ids=False,build_team_ids=True,build_match_ids=False)

@@ -8,7 +8,7 @@ from pathlib import Path
 from statistics import median
 from .jsonFiles import read_json
 
-from analysis.pitch_zones import (
+from collection.pitch_zones import (
     LATERAL_BINS, LEFT_HALF_SPACE_MIN, LEFT_WING_MIN, LONGITUDINAL_BINS,
     RIGHT_HALF_SPACE_MAX, RIGHT_WING_MAX, channel as pitch_channel,
     lateral_index, longitudinal_index, zone_number,

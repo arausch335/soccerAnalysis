@@ -15,7 +15,7 @@ from tests.legacy_collectors import WhoScoredEventRunner
 from tests.legacy_collectors import FotMobOnlyRunner
 from providers.transports.bridge import acquire_bridge
 from storage.pandasStore import PandasStore, atomic_json
-from review_data import build_report
+from collection.coverage import build_report
 from tests.test_providers import Sofa, Fot, lineup
 from tests.test_whoscored_events import WhoScoredOnly
 

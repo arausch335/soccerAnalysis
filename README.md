@@ -2,37 +2,19 @@
 
 ## Python environment
 
-From the repository root, create and activate the shared collection, packaging,
-and socceraction analysis environment:
+From the repository root, create the shared Python environment with Conda.
 
 ```sh
 conda env create -f environment.yml
-conda activate soccer-analysis
+conda activate soccerAnalysis
 python -m pip check
-python main.py --package
 ```
 
-In PyCharm, select the Python interpreter from the `soccer-analysis` Conda
-environment. This is separate from the project's `.venv` and the existing
-`soccerAnalysis` Conda environment.
-
-After dependency-file changes, update this environment from the repository root:
-
-```sh
-conda env update -f environment.yml
-```
-
-`constraints-socceraction.txt` keeps NumPy at 1.26.4, pandas below 3, and
-PyArrow at 25.0.1 so Parquet packaging and socceraction can share one environment.
-The environment installs both requirements files and the project in editable mode.
-Keep these constraints when installing additional packages:
-
-```sh
-python -m pip install -c constraints-socceraction.txt PACKAGE_NAME
-```
-
-`requirements-tested.txt` records a different environment with NumPy 2 and
-pandas 3; do not install it into this socceraction environment.
+Use the `soccerAnalysis` interpreter in PyCharm and R's reticulate. The
+environment uses Python 3.11 and installs the project's dependencies from
+`pyproject.toml`, including the Python packages used by the R reports.
+After pulling dependency changes, run `conda env update -f environment.yml`
+from the repository root.
 
 Historical fixtures from 2010–2011 onward: `python main.py --fixtures`.
 This builds a Sofascore-led dataset with FotMob, WhoScored and Reep match/team
@@ -112,7 +94,7 @@ provide overrides. For example:
 python main.py --package --dataset-root /path/to/R-project/data
 ```
 
-`python dataset_builder.py`, `soccer-dataset`, and the older
+`python -m dataset_pipeline.build`, `soccer-dataset`, and the older
 `python -m tools.export_concordances` command delegate to the same builder.
 Fixture collection saves inputs for the next explicit package.
 Each Parquet table is a folder with numbered chunks of at most 50,000 rows.
@@ -135,10 +117,9 @@ than repeatedly opening the extension.
 
 ## Run a worker
 
-Install the project in the worker's Python environment:
+With the shared Conda environment active, prepare the extension and start the worker.
 
 ```sh
-python -m pip install -e .
 python -m tools.extension_setup
 python main.py --worker msi
 ```
@@ -206,9 +187,11 @@ checkpoints, exported tables or analysis Parquet files.
 - `storage/`: atomic files, bounded response cache, layout migration.
 - `dashboard/`: coverage, live jobs and worker logs.
 - `tools/`: extension preparation, upgrades and data maintenance.
-- `dataset_builder.py`, `analysis/`, `models/`: saved-data exports and analysis.
+- `dataset_pipeline/`: dataset building, identity resolution, coverage and the R handoff.
+- `concordance/`: fixture and identity references, publication and reviewed reference data.
+- `models/`: shared collection entities and statistics.
 
-Reviewed team-name variants belong in `providers/concordance/teams.json`; matching
+Reviewed team-name variants belong in `concordance/reference_data/teams.json`; matching
 still checks fixture time and home/away sides. The concordance includes
 WhoScored's `Norwich` and Sofascore's `Norwich City`.
 

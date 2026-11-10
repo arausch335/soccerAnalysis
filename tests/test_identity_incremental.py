@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 import config
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 from collection import datasetIndexCache as indexing
 from concordance import package_state as tracking
 from collection.paths import collection_directory
@@ -18,7 +18,8 @@ class IdentityProjectionTests(unittest.TestCase):
     def test_recipe_changes_only_for_identity_projection_dependencies(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);(root/'providers').mkdir();(root/'collection').mkdir()
-            builder=root/'dataset_builder.py'
+            (root/'dataset_pipeline').mkdir()
+            builder=root/'dataset_pipeline/build.py'
             builder.write_text('def _source_id_rows():\n    return 1\ndef package_collection():\n    return 2\n')
             stats=root/'providers/statistics.py';stats.write_text('# stats v1')
             with patch.object(config,'PROJECT_ROOT',root):
@@ -58,11 +59,11 @@ class IdentityProjectionTests(unittest.TestCase):
         self.assertEqual(helper.build(),0)
         from tests.test_providers import event
         atomic_json(helper.sources[1]/'schedule.json',{'events':[event(201),event(202)]})
-        with patch('concordance.package_state.recipe',return_value='packaging-only-version'),patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as reads:
+        with patch('concordance.package_state.recipe',return_value='packaging-only-version'),patch('dataset_pipeline.build._source_id_rows',wraps=dataset_builder._source_id_rows) as reads:
             self.assertEqual(helper.build(),0)
         self.assertEqual([call.args[0].parent.name for call in reads.call_args_list],['bundesliga'])
         atomic_json(helper.sources[0]/'raw/sofascore/heatmap.json',{'payload':{'heatmap':[]}})
-        with patch('concordance.package_state.recipe',return_value='packaging-only-version'),patch('dataset_builder._source_id_rows',side_effect=AssertionError('ID cache invalidated by map')):
+        with patch('concordance.package_state.recipe',return_value='packaging-only-version'),patch('dataset_pipeline.build._source_id_rows',side_effect=AssertionError('ID cache invalidated by map')):
             self.assertEqual(helper.build(),0)
 
     def test_checkpoint_projection_does_not_rebuild_domain_or_action_tables(self):

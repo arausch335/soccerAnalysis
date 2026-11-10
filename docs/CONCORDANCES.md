@@ -216,7 +216,7 @@ Missing provider mappings stay blank, and contradictory profiles stay flagged.
 ## R
 
 ```r
-source("analysis/read_concordances.R")
+source("dataset_pipeline/r/read_concordances.R")
 ids <- read_concordances("dataset/concordance")
 fixtures <- ids$fixtures
 players <- ids$player_ids

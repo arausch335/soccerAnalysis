@@ -236,13 +236,13 @@ class PortableProgress:
         report(f'Inventory for {self.origin}: {len(self.local_records)} validated local match records')
         for (competition,season,namespace),count in sorted(counts.items()):
             report(f'{competition} {season} | {namespace}: {count} local match records')
-        report('Run review_data.py for percentages and resource completeness; shared claims do not count as local data.')
+        report('Run python -m collection.coverage for percentages and resource completeness; shared claims do not count as local data.')
         report(f'Inventory checks: {self.scan_summary.get("reused",0)} unchanged artifacts reused; '
                f'{self.scan_summary.get("validated",0)} new/changed artifacts validated.')
 
     def _scan(self):
         # Validate actual artifacts rather than trusting a copied status CSV.
-        from review_data import who_valid
+        from collection.coverage import who_valid
         from providers.cache import ResponseCache
         from .legacyFotmobRows import player_rows
         for marker in self.root.glob('*/*/match_checkpoints/*/CURRENT.json'):

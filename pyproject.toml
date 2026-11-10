@@ -5,35 +5,45 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "soccerAnalysis"
 version = "0.2.0"
-description = "Football collection, dataset building, and offline analysis"
-requires-python = ">=3.10"
-dependencies = ["curl_cffi>=0.13,<0.17", "pandas>=2.2,<4", "matplotlib>=3.8,<4", "filelock>=3.13,<4", "PyYAML>=6,<7", "psutil>=5.9,<8", "pyarrow>=14"]
+description = "Football data collection, concordances, and dataset packaging"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "curl_cffi>=0.13,<0.17",
+    "filelock>=3.13,<4",
+    "PyYAML>=6,<7",
+    "psutil>=5.9,<8",
+    "numpy==1.26.4",
+    "pandas>=2.2,<3",
+    "pyarrow>=20,<26",
+    # Shared with the R reports through reticulate.
+    "socceraction[xgboost]==1.5.3",
+    "multimethod>=1.9,<2", # Pandera 0.17 requires multimethod.overload.
+    "joblib>=1.4,<2",
+    "penaltyblog>=1.9,<2",
+]
 
 [project.optional-dependencies]
-analysis = ["scipy", "scikit-learn", "plotly", "pyarrow"]
+test = ["pytest>=8,<10"]
 
 [project.scripts]
 soccer-analysis = "main:entrypoint"
-soccer-dataset = "dataset_builder:main"
+soccer-dataset = "dataset_pipeline.build:main"
 soccer-fixtures = "fixtures.dataset:main"
 soccer-sofascore-fixtures = "fixtures.collector:main"
-soccer-data-review = "review_data:main"
-soccer-api-test = "api_test:main"
+soccer-data-review = "collection.coverage:main"
+soccer-api-test = "tools.check_providers:main"
 
 [tool.setuptools]
-py-modules = ["main", "dataset_builder", "api_test", "review_data"]
+py-modules = ["main"]
 
 [tool.setuptools.packages.find]
 namespaces = true
-include = ["config", "analysis*", "collection*", "concordance*", "fixtures*", "models*", "providers*", "storage*", "tools*", "chrome_extension", "dashboard"]
+include = ["config", "collection*", "concordance*", "dataset_pipeline*", "fixtures*", "models*", "providers*", "storage*", "tools*", "chrome_extension", "dashboard"]
 
 [tool.setuptools.package-data]
-"analysis.role_pipeline" = ["*.html"]
-"analysis.match_visualization" = ["*.html", "*.css", "*.js"]
+"concordance" = ["reference_data/*.json"]
+"dataset_pipeline" = ["r/*.R"]
 "providers" = ["*.json"]
-"providers.concordance" = ["*.json"]
-
 "config" = ["settings.yaml", "workers.yaml", "removed_raw_collections.json"]
 "dashboard" = ["*.html", "*.css", "*.js"]
-
 "chrome_extension" = ["*.json", "*.js", "*.html", "*.css"]

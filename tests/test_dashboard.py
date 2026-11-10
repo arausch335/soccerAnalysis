@@ -121,7 +121,7 @@ class DashboardTests(unittest.TestCase):
     def test_dataset_page_uses_local_dataset_and_serves_coverage(self):
         from unittest.mock import patch
         output=self.base/'local-dataset'
-        with patch('dataset_review.load_review',return_value={'state':'ready','summary':{'fixtures':17},'seasons':[]}) as review:
+        with patch('dataset_pipeline.review.load_review',return_value={'state':'ready','summary':{'fixtures':17},'seasons':[]}) as review:
             server=start_server(self.root,self.ensemble,self.plan,'main',0,dataset_root=output);self.addCleanup(server.close)
             with urlopen(server.url+'/api/dataset') as response:
                 self.assertEqual(json.load(response)['summary']['fixtures'],17)

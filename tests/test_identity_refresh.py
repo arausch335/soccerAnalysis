@@ -112,7 +112,7 @@ class IdentityRefreshTests(unittest.TestCase):
 
     def test_superseded_export_row_is_removed_and_played_match_is_retried(self):
         from tests.test_fixture_dataset import event
-        from dataset_builder import fixtures_from_events
+        from dataset_pipeline.build import fixtures_from_events
         values=bridge(*self.value['rows'],('match','sofascore','3','rm1'))
         reep.install(self.root,values)
         old={**event(1),'status':{'type':'postponed'}};played=event(3,day=old['startTimestamp']+86400)

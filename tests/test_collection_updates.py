@@ -15,7 +15,7 @@ from providers.events import fotmob_fixture
 from providers.httpClient import ProviderRequestError
 from providers.safeClient import SafeWhoScoredClient
 from storage.pandasStore import atomic_json
-from review_data import build_report
+from collection.coverage import build_report
 from tests.test_providers import Fot, fot_payload, event, lineup
 from tests.test_whoscored_events import WhoScoredOnly
 

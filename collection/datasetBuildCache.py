@@ -69,7 +69,7 @@ def commit(source, output, live, *, publication_id=None, check=lambda: None):
     from concordance import package_state as tracking
     from concordance.layout import compiled_root
     from collection.paths import collection_directory,discover_collections
-    from dataset_builder import _build_settings
+    from dataset_pipeline.build import _build_settings
     source,output,live=Path(source),Path(output),Path(live)
     state=tracking.load(output/'concordance/metadata/package-state.json')
     if not state:return

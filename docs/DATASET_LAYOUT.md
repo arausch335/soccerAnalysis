@@ -1,7 +1,7 @@
 # Dataset export
 
 Run `python main.py --package` from the repository root to build the saved local
-dataset. `python dataset_builder.py`, `soccer-dataset`, and
+dataset. `python -m dataset_pipeline.build`, `soccer-dataset`, and
 `python -m tools.export_concordances` are compatibility entrypoints to the same
 builder. They do not scrape or start workers. Normal collection and imports never
 build the dataset. Use `--package` explicitly after saved inputs are ready.

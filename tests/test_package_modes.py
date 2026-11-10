@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 from collection.paths import collection_directory
 from storage.pandasStore import atomic_json
 from tests.test_providers import event
@@ -36,8 +36,8 @@ class PackageModeTests(unittest.TestCase):
     def test_unchanged_run_skips_season_exports_id_scans_and_publication(self):
         self.assertEqual(self.build(),0)
         before=self.state.read_bytes()
-        with patch('dataset_builder.package_collection',side_effect=AssertionError('unchanged season')), \
-             patch('dataset_builder._source_id_rows',side_effect=AssertionError('unchanged IDs')), \
+        with patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('unchanged season')), \
+             patch('dataset_pipeline.build._source_id_rows',side_effect=AssertionError('unchanged IDs')), \
              patch('concordance.publication.refresh',side_effect=AssertionError('unchanged publication')):
             self.assertEqual(self.build(),0)
         self.assertEqual(self.state.read_bytes(),before)
@@ -45,8 +45,8 @@ class PackageModeTests(unittest.TestCase):
     def test_changed_season_only_is_processed_and_existing_rows_are_not_duplicated(self):
         self.assertEqual(self.build(),0)
         atomic_json(self.sources[1]/'schedule.json',{'events':[event(201),event(202)]})
-        with patch('dataset_builder.package_collection',wraps=dataset_builder.package_collection) as package, \
-             patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as ids:
+        with patch('dataset_pipeline.build.package_collection',wraps=dataset_builder.package_collection) as package, \
+             patch('dataset_pipeline.build._source_id_rows',wraps=dataset_builder._source_id_rows) as ids:
             self.assertEqual(self.build(),0)
         self.assertEqual([call.args[0].parts[-2:] for call in package.call_args_list],[self.sources[1].parts[-2:]])
         self.assertEqual([call.args[0].parts[-2:] for call in ids.call_args_list],[self.sources[1].parts[-2:]])
@@ -60,8 +60,8 @@ class PackageModeTests(unittest.TestCase):
         settings={'competition':'La Liga','season':'2024/2025','providers':['sofascore']}
         atomic_json(source/'config.json',settings);atomic_json(source/'job.json',settings)
         atomic_json(source/'schedule.json',{'events':[event(301)]})
-        with patch('dataset_builder.package_collection',wraps=dataset_builder.package_collection) as package, \
-             patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as ids:
+        with patch('dataset_pipeline.build.package_collection',wraps=dataset_builder.package_collection) as package, \
+             patch('dataset_pipeline.build._source_id_rows',wraps=dataset_builder._source_id_rows) as ids:
             self.assertEqual(self.build(),0)
         self.assertEqual([call.args[0].parts[-2:] for call in package.call_args_list],[source.parts[-2:]])
         self.assertEqual([call.args[0].parts[-2:] for call in ids.call_args_list],[source.parts[-2:]])
@@ -70,8 +70,8 @@ class PackageModeTests(unittest.TestCase):
     def test_rebuild_ignores_caches_and_preserves_stable_ids(self):
         self.assertEqual(self.build(),0)
         ids_before=pd.read_parquet(self.output/'concordance/match_ids/part-00000.parquet').entity_id.tolist()
-        with patch('dataset_builder.package_collection',wraps=dataset_builder.package_collection) as package, \
-             patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as ids:
+        with patch('dataset_pipeline.build.package_collection',wraps=dataset_builder.package_collection) as package, \
+             patch('dataset_pipeline.build._source_id_rows',wraps=dataset_builder._source_id_rows) as ids:
             self.assertEqual(self.build('rebuild'),0)
         self.assertEqual(package.call_count,2);self.assertEqual(ids.call_count,2)
         self.assertEqual(pd.read_parquet(self.output/'concordance/match_ids/part-00000.parquet').entity_id.tolist(),ids_before)
@@ -79,14 +79,14 @@ class PackageModeTests(unittest.TestCase):
     def test_missing_output_is_repaired_without_rescanning_unchanged_ids(self):
         self.assertEqual(self.build(),0)
         missing=self.output/'raw_data/bundesliga/2024-2025/fixtures.csv';missing.unlink()
-        with patch('dataset_builder._source_id_rows',side_effect=AssertionError('unchanged IDs')):
+        with patch('dataset_pipeline.build._source_id_rows',side_effect=AssertionError('unchanged IDs')):
             self.assertEqual(self.build(),0)
         self.assertTrue(missing.is_file())
 
     def test_failed_changed_season_does_not_advance_checkpoint(self):
         self.assertEqual(self.build(),0);before=json.loads(self.state.read_text())['seasons']
         atomic_json(self.sources[1]/'schedule.json',{'events':[event(201),event(202)]})
-        with patch('dataset_builder.package_collection',side_effect=OSError('interrupted export')):
+        with patch('dataset_pipeline.build.package_collection',side_effect=OSError('interrupted export')):
             self.assertEqual(self.build(),0)
         self.assertEqual(json.loads(self.state.read_text())['seasons'],before)
         self.assertEqual(self.build(),0)

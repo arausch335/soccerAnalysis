@@ -54,7 +54,7 @@ class DashboardModel:
         self.dataset_root=Path(config.DATASET_ROOT if dataset_root is None else dataset_root)
 
     def dataset(self):
-        from dataset_review import load_review
+        from dataset_pipeline.review import load_review
         return load_review(self.dataset_root)
 
     def status(self):

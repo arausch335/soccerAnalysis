@@ -8,7 +8,7 @@ from providers.events import whoscored_fixture
 from providers import SofaScoreLoader,WhoScoredLoader
 from providers.identity import IdentityError
 from tests.test_providers import event,lineup
-from dataset_builder import fixtures_from_events
+from dataset_pipeline.build import fixtures_from_events
 from fixtures.dataset import concord
 from fixtures.builder import FixtureCompetition
 

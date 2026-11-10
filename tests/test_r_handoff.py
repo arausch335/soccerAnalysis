@@ -8,8 +8,8 @@ import unittest
 
 import pandas as pd
 
-from dataset_handoff import create,current,verify
-from dataset_review import create_review
+from dataset_pipeline.handoff import create,current,verify
+from dataset_pipeline.review import create_review
 from collection.storageAgent import dataset_files,install_dataset
 from collection.storageTransfer import FORMAT,digest
 from storage.pandasStore import atomic_json
@@ -36,7 +36,7 @@ class RHandoffTests(unittest.TestCase):
                 'competition':'Premier League','season':'2024-2025','field':'possession','value':52.5}]).to_csv(target/'team_match_stats.csv',index=False)
             pd.DataFrame([{'match_id':'100','competition':'Premier League','season':'2024-2025','date':'2024-08-10',
                 'kickoff_utc':'2024-08-10T12:30:00+00:00','home_team_id':'1','away_team_id':'2'}]).to_csv(target/'fixtures.csv',index=False)
-        from dataset_identity import annotate
+        from dataset_pipeline.identity import annotate
         annotate(self.dataset)
         create_review(self.dataset);return create(self.dataset)
 
@@ -72,7 +72,8 @@ stopifnot(nrow(x)>0,!anyNA(x$match_entity_id),!anyNA(x$player_entity_id))''')
         for encoding in ('parquet','csv'):
             with self.subTest(encoding=encoding):
                 self.write(encoding);self.relocated()
-                result=self.run_r('''
+                try:
+                    result=self.run_r('''
 root='R project with spaces/dataset'
 source(file.path(root,'read_dataset.R'))
 ds=suppressWarnings(read_dataset(root))
@@ -91,8 +92,9 @@ missing=try(read_dataset_table(ds,'player_match_stats',season='1900-1901'),silen
 stopifnot(inherits(missing,'try-error'))
 cat('Dataset-only R handoff verified\\n')
 ''')
-                self.assertIn('Dataset-only R handoff verified',result.stdout)
-                shutil.rmtree(self.base/'R project with spaces')
+                    self.assertIn('Dataset-only R handoff verified',result.stdout)
+                finally:
+                    shutil.rmtree(self.base/'R project with spaces')
 
     def test_historical_provider_alias_is_resolved_through_the_registry(self):
         self.write()
@@ -105,7 +107,7 @@ t=read_dataset_table(ds,'team_match_stats')
 stopifnot(x$team_id=='9',!is.na(x$team_entity_id),x$team_entity_id==t$team_entity_id)''')
 
     def test_r_preserves_python_fixture_recoveries_and_unresolved_conflicts(self):
-        from dataset_identity import annotate
+        from dataset_pipeline.identity import annotate
         self.write()
         path=self.dataset/'raw_data/premier-league/2024-2025/player_match_stats.csv'
         frame=pd.read_csv(path,dtype=str);frame['team_id']='unknown';frame.to_csv(path,index=False)

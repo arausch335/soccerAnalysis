@@ -14,10 +14,10 @@ def package_saved(root,output,names=None,*,references_only=False,mode='increment
     from .datasetBuildCache import seed,commit
     from .storageAgent import dataset_files,install_dataset
     from concordance import package_state as tracking
-    from dataset_builder import build_dataset
-    from dataset_review import create_review,print_review,load_review,print_package_diagnostic
-    from dataset_handoff import create as create_handoff,current as current_handoff
-    from dataset_identity import annotate
+    from dataset_pipeline.build import build_dataset
+    from dataset_pipeline.review import create_review,print_review,load_review,print_package_diagnostic
+    from dataset_pipeline.handoff import create as create_handoff,current as current_handoff
+    from dataset_pipeline.identity import annotate
     root,output=Path(root).resolve(),Path(output).resolve()
     if root==output or root in output.parents or output in root.parents:raise ValueError('Data and dataset roots must be separate directories')
     directory=root/'_system/storage';directory.mkdir(parents=True,exist_ok=True)
@@ -54,7 +54,7 @@ def package_saved(root,output,names=None,*,references_only=False,mode='increment
                     return code
                 for item in [*diagnostic['failed'],*diagnostic['deferred']]:
                     # Match the export destination, including reviewed competition names.
-                    from dataset_builder import _slug,_season_directory
+                    from dataset_pipeline.build import _slug,_season_directory
                     saved=source/item['season_path']/'config.json'
                     try:
                         settings=json.loads(saved.read_text())

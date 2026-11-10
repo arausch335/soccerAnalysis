@@ -1,9 +1,9 @@
 """Men's first-team identity scope; exclusions never apply to player IDs."""
 import json
-from pathlib import Path
+from concordance import REFERENCE_DATA
 import re
 
-EXCLUSIONS=json.loads((Path(__file__).parent/'concordance/team_scope.json').read_text(encoding='utf-8'))['excluded_profiles']
+EXCLUSIONS=json.loads((REFERENCE_DATA / 'team_scope.json').read_text(encoding='utf-8'))['excluded_profiles']
 _EXCLUDED={(r['provider'],r['id']) for r in EXCLUSIONS}
 
 

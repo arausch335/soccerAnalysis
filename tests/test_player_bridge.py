@@ -216,7 +216,7 @@ class PlayerBridgeTests(unittest.TestCase):
             self.case.write(players=self.players)
         # A canonical provider-only cache need not have a combined job.json.
         self.cache.path('whoscored','match/300').unlink()
-        with patch('dataset_builder.package_collection',side_effect=AssertionError('Unexpected season export')):
+        with patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('Unexpected season export')):
             self.assertEqual(package_saved(self.case.root,self.case.dataset,references_only=True,
                                            report=lambda *a,**k:None),0)
             self.raw()

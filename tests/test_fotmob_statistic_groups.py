@@ -94,9 +94,9 @@ class FotMobStatisticGroupTests(unittest.TestCase):
     def test_package_includes_conflict_in_portable_csv_and_coverage(self):
         from collection.datasetPackaging import package_saved
         from collection.paths import collection_directory
-        from dataset_handoff import verify
-        from dataset_review import load_review
-        import dataset_builder
+        from dataset_pipeline.handoff import verify
+        from dataset_pipeline.review import load_review
+        import dataset_pipeline.build as dataset_builder
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary)/'data';output=Path(temporary)/'dataset'
             atomic_json(root/'.soccer-scraper.json',{'format':1})

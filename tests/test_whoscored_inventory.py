@@ -9,7 +9,7 @@ from collection.seasonRunner import SeasonRunner
 from collection.whoScoredData import integrated_error
 from providers.cache import ResponseCache
 from providers.reep import install, FORMAT, _digest
-from review_data import integrated_who
+from collection.coverage import integrated_who
 from storage.pandasStore import PandasStore, atomic_json
 from tests.test_providers import Sofa
 

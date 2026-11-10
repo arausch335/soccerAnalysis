@@ -4,11 +4,13 @@ import hashlib
 import json
 from pathlib import Path
 
+from concordance import REFERENCE_DATA
+
 from .teamScope import in_mens_scope
 
 PROVIDERS=('sofascore','fotmob','whoscored')
 RELATIONSHIPS={'renamed_to','succeeded_by','merged_into','split_into','transferred_rights_to','distinct_from'}
-CATALOG=Path(__file__).parent/'concordance/team_history.json'
+CATALOG=REFERENCE_DATA / 'team_history.json'
 BASE_COLUMNS=['relationship_id','event_id','relationship','from_team_key','from_name','to_team_key','to_name',
               'effective_date','effective_year','date_precision','status','gender','used_for_identity_matching','source_urls','notes']
 ENDPOINT_COLUMNS=[side+'_'+field for side in ('from','to') for field in

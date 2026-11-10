@@ -9,10 +9,10 @@ import unittest
 from unittest.mock import patch
 
 from collection.seasonRunner import SeasonRunner
-from dataset_review import load_review
+from dataset_pipeline.review import load_review
 from tests.test_providers import Sofa,Fot
 from tests import test_package_modes as fixtures
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 
 
 class LargeCheckpointCSVTests(unittest.TestCase):
@@ -49,7 +49,7 @@ print(json.dumps({'limit':csv.field_size_limit(),'length':len(row[0])}))
                 before[path]=path.read_bytes()
             program="""import csv,sys,json
 csv.field_size_limit(131072)
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 players,teams,matches={},{},{}
 dataset_builder._source_id_rows(__import__('pathlib').Path(sys.argv[1]),players,teams,matches)
 assert {r['player_name'] for r in players.values()}=={'Player One','Player Two'}
@@ -67,12 +67,12 @@ print(json.dumps({'players':len(players),'teams':len(teams),'matches':len(matche
         def fail_one(source,*args):
             if source.parent.name=='bundesliga':raise csv.Error('invalid checkpoint CSV')
             return original(source,*args)
-        with patch('dataset_builder._source_id_rows',side_effect=fail_one):self.assertEqual(helper.build(),0)
+        with patch('dataset_pipeline.build._source_id_rows',side_effect=fail_one):self.assertEqual(helper.build(),0)
         report=load_review(helper.output)['package_diagnostic']
         self.assertEqual(report['status'],'partial');self.assertEqual(len(report['completed']),1)
         self.assertEqual(report['failed'][0]['phase'],'ID indexing')
         self.assertEqual(report['failed'][0]['error'],'invalid checkpoint CSV')
-        with patch('dataset_builder._source_id_rows',wraps=original) as indexed,patch('dataset_builder.package_collection',side_effect=AssertionError('repeated completed export')):
+        with patch('dataset_pipeline.build._source_id_rows',wraps=original) as indexed,patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('repeated completed export')):
             self.assertEqual(helper.build(),0)
         self.assertEqual([call.args[0].parent.name for call in indexed.call_args_list],['bundesliga'])
         self.assertEqual(load_review(helper.output)['package_diagnostic']['failed'],[])

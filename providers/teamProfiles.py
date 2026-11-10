@@ -4,9 +4,9 @@ The first ID is preferred for new references. Existing native IDs are retained.
 """
 import hashlib
 import json
-from pathlib import Path
+from concordance import REFERENCE_DATA
 
-GROUPS=json.loads((Path(__file__).parent/'concordance/team_profiles.json').read_text())['groups']
+GROUPS=json.loads((REFERENCE_DATA / 'team_profiles.json').read_text())['groups']
 _BY_ID={(provider,native):group for group in GROUPS for provider in ('sofascore','fotmob','whoscored') for native in group.get(provider,[])}
 _BY_NAME={name.casefold():group['name'] for group in GROUPS for name in group.get('names',[group['name']])}
 

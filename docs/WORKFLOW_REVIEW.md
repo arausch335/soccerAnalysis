@@ -81,7 +81,7 @@ storage/
 tools/
   compact_cache.py, extension_setup.py
   migrate_whoscored.py, migrate_data_layout.py
-dashboard/, models/, analysis/, dataset_builder.py
+dashboard/, models/, dataset_pipeline/
 ```
 
 ## Disk cleanup

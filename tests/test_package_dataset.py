@@ -5,11 +5,11 @@ from unittest.mock import patch
 
 import pandas as pd
 
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 import main
 from collection.paths import collection_directory
 from collection.seasonRunner import SeasonRunner
-from concordance.parquet import read_table, validate, CORE_COLUMNS
+from concordance.publication import read_table, validate, CORE_COLUMNS
 from concordance.registry import Registry
 from storage.pandasStore import atomic_json
 from tests.test_providers import Sofa
@@ -87,7 +87,7 @@ class PackageDatasetTests(unittest.TestCase):
         dataset_builder.package_dataset(self.root, self.output)
         manifest = self.output / 'concordance/metadata/manifest.json'
         before = manifest.read_bytes()
-        with patch('dataset_builder.build_dataset', return_value=2):
+        with patch('dataset_pipeline.build.build_dataset', return_value=2):
             self.assertEqual(dataset_builder.package_dataset(self.root, self.output,
                              ['premier-league-2024-25']), 2)
         self.assertEqual(manifest.read_bytes(), before)

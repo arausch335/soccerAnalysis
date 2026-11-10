@@ -5,13 +5,13 @@ import unittest
 from unittest.mock import patch
 
 import pandas as pd
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 from collection.datasetPackaging import package_saved
 from collection.paths import collection_directory
 from concordance.publication import read_table,read_registry
 from concordance.registry import Registry
-from dataset_review import load_review
-from dataset_handoff import verify
+from dataset_pipeline.review import load_review
+from dataset_pipeline.handoff import verify
 from providers import reep
 from storage.pandasStore import atomic_json
 from tests.test_providers import event
@@ -40,14 +40,14 @@ class ReviewedTeamMappingTests(unittest.TestCase):
     def test_baseline_disagreement_keeps_observed_baseline_and_withholds_peers(self):
         source=pd.DataFrame([{'team_name':'A Club','sofascore_id':'777',
                               'fotmob_id':'189481','whoscored_id':'8183'}])
-        with tempfile.TemporaryDirectory() as temporary,patch('dataset_builder._team_crosswalk',return_value={'189481':{'sofascore_id':'1110141'}}):
+        with tempfile.TemporaryDirectory() as temporary,patch('dataset_pipeline.build._team_crosswalk',return_value={'189481':{'sofascore_id':'1110141'}}):
             row=dataset_builder._canonical_team_reference(source,Path(temporary)/'missing.csv').iloc[0]
         self.assertEqual(row.sofascore_id,'777');self.assertEqual(row.fotmob_id,'');self.assertEqual(row.whoscored_id,'')
         self.assertEqual(json.loads(row.reviewed_mapping_conflicts)[0]['provider'],'sofascore')
 
     def test_invalid_cached_review_value_cannot_fill_an_id_slot(self):
         source=pd.DataFrame([{'team_name':'A Club','sofascore_id':'777','fotmob_id':'222','whoscored_id':''}])
-        with tempfile.TemporaryDirectory() as temporary,patch('dataset_builder._team_crosswalk',return_value={'222':{'whoscored_id':'A Club'}}):
+        with tempfile.TemporaryDirectory() as temporary,patch('dataset_pipeline.build._team_crosswalk',return_value={'222':{'whoscored_id':'A Club'}}):
             row=dataset_builder._canonical_team_reference(source,Path(temporary)/'missing.csv').iloc[0]
         self.assertEqual(row.whoscored_id,'')
         self.assertEqual(json.loads(row.invalid_provider_ids)['reviewed_whoscored_id'],'A Club')
@@ -75,7 +75,7 @@ class ReviewedTeamMappingTests(unittest.TestCase):
             held=teams['Premier League','2024-2025','1110141']['_ids']
             held['fotmob_id']=['189481'];held['whoscored_id']=[who]
         messages=[]
-        with patch.multiple(dataset_builder.config,BUILD_PLAYER_MATCH_STATS=False,BUILD_TEAM_MATCH_STATS=False,BUILD_FIXTURES=True),patch('dataset_builder._source_id_rows',side_effect=observations):
+        with patch.multiple(dataset_builder.config,BUILD_PLAYER_MATCH_STATS=False,BUILD_TEAM_MATCH_STATS=False,BUILD_FIXTURES=True),patch('dataset_pipeline.build._source_id_rows',side_effect=observations):
             self.assertEqual(package_saved(root,output,report=lambda *a,**k:messages.append(str(a[0]))),0)
         verify(output)
         return output,messages

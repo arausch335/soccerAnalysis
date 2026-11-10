@@ -77,10 +77,9 @@ New-Item -ItemType Directory -Force "$HOME\Projects" | Out-Null
 Set-Location "$HOME\Projects"
 git clone https://github.com/arausch335/soccerAnalysis.git
 Set-Location soccerAnalysis
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pip check
+conda env create -f environment.yml
+conda activate soccerAnalysis
+python -m pip check
 ```
 
 macOS Terminal:
@@ -90,20 +89,18 @@ mkdir -p "$HOME/Projects"
 cd "$HOME/Projects"
 git clone https://github.com/arausch335/soccerAnalysis.git
 cd soccerAnalysis
-python3 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pip check
+conda env create -f environment.yml
+conda activate soccerAnalysis
+python -m pip check
 ```
 
 If a folder named `soccerAnalysis` already exists, inspect and reuse the original
 checkout; do not clone over it. Check `config/workers.yaml` contains `dario` and
 its nine 2023/24 jobs. Do not start if the downloaded plan predates Dario.
 
-In the remaining commands, `python` means the environment's interpreter:
-`.\.venv\Scripts\python.exe` on Windows or `.venv/bin/python` on macOS. You can
-substitute that full path in every command without activating the environment.
-PowerShell activation is optional; no execution-policy change is needed.
+Install Conda before running these commands. Keep the `soccerAnalysis`
+environment active for the remaining steps. If you already created that
+environment, update it with `conda env update -f environment.yml`.
 
 ## 4. Register Dario's reporting connection
 

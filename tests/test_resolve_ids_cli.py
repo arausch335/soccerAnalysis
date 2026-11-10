@@ -9,8 +9,8 @@ from unittest.mock import patch
 from filelock import FileLock
 
 import main
-from resolve_dataset_ids import main as command,resolve_dataset
-from dataset_handoff import current,verify
+from dataset_pipeline.resolve_ids import main as command,resolve_dataset
+from dataset_pipeline.handoff import current,verify
 from collection.storageServer import Archive
 from storage.pandasStore import atomic_json
 from concordance import package_state as tracking
@@ -34,14 +34,14 @@ class ResolveIdsCommandTests(unittest.TestCase):
         return path
 
     def test_main_routes_to_resolver_without_workers_or_collection(self):
-        with patch('resolve_dataset_ids.main',return_value=0) as run,patch('main.acquire_bridge',side_effect=AssertionError('extension')),patch('collection.worker.entrypoint',side_effect=AssertionError('worker')):
+        with patch('dataset_pipeline.resolve_ids.main',return_value=0) as run,patch('main.acquire_bridge',side_effect=AssertionError('extension')),patch('collection.worker.entrypoint',side_effect=AssertionError('worker')):
             self.assertEqual(main.entrypoint(['--resolve-ids','--dataset-root','copied-dataset']),0)
         run.assert_called_once_with(['--dataset-root','copied-dataset'])
         with self.assertRaises(SystemExit):main.entrypoint(['--resolve-ids','--package'])
 
     def test_repairs_dataset_only_and_refreshes_audits_without_rebuild_or_publication(self):
         path=self.damaged();concordance={p:p.read_bytes() for p in (self.dataset/'concordance').rglob('*') if p.is_file()}
-        with patch('dataset_builder.build_dataset',side_effect=AssertionError('dataset rebuild')),patch('collection.cli.main',side_effect=AssertionError('raw export')),patch('collection.storageServer.Archive.publish',side_effect=AssertionError('publication')),patch('providers.httpClient.HttpClient._request',side_effect=AssertionError('network')):
+        with patch('dataset_pipeline.build.build_dataset',side_effect=AssertionError('dataset rebuild')),patch('collection.cli.main',side_effect=AssertionError('raw export')),patch('collection.storageServer.Archive.publish',side_effect=AssertionError('publication')),patch('providers.httpClient.HttpClient._request',side_effect=AssertionError('network')):
             self.assertEqual(command(['--dataset-root',str(self.dataset),'--data-root',str(self.source)]),0)
         self.assertFalse(self.source.exists())
         with path.open() as stream:rows=list(csv.DictReader(stream))
@@ -55,7 +55,7 @@ class ResolveIdsCommandTests(unittest.TestCase):
 
     def test_resolution_failure_and_install_failure_keep_previous_dataset(self):
         self.damaged();before={p:(p.read_bytes(),p.stat().st_mtime_ns) for p in self.dataset.rglob('*') if p.is_file()}
-        with patch('dataset_identity.annotate',side_effect=ValueError('invalid IDs')),self.assertRaisesRegex(ValueError,'invalid IDs'):
+        with patch('dataset_pipeline.identity.annotate',side_effect=ValueError('invalid IDs')),self.assertRaisesRegex(ValueError,'invalid IDs'):
             resolve_dataset(self.dataset,self.source,report=lambda *a,**k:None)
         self.assertEqual(before,{p:(p.read_bytes(),p.stat().st_mtime_ns) for p in before})
         from collection.ensemble import atomic_copy
@@ -86,7 +86,7 @@ class ResolveIdsCommandTests(unittest.TestCase):
             writer=csv.DictWriter(stream,fieldnames=columns,extrasaction='ignore');writer.writeheader();writer.writerows(rows)
         self.assertEqual(resolve_dataset(helper.output,helper.root,report=lambda *a,**k:None),0)
         repaired=(path.read_bytes(),path.stat().st_mtime_ns)
-        with patch('dataset_builder.package_collection',side_effect=AssertionError('season re-export')),patch('dataset_builder._source_id_rows',side_effect=AssertionError('ID re-index')):
+        with patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('season re-export')),patch('dataset_pipeline.build._source_id_rows',side_effect=AssertionError('ID re-index')):
             self.assertEqual(package_saved(helper.root,helper.output,report=lambda *a,**k:None),0)
         self.assertNotEqual(old,identifier(archive.publication()))
         self.assertEqual(repaired,(path.read_bytes(),path.stat().st_mtime_ns))

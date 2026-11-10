@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from dataset_identity import Resolver,annotate
-from dataset_review import create_review,load_review
+from dataset_pipeline.identity import Resolver,annotate
+from dataset_pipeline.review import create_review,load_review
 from collection.datasetPackaging import package_saved
 from collection.storageServer import Archive
 from collection.workerIdentity import ensure_identity

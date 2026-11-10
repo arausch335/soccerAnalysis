@@ -5,7 +5,7 @@ import unittest
 
 from concordance.registry import Registry
 from concordance.teamNamespace import repair
-from dataset_builder import _fixture_team_names
+from dataset_pipeline.build import _fixture_team_names
 
 
 class TeamNamespaceTests(unittest.TestCase):
@@ -48,7 +48,7 @@ class TeamNamespaceTests(unittest.TestCase):
 
     def test_sofa_reviewed_mappings_are_not_applied_to_fotmob_baseline_numbers(self):
         import json
-        import dataset_builder
+        import dataset_pipeline.build as dataset_builder
         from unittest.mock import patch
         from storage.pandasStore import atomic_json
         from tests.test_providers import event

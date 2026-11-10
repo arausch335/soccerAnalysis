@@ -8,7 +8,7 @@ from unittest.mock import Mock,patch
 
 import pandas as pd
 from collection.storageServer import Archive
-from dataset_builder import package_collection
+from dataset_pipeline.build import package_collection
 from tools.audit_integration import inspect_queues,saved_errors,audit,EXPECTED,now
 from tools.review_imports import retry_builds
 
@@ -49,7 +49,7 @@ class MSIRecoveryTests(unittest.TestCase):
                         if permanent or len(attempts)==1:
                             exc=PermissionError('Sharing conflict');exc.winerror=5;raise exc
                     return original(src,dst)
-                with patch('storage.pandasStore.os.replace',side_effect=locked),patch('storage.pandasStore.time.sleep'),patch('dataset_builder._fixtures',return_value=pd.DataFrame([{'match_id':1}])):
+                with patch('storage.pandasStore.os.replace',side_effect=locked),patch('storage.pandasStore.time.sleep'),patch('dataset_pipeline.build._fixtures',return_value=pd.DataFrame([{'match_id':1}])):
                     if permanent:
                         with self.assertRaises(PermissionError):package_collection(source,root/'dataset',replace=True,tables=('fixtures',))
                         self.assertEqual((destination/'fixtures.csv').read_text(),'previous export')

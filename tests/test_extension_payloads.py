@@ -60,7 +60,7 @@ class ExtensionPayloadTests(unittest.TestCase):
         from collection.sofascoreTeams import team_stat_rows
         from storage import PandasStore
         from providers.cache import ResponseCache
-        from dataset_builder import package_collection
+        from dataset_pipeline.build import package_collection
         import pandas as pd
         with tempfile.TemporaryDirectory() as tmp:
             directory=Path(tmp)/'season'

@@ -11,7 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 import config
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 from concordance import publication
 from tests import test_package_modes, test_parquet_concordances, test_msi_incremental_builds
 
@@ -67,9 +67,9 @@ class ConcordanceFormatTests(unittest.TestCase):
         raw={p:(p.read_bytes(),p.stat().st_mtime_ns) for p in (helper.output/'raw_data').rglob('*.csv')}
         private=helper.output/'concordance/metadata/compiled/fixtures.csv'
         before=(private.read_bytes(),private.stat().st_mtime_ns)
-        with patch('dataset_builder.package_collection',side_effect=AssertionError('raw export')), \
-             patch('dataset_builder._build_reference_csvs',side_effect=AssertionError('ID scan')), \
-             patch('dataset_builder._seed_fixture_catalog',side_effect=AssertionError('fixture rebuild')):
+        with patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('raw export')), \
+             patch('dataset_pipeline.build._build_reference_csvs',side_effect=AssertionError('ID scan')), \
+             patch('dataset_pipeline.build._seed_fixture_catalog',side_effect=AssertionError('fixture rebuild')):
             for encoding in ('parquet','csv','parquet'):
                 self.assertEqual(dataset_builder.package_dataset(helper.root,helper.output,concordance_format=encoding),0)
                 self.assertEqual(json.loads(helper.state.read_text())['concordance_format'],encoding)
@@ -83,8 +83,8 @@ class ConcordanceFormatTests(unittest.TestCase):
         helper=self.fixture(test_package_modes.PackageModeTests)
         self.assertEqual(dataset_builder.package_dataset(helper.root,helper.output,concordance_format='csv'),0)
         (helper.output/'concordance/metadata/fixture_extra.csv').unlink()
-        with patch('dataset_builder.package_collection',side_effect=AssertionError('raw export')), \
-             patch('dataset_builder._build_reference_csvs',side_effect=AssertionError('ID scan')):
+        with patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('raw export')), \
+             patch('dataset_pipeline.build._build_reference_csvs',side_effect=AssertionError('ID scan')):
             self.assertEqual(dataset_builder.package_dataset(helper.root,helper.output,concordance_format='csv'),0)
         self.assertEqual(publication.validate(helper.output/'concordance')['format'],publication.FORMATS['csv'])
 
@@ -96,8 +96,8 @@ class ConcordanceFormatTests(unittest.TestCase):
                 helper.archive.schedule_build('premier-league/2024-2025')
                 self.assertTrue(helper.agent.maintenance_once(package=True))
             with patch.object(config,'CONCORDANCE_FORMAT','parquet'), \
-                 patch('dataset_builder.package_collection',side_effect=AssertionError('raw export')), \
-                 patch('dataset_builder._build_reference_csvs',side_effect=AssertionError('ID scan')):
+                 patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('raw export')), \
+                 patch('dataset_pipeline.build._build_reference_csvs',side_effect=AssertionError('ID scan')):
                 helper.archive.schedule_build('premier-league/2024-2025')
                 self.assertTrue(helper.agent.maintenance_once(package=True))
                 paths={item['path'] for item in helper.archive.publication()['files']}
@@ -114,7 +114,8 @@ class ConcordanceFormatTests(unittest.TestCase):
         from concordance.package_state import recipe
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);(root/'config').mkdir()
-            (root/'dataset_builder.py').write_text('# recipe fixture\n')
+            (root/'dataset_pipeline').mkdir()
+            (root/'dataset_pipeline/build.py').write_text('# recipe fixture\n')
             path=root/'config/settings.yaml'
             document=yaml.safe_load(config.CONFIG_FILE.read_text())
             document['dataset'].pop('concordance_format',None)

@@ -86,7 +86,7 @@ class ReepTests(unittest.TestCase):
         (source/'config.json').write_text(json.dumps({'competition':'League','season':'2024/2025'}))
         event={'id':100,'startTimestamp':1725148800,'homeTeam':{'id':1,'name':'Club'},'awayTeam':{'id':999,'name':'Unlinked'}}
         (source/'schedule.json').write_text(json.dumps({'events':[event]}))
-        import dataset_builder
+        import dataset_pipeline.build as dataset_builder
         paths=dataset_builder.build_id_tables(self.root,self.root/'exports',build_player_ids=False)
         with paths['team concordance'].open() as f:teams=list(csv.DictReader(f))
         self.assertEqual(len(teams),2)

@@ -14,14 +14,14 @@ def _namespace_inputs(root):
 def resolve_dataset(dataset_root, data_root=None, *, report=print):
     from concordance.publication import folder,validate
     from concordance import package_state as tracking
-    from dataset_identity import annotate
-    from dataset_review import create_review,load_review,print_review
-    from dataset_handoff import current as handoff_current,create as create_handoff
+    from dataset_pipeline.identity import annotate
+    from dataset_pipeline.review import create_review,load_review,print_review
+    from dataset_pipeline.handoff import current as handoff_current,create as create_handoff
     from collection.datasetBuildCache import seed
     from collection.storageAgent import dataset_files
     from collection.storageTransfer import digest,link_or_copy
     from collection.paths import collection_parts
-    from dataset_builder import SEASON_TABLES
+    from dataset_pipeline.build import SEASON_TABLES
     from collection.ensemble import atomic_copy
     from storage.pandasStore import atomic_replace
 

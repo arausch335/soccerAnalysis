@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 import pandas as pd
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 import main
 from contextlib import nullcontext
 from collection.paths import collection_directory
@@ -61,8 +61,8 @@ class DatasetBuildTests(unittest.TestCase):
             old.parent.mkdir(parents=True)
             old.write_text('previous dataset\n')
             with patch('collection.cli.main', return_value=2), \
-                    patch('dataset_builder.package_collection') as package, \
-                    patch('dataset_builder.build_id_tables') as ids:
+                    patch('dataset_pipeline.build.package_collection') as package, \
+                    patch('dataset_pipeline.build.build_id_tables') as ids:
                 self.assertEqual(dataset_builder.build_dataset(root / 'data', root / 'dataset'), 2)
             package.assert_not_called()
             ids.assert_not_called()
@@ -74,18 +74,18 @@ class DatasetBuildTests(unittest.TestCase):
                 dataset_builder.build_dataset(folder, Path(folder) / 'dataset')
 
     def test_legacy_build_flag_points_to_explicit_package_command(self):
-        with patch('dataset_builder.build_dataset') as build,patch('main.collect') as collect:
+        with patch('dataset_pipeline.build.build_dataset') as build,patch('main.collect') as collect:
             with self.assertRaises(SystemExit):main.main(['resume','--build-dataset'])
         build.assert_not_called();collect.assert_not_called()
 
     def test_normal_collection_and_raw_export_never_package(self):
         for action,result in [('resume',0),('resume',2),('resume',130),('export',0),('status',0)]:
-            with self.subTest(action=action,result=result),patch('main.collect',return_value=result),patch('dataset_builder.build_dataset') as build:
+            with self.subTest(action=action,result=result),patch('main.collect',return_value=result),patch('dataset_pipeline.build.build_dataset') as build:
                 self.assertEqual(main.main([action]),result)
                 build.assert_not_called()
 
     def test_only_package_entrypoint_routes_to_dataset_production(self):
-        with patch('dataset_builder.main',return_value=0) as package,patch('main.collect') as collect:
+        with patch('dataset_pipeline.build.main',return_value=0) as package,patch('main.collect') as collect:
             self.assertEqual(main.entrypoint(['--package','--parquet']),0)
             package.assert_called_once_with(['--parquet'],package=True)
             collect.assert_not_called()

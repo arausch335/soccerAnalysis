@@ -5,7 +5,7 @@ import unittest
 from contextlib import nullcontext
 from unittest.mock import patch
 
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 import config as dataset_config
 from collection.paths import collection_directory
 
@@ -49,10 +49,11 @@ class DatasetConfigTests(unittest.TestCase):
     def test_disabled_events_skip_compilation_and_package_only_requested_types(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            self.source(root)
+            source = self.source(root)
+            (source / 'player_match_stats.csv').write_text('match_id,player_id,season\n')
             with patch.multiple(dataset_config, **{**DISABLED, 'BUILD_PLAYER_MATCH_STATS': True}), \
                     patch('collection.cli.main', return_value=0) as export, \
-                    patch('dataset_builder.package_collection') as package:
+                    patch('dataset_pipeline.build.package_collection', wraps=dataset_builder.package_collection) as package:
                 self.assertEqual(dataset_builder.build_dataset(root / 'data', root / 'dataset'), 0)
             self.assertIn('--no-compile-events', export.call_args.args[0])
             self.assertEqual(package.call_args.kwargs['tables'], ('player_match_stats',))
@@ -63,11 +64,12 @@ class DatasetConfigTests(unittest.TestCase):
             self.source(root)
             with patch.multiple(dataset_config, **{**DISABLED, 'BUILD_PLAYER_IDS': True}), \
                     patch('collection.cli.main') as export, \
-                    patch('dataset_builder.build_id_tables', return_value={}) as ids:
+                    patch('dataset_pipeline.build.build_id_tables', return_value={}) as ids:
                 self.assertEqual(dataset_builder.build_dataset(root / 'data', root / 'dataset'), 0)
             export.assert_not_called()
             self.assertEqual(ids.call_args.kwargs, dict(
-                build_player_ids=True, build_team_ids=False, build_match_ids=False,reuse_cache=True))
+                build_player_ids=True, build_team_ids=False, build_match_ids=False, reuse_cache=True,
+                excluded_sources=set(), on_source_error=None))
 
     def test_ide_run_uses_config_paths_and_season_selection_without_arguments(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -76,7 +78,7 @@ class DatasetConfigTests(unittest.TestCase):
             with patch.multiple(dataset_config, DATA_ROOT=root / 'data', DATASET_ROOT=root / 'dataset',
                                 COLLECTION_NAMES=('bundesliga-2024-25',),
                                 **{**DISABLED, 'BUILD_FIXTURES': True}), \
-                    patch('dataset_builder.package_collection') as package:
+                    patch('dataset_pipeline.build.package_collection', wraps=dataset_builder.package_collection) as package:
                 self.assertEqual(dataset_builder.main([]), 0)
             self.assertEqual(package.call_args.args[0].parts[-2:],('bundesliga','2024-2025'))
             self.assertEqual(package.call_args.args[1].name,'raw_data')
@@ -104,7 +106,7 @@ class DatasetConfigTests(unittest.TestCase):
                     patch.dict(main.config.TRANSPORT,{'sofascore_mode':'auto'}), \
                     patch('main._collection_complete', return_value=True), \
                     patch('main.collect') as collect, \
-                    patch('dataset_builder.build_dataset', return_value=0) as build:
+                    patch('dataset_pipeline.build.build_dataset', return_value=0) as build:
                 self.assertEqual(main.main([]), 0)
             collect.assert_not_called()
             build.assert_not_called()

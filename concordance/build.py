@@ -3,13 +3,13 @@ from collections import defaultdict
 from contextlib import ExitStack
 from datetime import datetime,timezone,timedelta
 import csv
-import hashlib
 import json
 import re
 from pathlib import Path
 import tempfile
 
 import pandas as pd
+from storage.checksums import file_digest as digest
 from filelock import FileLock
 
 from collection.files import atomic_csv
@@ -41,13 +41,6 @@ def invalidate_bundle(dataset,reason):
                         invalidated_at=datetime.now(timezone.utc).isoformat())
         atomic_json(path,manifest,indent=2);changed=True
     return changed
-
-
-def digest(path):
-    value=hashlib.sha256()
-    with Path(path).open('rb') as stream:
-        for block in iter(lambda:stream.read(1024**2),b''):value.update(block)
-    return value.hexdigest()
 
 
 def table(path):
@@ -313,7 +306,7 @@ def rebuild(root,dataset,*,output=None,integration_report=None,allow_unconfirmed
                     fixtures.append({**row,'sofascore_match_id':mid,'fixture_source':'scraped_season_export'})
                     present.add(mid)
         # Deferred flat exports must not hide a scraped checkpoint's fixture.
-        from dataset_builder import fixtures_from_events,_identifier
+        from dataset_pipeline.build import fixtures_from_events,_identifier
         for path in sorted(root.glob('*/*/schedule.json')):
             config_path=path.parent/'config.json'
             if not config_path.is_file():continue

@@ -134,7 +134,7 @@ class TransferTests(unittest.TestCase):
         hub=self.base/'msi';atomic_json(hub/'.soccer-scraper.json',{'format':1});ensure_identity(hub,'msi')
         agent=StorageAgent(hub,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.base/'dataset',log=quiet)
         agent.server=self.server
-        with patch('dataset_builder.build_dataset',side_effect=AssertionError('Unfinished season must not publish')):
+        with patch('dataset_pipeline.build.build_dataset',side_effect=AssertionError('Unfinished season must not publish')):
             agent.maintenance_once(package=True)
         self.assertIn(1,PandasStore(hub/self.season/'match_checkpoints/1').from_csv().matches)
         self.assertEqual(self.server.archive.commit('headless',mid)['state'],'imported')
@@ -304,7 +304,7 @@ class TransferTests(unittest.TestCase):
         settings={'hub':'msi','consumers':['main'],'url':self.server.url}
         hubroot=self.base/'msi';atomic_json(hubroot/'.soccer-scraper.json',{'format':1});ensure_identity(hubroot,'msi')
         agent=StorageAgent(hubroot,'msi',settings,dataset_root=self.base/'hub-dataset',log=quiet);agent.server=self.server
-        with patch('dataset_builder.build_dataset',return_value=2):
+        with patch('dataset_pipeline.build.build_dataset',return_value=2):
             self.assertTrue(agent.maintenance_once(package=True))
         self.assertTrue((hubroot/self.season/'match_checkpoints/1/CURRENT.json').exists())
         progress=PortableProgress(None,hubroot);progress.scan()

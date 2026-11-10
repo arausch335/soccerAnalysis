@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 from collection.fixtureTransfer import export_bundle,verify,install_bundle,import_staged
 from storage.pandasStore import atomic_json
 from tests.test_providers import event

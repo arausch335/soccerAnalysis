@@ -295,11 +295,11 @@ def entrypoint(argv=None):
     if '--resolve-ids' in args:
         if '--package' in args or '--fixtures' in args or '--terminate' in args:
             raise SystemExit('Use --resolve-ids by itself; --package already includes ID resolution.')
-        from resolve_dataset_ids import main as resolve_ids
+        from dataset_pipeline.resolve_ids import main as resolve_ids
         args.remove('--resolve-ids')
         return resolve_ids(args)
     if '--package' in args:
-        from dataset_builder import main as package_dataset
+        from dataset_pipeline.build import main as package_dataset
         args.remove('--package')
         return package_dataset(args,package=True)
     if '--fixtures' in args:

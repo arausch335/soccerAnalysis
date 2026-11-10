@@ -7,7 +7,7 @@ from unittest.mock import Mock,patch
 
 from collection.selection import competition_by_name,competition_phase
 from collection.seasonRunner import SeasonRunner
-from dataset_builder import fixtures_from_events,package_collection
+from dataset_pipeline.build import fixtures_from_events,package_collection
 from fixtures.builder import _fotmob_season_events,COMPETITIONS
 from providers.httpClient import ProviderError
 from providers.events import fotmob_fixture

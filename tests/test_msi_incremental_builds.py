@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import dataset_builder
+import dataset_pipeline.build as dataset_builder
 from collection.storageAgent import StorageAgent
 from collection.storageServer import Archive
 from collection.paths import collection_directory
@@ -46,8 +46,8 @@ class MSIIncrementalBuildTests(unittest.TestCase):
             self.agent=StorageAgent(self.root,'msi',{'hub':'msi','consumers':['main']},dataset_root=self.output,log=lambda *a,**k:None)
             self.agent.server=SimpleNamespace(archive=self.archive)
             self.archive.schedule_build('premier-league/2024-2025')
-            with patch('dataset_builder.package_collection',side_effect=AssertionError('unchanged export')), \
-                 patch('dataset_builder._source_id_rows',side_effect=AssertionError('unchanged ID scan')), \
+            with patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('unchanged export')), \
+                 patch('dataset_pipeline.build._source_id_rows',side_effect=AssertionError('unchanged ID scan')), \
                  patch.object(self.archive,'publish',side_effect=AssertionError('unchanged publication')):
                 self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertEqual(self.archive.build_jobs(),[])
@@ -61,11 +61,11 @@ class MSIIncrementalBuildTests(unittest.TestCase):
             self.archive.schedule_build('premier-league/2024-2025')
             self.assertTrue(self.agent.maintenance_once(package=True))
             self.archive.schedule_build('bundesliga/2024-2025')
-            with patch('dataset_builder._source_id_rows',side_effect=AssertionError('cached ID scan')):
+            with patch('dataset_pipeline.build._source_id_rows',side_effect=AssertionError('cached ID scan')):
                 self.assertTrue(self.agent.maintenance_once(package=True))
             atomic_json(second/'schedule.json',{'events':[event(201),event(202)]})
             self.archive.schedule_build('bundesliga/2024-2025')
-            with patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as index:
+            with patch('dataset_pipeline.build._source_id_rows',wraps=dataset_builder._source_id_rows) as index:
                 self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertEqual(len(index.call_args_list),1)
         self.assertEqual(index.call_args.args[0].parent.name,'bundesliga')
@@ -99,7 +99,7 @@ class MSIIncrementalBuildTests(unittest.TestCase):
             self.agent=StorageAgent(self.root,'msi',{'hub':'msi','consumers':['main']},
                                     dataset_root=self.output,log=lambda *a,**k:None)
             self.agent.server=SimpleNamespace(archive=self.archive)
-            with patch('dataset_builder._source_id_rows',side_effect=AssertionError('completed source reindexed')):
+            with patch('dataset_pipeline.build._source_id_rows',side_effect=AssertionError('completed source reindexed')):
                 self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertIsNotNone(self.archive.publication())
 
@@ -112,11 +112,11 @@ class MSIIncrementalBuildTests(unittest.TestCase):
             original(source,*args);completed.append(source.parent.name)
         with self.fixture_mode():
             self.archive.schedule_build('premier-league/2024-2025')
-            with patch('dataset_builder._source_id_rows',side_effect=interrupt):
+            with patch('dataset_pipeline.build._source_id_rows',side_effect=interrupt):
                 with self.assertRaises(KeyboardInterrupt):self.agent.maintenance_once(package=True)
             self.assertFalse(self.state.exists())
             self.assertEqual(len(list((self.root/'_system/cache/dataset-ids').glob('*/*.json'))),1)
-            with patch('dataset_builder._source_id_rows',wraps=original) as scan:
+            with patch('dataset_pipeline.build._source_id_rows',wraps=original) as scan:
                 self.assertTrue(self.agent.maintenance_once(package=True))
             self.assertEqual(scan.call_count,1)
             self.assertNotEqual(scan.call_args.args[0].parent.name,completed[0])
@@ -131,7 +131,7 @@ class MSIIncrementalBuildTests(unittest.TestCase):
             self.archive.schedule_build('premier-league/2024-2025')
             with patch.object(self.archive,'publish',side_effect=OSError('publication interrupted')):
                 with self.assertRaises(OSError):self.agent.maintenance_once(package=True)
-            with patch('dataset_builder._source_id_rows',side_effect=AssertionError('copied source reindexed')):
+            with patch('dataset_pipeline.build._source_id_rows',side_effect=AssertionError('copied source reindexed')):
                 self.assertTrue(self.agent.maintenance_once(package=True))
 
     def test_changed_source_after_failed_publication_is_reindexed_alone(self):
@@ -142,7 +142,7 @@ class MSIIncrementalBuildTests(unittest.TestCase):
             with patch.object(self.archive,'publish',side_effect=OSError('publication interrupted')):
                 with self.assertRaises(OSError):self.agent.maintenance_once(package=True)
             atomic_json(second/'schedule.json',{'events':[event(201),event(202)]})
-            with patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as scan:
+            with patch('dataset_pipeline.build._source_id_rows',wraps=dataset_builder._source_id_rows) as scan:
                 self.assertTrue(self.agent.maintenance_once(package=True))
             self.assertEqual(scan.call_count,1)
             self.assertEqual(scan.call_args.args[0].parent.name,'bundesliga')
@@ -158,7 +158,7 @@ class MSIIncrementalBuildTests(unittest.TestCase):
                 with self.assertRaises(OSError):self.agent.maintenance_once(package=True)
             path=next((self.root/'_system/cache/dataset-ids').glob('*/*.json'))
             value=json.loads(path.read_text());value['checksum']='bad';atomic_json(path,value)
-            with patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as scan:
+            with patch('dataset_pipeline.build._source_id_rows',wraps=dataset_builder._source_id_rows) as scan:
                 self.assertTrue(self.agent.maintenance_once(package=True))
             self.assertEqual(scan.call_count,1)
 
@@ -188,8 +188,8 @@ class MSIIncrementalBuildTests(unittest.TestCase):
         SeasonRunner({'sofascore':Sofa()},source,providers=['sofascore'],spatial=(),report=lambda _:None).run('EPL','2024',limit=1,build_csvs=False)
         self.archive.schedule_build('premier-league/2024-2025');self.assertTrue(self.agent.maintenance_once(package=True))
         self.archive.schedule_build('premier-league/2024-2025')
-        with patch('dataset_builder.package_collection',side_effect=AssertionError('unchanged raw checkpoint exported')), \
-             patch('dataset_builder._source_id_rows',side_effect=AssertionError('unchanged raw checkpoint reindexed')):
+        with patch('dataset_pipeline.build.package_collection',side_effect=AssertionError('unchanged raw checkpoint exported')), \
+             patch('dataset_pipeline.build._source_id_rows',side_effect=AssertionError('unchanged raw checkpoint reindexed')):
             self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertEqual(self.archive.build_jobs(),[])
 
@@ -203,10 +203,10 @@ class MSIIncrementalBuildTests(unittest.TestCase):
             self.archive.schedule_build('premier-league/2024-2025')
             return result
         with self.fixture_mode():
-            with patch('dataset_builder.build_dataset',side_effect=build_then_receive):
+            with patch('dataset_pipeline.build.build_dataset',side_effect=build_then_receive):
                 self.assertTrue(self.agent.maintenance_once(package=True))
             self.assertEqual(len(self.archive.build_jobs()),1)
-            with patch('dataset_builder._source_id_rows',wraps=dataset_builder._source_id_rows) as index:
+            with patch('dataset_pipeline.build._source_id_rows',wraps=dataset_builder._source_id_rows) as index:
                 self.assertTrue(self.agent.maintenance_once(package=True))
             self.assertEqual(index.call_count,1)
         import pandas as pd
@@ -219,7 +219,7 @@ class MSIIncrementalBuildTests(unittest.TestCase):
             with self.archive.connect() as db:
                 db.execute('DELETE FROM publication');db.commit()
             self.archive.schedule_build('premier-league/2024-2025')
-            with patch('dataset_builder._source_id_rows',side_effect=AssertionError('unchanged source indexed')):
+            with patch('dataset_pipeline.build._source_id_rows',side_effect=AssertionError('unchanged source indexed')):
                 self.assertTrue(self.agent.maintenance_once(package=True))
         self.assertIsNotNone(self.archive.publication())
 
