@@ -254,6 +254,7 @@ def main(argv=None):
         print('Shared worker: run without arguments; --worker --help; --dashboard for a read-only view.')
         print('Worker inventory: --inventory --worker-id main-mac; transfers: --ensemble-root PATH --import-only --ignore-provenance')
         print('Package saved local data for R: --package [--data-root PATH] [--dataset-root PATH]')
+        print('Package saved WhoScored match files for R: --package-raw-events --help')
         return _main(args)
     root=_selection(args).data_root
     organize_data_root(root)
@@ -287,6 +288,10 @@ def _ensemble_main(args,transfer):
 def entrypoint(argv=None):
     """No-argument launches use the shared plan; explicit scrape commands stay compatible."""
     args=list(sys.argv[1:] if argv is None else argv)
+    if '--package-raw-events' in args:
+        from collection.rawEventsDataset import main as package_raw_events
+        args.remove('--package-raw-events')
+        return package_raw_events(args)
     if '--resolve-ids' in args:
         if '--package' in args or '--fixtures' in args or '--terminate' in args:
             raise SystemExit('Use --resolve-ids by itself; --package already includes ID resolution.')
