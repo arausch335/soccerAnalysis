@@ -34,6 +34,7 @@ Thumbs.db
 
 # Analysis-ready datasets remain local.
 dataset/
+raw_events_dataset*/
 
 # Transfers, reporting caches and inventories stay local. Git distributes code/config only.
 ensemble_data/*
