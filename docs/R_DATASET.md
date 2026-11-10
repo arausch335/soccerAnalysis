@@ -115,3 +115,34 @@ This command reports the published link and available evidence for one fixture
 without changing the dataset. Packaging checks for competing claims across
 fixtures before clearing a hold.
 
+
+
+## Transfer raw WhoScored events to another machine
+
+On MSI, package the saved match responses independently of the regular dataset.
+
+```powershell
+python main.py --package-raw-events
+```
+
+The default `raw_events_dataset/` is next to the configured `dataset/` folder.
+It contains the original WhoScored match JSON and a checksum manifest. Files
+keep the `<competition>/<season>/raw/whoscored/` layout used by the R report.
+The export uses the raw files available on MSI at the time it runs. It does not
+scrape missing matches. Add `--competition` or `--season` to limit the export.
+Repeat either flag to select multiple values, and use `--output` to choose a
+new destination for another export.
+
+```powershell
+python main.py --package-raw-events --competition "Premier League" --season 2024-2025 --season 2025-2026 --output raw_events_dataset_pl
+```
+
+On the destination machine, copy the regular dataset for fixtures and IDs,
+and point the R report's `scraper_data_path` at the raw events folder.
+
+```r
+scraper_data_path <- "/path/to/raw_events_dataset"
+```
+
+Match the report's `leagues` and `seasons` to the selection you transferred,
+and set `generate_matches_reference <- TRUE` for the first run.
